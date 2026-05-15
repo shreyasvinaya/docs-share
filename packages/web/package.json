@@ -1,0 +1,30 @@
+{
+  "name": "@docs-share/web",
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc -b && vite build",
+    "typecheck": "tsc --noEmit",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "@docs-share/shared": "workspace:*",
+    "@tanstack/react-query": "^5",
+    "clsx": "^2.1.1",
+    "react": "^19",
+    "react-dom": "^19",
+    "react-router": "^7",
+    "tailwind-merge": "^3.6.0",
+    "zustand": "^5"
+  },
+  "devDependencies": {
+    "@tailwindcss/vite": "^4",
+    "@types/react": "^19",
+    "@types/react-dom": "^19",
+    "@vitejs/plugin-react": "^4",
+    "tailwindcss": "^4",
+    "typescript": "^5.8",
+    "vite": "^6"
+  }
+}

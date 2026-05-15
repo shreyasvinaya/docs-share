@@ -1,0 +1,19 @@
+{
+  "name": "docs-share",
+  "private": true,
+  "workspaces": ["packages/*"],
+  "scripts": {
+    "dev": "turbo dev",
+    "build": "turbo build",
+    "typecheck": "turbo typecheck",
+    "lint": "turbo lint",
+    "dev:server": "turbo dev --filter=@docs-share/server",
+    "dev:web": "turbo dev --filter=@docs-share/web",
+    "build:shared": "turbo build --filter=@docs-share/shared"
+  },
+  "packageManager": "bun@1.3.8",
+  "devDependencies": {
+    "turbo": "^2",
+    "typescript": "^5.8"
+  }
+}
