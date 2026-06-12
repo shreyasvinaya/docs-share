@@ -18,13 +18,16 @@ app.use("*", requireAuth);
 app.post("/", async (c) => {
   const userId = c.get("userId");
   const body = await c.req.json();
-  const { name, slug } = body;
+  const { name, slug, description } = body;
 
   if (!name || typeof name !== "string" || name.length > 100) {
     return c.json({ error: "Invalid team name" }, 400);
   }
   if (!slug || typeof slug !== "string" || !/^[a-z0-9-]+$/.test(slug) || slug.length > 50) {
     return c.json({ error: "Invalid slug" }, 400);
+  }
+  if (description != null && (typeof description !== "string" || description.length > 500)) {
+    return c.json({ error: "Description must be 500 characters or less" }, 400);
   }
 
   // Check slug uniqueness
@@ -48,6 +51,7 @@ app.post("/", async (c) => {
     id: teamId,
     name,
     slug,
+    description: description ?? null,
     ownerId: userId,
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
@@ -165,15 +169,27 @@ app.patch("/:teamId", async (c) => {
   }
 
   const body = await c.req.json();
-  const { name } = body;
+  const { name, description } = body;
 
-  if (!name || typeof name !== "string" || name.length > 100) {
-    return c.json({ error: "Invalid team name" }, 400);
+  const updates: Record<string, unknown> = { updatedAt: new Date().toISOString() };
+
+  if (name !== undefined) {
+    if (!name || typeof name !== "string" || name.length > 100) {
+      return c.json({ error: "Invalid team name" }, 400);
+    }
+    updates.name = name;
+  }
+
+  if (description !== undefined) {
+    if (description !== null && (typeof description !== "string" || description.length > 500)) {
+      return c.json({ error: "Description must be 500 characters or less" }, 400);
+    }
+    updates.description = description ?? null;
   }
 
   await db
     .update(schema.teams)
-    .set({ name, updatedAt: new Date().toISOString() })
+    .set(updates)
     .where(eq(schema.teams.id, teamId))
     .run();
 

@@ -1,11 +1,13 @@
 import { Hono } from "hono";
 import { getCookie, setCookie, deleteCookie } from "hono/cookie";
 import { Google, generateState, generateCodeVerifier } from "arctic";
-import { eq, and, isNull } from "drizzle-orm";
+import { eq, and } from "drizzle-orm";
 import { db, schema } from "../db/index.js";
 import { config } from "../lib/config.js";
 import { generateId, generateApiToken } from "../lib/crypto.js";
+import { isProduction } from "../lib/security.js";
 import { requireAuth } from "../middleware/requireAuth.js";
+import { createBareRepo } from "../git/repoManager.js";
 import type { AppEnv } from "../lib/types.js";
 
 const google = new Google(
@@ -143,11 +145,12 @@ app.get("/google/callback", async (c) => {
     return c.json({ error: "Failed to create user" }, 500);
   }
 
-  // Create personal repo record for new users
+  // Create personal repo for new users
   if (isNewUser) {
     const repoId = generateId();
     const diskPath = `${config.DATA_DIR}/repos/users/${user.id}.git`;
 
+    await createBareRepo(diskPath);
     await db.insert(schema.repos).values({
       id: repoId,
       ownerType: "user",
@@ -176,6 +179,97 @@ app.get("/google/callback", async (c) => {
   });
 
   return c.redirect(config.APP_URL);
+});
+
+// ---------------------------------------------------------------------------
+// POST /dev-login — Username/password fallback for development
+// ---------------------------------------------------------------------------
+app.post("/dev-login", async (c) => {
+  if (isProduction() || process.env.ENABLE_DEV_LOGIN !== "true") {
+    return c.json({ error: "Development login is disabled in production" }, 404);
+  }
+
+  const { email, password } = await c.req.json<{
+    email: string;
+    password: string;
+  }>();
+
+  if (!email || !password) {
+    return c.json({ error: "Email and password required" }, 400);
+  }
+
+  // In dev mode, accept any email with password "dev"
+  if (password !== "dev") {
+    return c.json({ error: "Invalid credentials" }, 401);
+  }
+
+  const displayName = email.split("@")[0];
+  const googleId = `dev_${email}`;
+
+  let user = await db
+    .select()
+    .from(schema.users)
+    .where(eq(schema.users.googleId, googleId))
+    .get();
+
+  if (!user) {
+    const userId = generateId();
+    const now = new Date().toISOString();
+
+    await db.insert(schema.users).values({
+      id: userId,
+      email,
+      displayName,
+      avatarUrl: null,
+      googleId,
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    user = await db
+      .select()
+      .from(schema.users)
+      .where(eq(schema.users.id, userId))
+      .get();
+
+    // Create personal repo
+    if (user) {
+      const repoId = generateId();
+      const diskPath = `${config.DATA_DIR}/repos/users/${user.id}.git`;
+      await createBareRepo(diskPath);
+      await db.insert(schema.repos).values({
+        id: repoId,
+        ownerType: "user",
+        ownerUserId: user.id,
+        diskPath,
+      });
+    }
+  }
+
+  if (!user) {
+    return c.json({ error: "Failed to create user" }, 500);
+  }
+
+  const sessionId = generateId();
+  const expiresAt = new Date(
+    Date.now() + 30 * 24 * 60 * 60 * 1000
+  ).toISOString();
+
+  await db.insert(schema.sessions).values({
+    id: sessionId,
+    userId: user.id,
+    expiresAt,
+  });
+
+  setCookie(c, "ds_session", sessionId, {
+    httpOnly: true,
+    secure: isSecure,
+    sameSite: "Lax",
+    path: "/",
+    maxAge: 30 * 24 * 60 * 60,
+  });
+
+  return c.json({ user });
 });
 
 // ---------------------------------------------------------------------------
@@ -281,7 +375,6 @@ app.get("/tokens", requireAuth, async (c) => {
       scopes: schema.apiTokens.scopes,
       expiresAt: schema.apiTokens.expiresAt,
       lastUsedAt: schema.apiTokens.lastUsedAt,
-      revokedAt: schema.apiTokens.revokedAt,
       createdAt: schema.apiTokens.createdAt,
     })
     .from(schema.apiTokens)
@@ -292,7 +385,7 @@ app.get("/tokens", requireAuth, async (c) => {
 });
 
 // ---------------------------------------------------------------------------
-// DELETE /tokens/:tokenId — Revoke (soft delete) an API token (requires auth)
+// DELETE /tokens/:tokenId — Delete an API token (requires auth)
 // ---------------------------------------------------------------------------
 app.delete("/tokens/:tokenId", requireAuth, async (c) => {
   const userId = c.get("userId");
@@ -304,8 +397,7 @@ app.delete("/tokens/:tokenId", requireAuth, async (c) => {
     .where(
       and(
         eq(schema.apiTokens.id, tokenId),
-        eq(schema.apiTokens.userId, userId),
-        isNull(schema.apiTokens.revokedAt)
+        eq(schema.apiTokens.userId, userId)
       )
     )
     .get();
@@ -315,8 +407,7 @@ app.delete("/tokens/:tokenId", requireAuth, async (c) => {
   }
 
   await db
-    .update(schema.apiTokens)
-    .set({ revokedAt: new Date().toISOString() })
+    .delete(schema.apiTokens)
     .where(eq(schema.apiTokens.id, tokenId));
 
   return c.json({ ok: true });

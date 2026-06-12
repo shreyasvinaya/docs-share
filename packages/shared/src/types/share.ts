@@ -6,6 +6,9 @@ export type ShareType = (typeof shareTypes)[number];
 export const sharePermissions = ["read", "write"] as const;
 export type SharePermission = (typeof sharePermissions)[number];
 
+export const linkAccessLevels = ["public", "org"] as const;
+export type LinkAccess = (typeof linkAccessLevels)[number];
+
 export const shareSchema = z.object({
   id: z.string(),
   repoId: z.string(),
@@ -14,6 +17,8 @@ export const shareSchema = z.object({
   shareType: z.enum(shareTypes),
   permission: z.enum(sharePermissions),
   publicToken: z.string().nullable(),
+  linkAccess: z.enum(linkAccessLevels).nullable().optional(),
+  orgDomain: z.string().nullable().optional(),
   teamId: z.string().nullable(),
   expiresAt: z.string().nullable(),
   createdAt: z.string(),
@@ -33,6 +38,7 @@ export type CreateEmailShare = z.infer<typeof createEmailShareSchema>;
 export const createPublicLinkSchema = z.object({
   repoId: z.string(),
   path: z.string().nullable().optional(),
+  linkAccess: z.enum(linkAccessLevels).default("public"),
   expiresIn: z.string().optional(),
   password: z.string().optional(),
 });

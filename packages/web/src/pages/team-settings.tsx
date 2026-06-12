@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useParams, useNavigate } from "react-router";
-import { useTeam, useTeamMembers, useInviteMember } from "@/hooks/use-teams";
+import { useTeam, useTeamMembers, useInviteMember, useUpdateTeam } from "@/hooks/use-teams";
 import { UserAvatar } from "@/components/common/user-avatar";
 import { api } from "@/lib/api-client";
 import type { TeamRole } from "@docs-share/shared";
@@ -11,11 +11,25 @@ export function TeamSettingsPage() {
   const { data: team } = useTeam(teamId);
   const { data: members } = useTeamMembers(teamId);
   const inviteMember = useInviteMember(teamId!);
+  const updateTeam = useUpdateTeam(teamId);
 
   const [email, setEmail] = useState("");
   const [role, setRole] = useState<TeamRole>("member");
+  const [description, setDescription] = useState<string | null>(null);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
+
+  const currentDescription = description ?? team?.description ?? "";
+
+  const handleSaveDescription = () => {
+    const value = currentDescription.trim() || null;
+    updateTeam.mutate(
+      { description: value },
+      { onSuccess: () => setDescription(null) },
+    );
+  };
+
+  const descriptionChanged = description !== null && currentDescription !== (team?.description ?? "");
 
   const handleInvite = (e: React.FormEvent) => {
     e.preventDefault();
@@ -48,6 +62,36 @@ export function TeamSettingsPage() {
   return (
     <div className="mx-auto max-w-3xl p-6">
       <h1 className="mb-6 text-2xl font-bold">{team.name} Settings</h1>
+
+      {/* Description */}
+      <section className="mb-8">
+        <h2 className="mb-4 text-lg font-semibold">Description</h2>
+        <div className="rounded-lg border border-border p-4">
+          <textarea
+            value={currentDescription}
+            onChange={(e) => setDescription(e.target.value)}
+            placeholder="Add a description for this team..."
+            rows={3}
+            maxLength={500}
+            className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm outline-none focus:border-primary focus:ring-1 focus:ring-primary"
+          />
+          <div className="mt-2 flex items-center justify-between">
+            <span className="text-xs text-muted-foreground">
+              {currentDescription.length}/500
+            </span>
+            {descriptionChanged && (
+              <button
+                type="button"
+                onClick={handleSaveDescription}
+                disabled={updateTeam.isPending}
+                className="rounded-lg bg-primary px-4 py-1.5 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90 disabled:opacity-50"
+              >
+                {updateTeam.isPending ? "Saving..." : "Save"}
+              </button>
+            )}
+          </div>
+        </div>
+      </section>
 
       {/* Members */}
       <section className="mb-8">

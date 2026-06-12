@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { Link } from "react-router";
 import { cn } from "@/lib/utils";
+import { ShareDialog } from "@/components/sharing/share-dialog";
 import type { FileNode } from "@docs-share/shared";
 
 interface FileTreeProps {
@@ -11,23 +12,38 @@ interface FileTreeProps {
 }
 
 export function FileTree({ files, repoId, basePath, onNavigate }: FileTreeProps) {
+  const [shareTarget, setShareTarget] = useState<{ path: string; name: string } | null>(null);
+
   const sorted = [...files].sort((a, b) => {
     if (a.type !== b.type) return a.type === "directory" ? -1 : 1;
     return a.name.localeCompare(b.name);
   });
 
   return (
-    <div className="divide-y divide-border rounded-lg border border-border">
-      {sorted.map((node) => (
-        <FileTreeRow
-          key={node.path}
-          node={node}
+    <>
+      <div className="divide-y divide-border rounded-lg border border-border">
+        {sorted.map((node) => (
+          <FileTreeRow
+            key={node.path}
+            node={node}
+            repoId={repoId}
+            basePath={basePath}
+            onNavigate={onNavigate}
+            onShare={() => setShareTarget({ path: node.path, name: node.name })}
+          />
+        ))}
+      </div>
+
+      {shareTarget && (
+        <ShareDialog
+          open
+          onClose={() => setShareTarget(null)}
           repoId={repoId}
-          basePath={basePath}
-          onNavigate={onNavigate}
+          path={shareTarget.path}
+          fileName={shareTarget.name}
         />
-      ))}
-    </div>
+      )}
+    </>
   );
 }
 
@@ -36,11 +52,13 @@ function FileTreeRow({
   repoId,
   basePath,
   onNavigate,
+  onShare,
 }: {
   node: FileNode;
   repoId: string;
   basePath?: string;
   onNavigate?: (path: string) => void;
+  onShare: () => void;
 }) {
   const [expanded, setExpanded] = useState(false);
   const isDir = node.type === "directory";
@@ -63,44 +81,83 @@ function FileTreeRow({
 
   if (isDir) {
     return (
-      <button
-        type="button"
-        onClick={() => {
-          if (onNavigate) {
-            onNavigate(node.path);
-          } else {
-            setExpanded(!expanded);
-          }
-        }}
-        className={cn(
-          "flex w-full items-center gap-3 px-4 py-2.5 text-left transition-colors hover:bg-muted/50",
-        )}
-      >
-        <FolderIcon />
-        <span className="flex-1 truncate text-sm font-medium">
-          {node.name}
-        </span>
-        <span className="text-xs text-muted-foreground">
-          {formatDate(node.updatedAt)}
-        </span>
-      </button>
+      <div className="flex items-center">
+        <button
+          type="button"
+          onClick={() => {
+            if (onNavigate) {
+              onNavigate(node.path);
+            } else {
+              setExpanded(!expanded);
+            }
+          }}
+          className="flex flex-1 items-center gap-3 px-4 py-2.5 text-left transition-colors hover:bg-muted/50"
+        >
+          <FolderIcon />
+          <span className="flex-1 truncate text-sm font-medium">
+            {node.name}
+          </span>
+          <span className="text-xs text-muted-foreground">
+            {formatDate(node.updatedAt)}
+          </span>
+        </button>
+        <button
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation();
+            onShare();
+          }}
+          className="mr-2 rounded p-1.5 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+          title="Share"
+        >
+          <ShareIcon />
+        </button>
+      </div>
     );
   }
 
   return (
-    <Link
-      to={`/preview/${repoId}/${node.path}`}
-      className="flex items-center gap-3 px-4 py-2.5 transition-colors hover:bg-muted/50"
+    <div className="flex items-center">
+      <Link
+        to={`/preview/${repoId}/${node.path}`}
+        className="flex flex-1 items-center gap-3 px-4 py-2.5 transition-colors hover:bg-muted/50"
+      >
+        <FileIcon mimeType={node.mimeType} />
+        <span className="flex-1 truncate text-sm">{node.name}</span>
+        <span className="text-xs text-muted-foreground">
+          {formatSize(node.sizeBytes)}
+        </span>
+        <span className="text-xs text-muted-foreground">
+          {formatDate(node.updatedAt)}
+        </span>
+      </Link>
+      <button
+        type="button"
+        onClick={onShare}
+        className="mr-2 rounded p-1.5 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+        title="Share"
+      >
+        <ShareIcon />
+      </button>
+    </div>
+  );
+}
+
+function ShareIcon() {
+  return (
+    <svg
+      className="h-4 w-4"
+      fill="none"
+      viewBox="0 0 24 24"
+      strokeWidth={1.5}
+      stroke="currentColor"
     >
-      <FileIcon mimeType={node.mimeType} />
-      <span className="flex-1 truncate text-sm">{node.name}</span>
-      <span className="text-xs text-muted-foreground">
-        {formatSize(node.sizeBytes)}
-      </span>
-      <span className="text-xs text-muted-foreground">
-        {formatDate(node.updatedAt)}
-      </span>
-    </Link>
+      <path
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        d="M7.217 10.907a2.25 2.25 0 100 2.186m0-2.186c.18.324.283.696.283 1.093s-.103.77-.283 1.093m0-2.186l9.566-5.314m-9.566 7.5l9.566 5.314m0 0a2.25 2.25 0 103.935 2.186 2.25 2.25 0 00-3.935-2.186zm0-12.814a2.25 2.25 0 103.933-2.185 2.25 2.25 0 00-3.933 2.185z"
+      />
+    </svg>
   );
 }
 

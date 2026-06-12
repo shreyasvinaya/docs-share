@@ -13,7 +13,7 @@ export async function createBareRepo(repoPath: string): Promise<void> {
 
   const hookScript = `#!/bin/bash
 while read oldrev newrev refname; do
-  curl -s -X POST "http://localhost:${config.PORT}/internal/hooks/post-receive" \\
+  curl -s -X POST "${config.HOOK_BASE_URL}/internal/hooks/post-receive" \\
     -H "Content-Type: application/json" \\
     -H "X-Hook-Secret: ${config.HOOK_SECRET}" \\
     -d "{\\"repoPath\\": \\"$(pwd)\\", \\"ref\\": \\"$refname\\", \\"oldRev\\": \\"$oldrev\\", \\"newRev\\": \\"$newrev\\"}"

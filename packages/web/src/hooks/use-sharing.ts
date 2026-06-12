@@ -21,6 +21,21 @@ export function useIncomingShares() {
   });
 }
 
+export function useSharesForResource(
+  repoId: string | undefined,
+  path: string | null | undefined
+) {
+  return useQuery({
+    queryKey: ["shares", "for-resource", repoId, path ?? ""],
+    queryFn: () => {
+      const params = new URLSearchParams({ repoId: repoId! });
+      if (path) params.set("path", path);
+      return api.get<Share[]>(`/api/shares/for-resource?${params}`);
+    },
+    enabled: !!repoId,
+  });
+}
+
 export function useCreateEmailShare() {
   const qc = useQueryClient();
   return useMutation({

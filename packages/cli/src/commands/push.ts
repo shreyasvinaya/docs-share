@@ -45,6 +45,10 @@ export const pushCommand = new Command("push")
       formData.append("path", target.subfolder);
     }
     formData.append("message", opts.message);
+    formData.append(
+      "manifest",
+      JSON.stringify(filesToUpload.map((file) => file.relativeName))
+    );
 
     for (const file of filesToUpload) {
       const content = readFileSync(file.absolutePath);

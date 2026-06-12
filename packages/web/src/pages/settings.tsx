@@ -165,8 +165,8 @@ function TokensTab() {
 
       {/* New token display */}
       {newTokenValue && (
-        <div className="rounded-lg border border-green-200 bg-green-50 p-4">
-          <p className="mb-2 text-sm font-medium text-green-800">
+        <div className="rounded-lg border border-border bg-muted/50 p-4">
+          <p className="mb-2 text-sm font-medium text-foreground">
             Token created. Copy it now -- you will not see it again.
           </p>
           <div className="flex items-center gap-2">
@@ -174,12 +174,12 @@ function TokensTab() {
               type="text"
               readOnly
               value={newTokenValue}
-              className="flex-1 rounded-lg border border-green-200 bg-white px-3 py-2 font-mono text-sm"
+              className="flex-1 rounded-lg border border-border bg-background px-3 py-2 font-mono text-sm text-foreground"
             />
             <button
               type="button"
               onClick={handleCopy}
-              className="rounded-lg border border-green-200 bg-white px-3 py-2 text-sm transition-colors hover:bg-green-100"
+              className="rounded-lg border border-border bg-background px-3 py-2 text-sm transition-colors hover:bg-muted"
             >
               {copied ? "Copied!" : "Copy"}
             </button>

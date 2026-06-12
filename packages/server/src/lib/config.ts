@@ -1,7 +1,12 @@
 import { resolve } from "path";
+import { assertProductionSecret, isProduction } from "./security.js";
 
-function env(key: string, fallback?: string): string {
-  const val = process.env[key] ?? fallback;
+function env(key: string, fallback = ""): string {
+  return process.env[key] ?? fallback;
+}
+
+function envRequired(key: string): string {
+  const val = process.env[key];
   if (!val) throw new Error(`Missing env var: ${key}`);
   return val;
 }
@@ -14,6 +19,8 @@ export const config = {
   API_URL: env("API_URL", "http://localhost:3000"),
 
   DATA_DIR: resolve(env("DATA_DIR", "./data")),
+  WEB_DIST_DIR: env("WEB_DIST_DIR", ""),
+  ALLOW_INSECURE_APP_URL: env("ALLOW_INSECURE_APP_URL", "false"),
 
   GOOGLE_CLIENT_ID: env("GOOGLE_CLIENT_ID", ""),
   GOOGLE_CLIENT_SECRET: env("GOOGLE_CLIENT_SECRET", ""),
@@ -24,6 +31,18 @@ export const config = {
 
   SESSION_SECRET: env("SESSION_SECRET", "dev-secret-change-in-production"),
   HOOK_SECRET: env("HOOK_SECRET", "dev-hook-secret-change-in-production"),
+  HOOK_BASE_URL: env("HOOK_BASE_URL", `http://localhost:${env("PORT", "3000")}`),
 
   CONTENT_ORIGIN: env("CONTENT_ORIGIN", "http://localhost:3000"),
 };
+
+assertProductionSecret("SESSION_SECRET", config.SESSION_SECRET);
+assertProductionSecret("HOOK_SECRET", config.HOOK_SECRET);
+
+if (
+  isProduction() &&
+  config.ALLOW_INSECURE_APP_URL !== "true" &&
+  !config.APP_URL.startsWith("https://")
+) {
+  throw new Error("APP_URL must use https:// in production");
+}

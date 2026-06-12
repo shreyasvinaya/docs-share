@@ -6,6 +6,8 @@
     "dev": "vite",
     "build": "tsc -b && vite build",
     "typecheck": "tsc --noEmit",
+    "lint": "tsc --noEmit",
+    "test": "bun test --pass-with-no-tests",
     "preview": "vite preview"
   },
   "dependencies": {

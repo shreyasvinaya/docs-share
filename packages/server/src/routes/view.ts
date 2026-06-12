@@ -3,15 +3,13 @@ import { eq, and } from "drizzle-orm";
 import { db, schema } from "../db/index.js";
 import { requireAuth } from "../middleware/requireAuth.js";
 import { config } from "../lib/config.js";
-import { join } from "path";
+import { hashToken } from "../lib/crypto.js";
+import { normalizeRelativePath, resolveInside } from "../lib/security.js";
 import { stat } from "fs/promises";
 import type { AppEnv } from "../lib/types.js";
 
 const app = new Hono<AppEnv>();
 
-/**
- * Security headers applied to all served content.
- */
 function securityHeaders(): Record<string, string> {
   return {
     "Content-Security-Policy":
@@ -22,9 +20,6 @@ function securityHeaders(): Record<string, string> {
   };
 }
 
-/**
- * Resolve mime type from file extension for serving.
- */
 function resolveContentType(filePath: string): string {
   const ext = filePath.split(".").pop()?.toLowerCase();
   const mimeMap: Record<string, string> = {
@@ -54,12 +49,11 @@ function resolveContentType(filePath: string): string {
     eot: "application/vnd.ms-fontobject",
     xml: "application/xml; charset=utf-8",
   };
-  return ext ? mimeMap[ext] ?? "application/octet-stream" : "application/octet-stream";
+  return ext
+    ? mimeMap[ext] ?? "application/octet-stream"
+    : "application/octet-stream";
 }
 
-/**
- * Check if the authenticated user has read access to a repo.
- */
 async function userHasAccess(
   userId: string,
   repoId: string
@@ -72,12 +66,10 @@ async function userHasAccess(
 
   if (!repo) return false;
 
-  // Direct owner
   if (repo.ownerType === "user" && repo.ownerUserId === userId) {
     return true;
   }
 
-  // Team member
   if (repo.ownerType === "team" && repo.ownerTeamId) {
     const membership = await db
       .select()
@@ -93,7 +85,6 @@ async function userHasAccess(
     if (membership) return true;
   }
 
-  // Email share
   const user = await db
     .select()
     .from(schema.users)
@@ -104,7 +95,10 @@ async function userHasAccess(
     const emailShare = await db
       .select()
       .from(schema.shareRecipients)
-      .innerJoin(schema.shares, eq(schema.shareRecipients.shareId, schema.shares.id))
+      .innerJoin(
+        schema.shares,
+        eq(schema.shareRecipients.shareId, schema.shares.id)
+      )
       .where(
         and(
           eq(schema.shares.repoId, repoId),
@@ -115,7 +109,6 @@ async function userHasAccess(
 
     if (emailShare) return true;
 
-    // Team share
     const teamShares = await db
       .select({ teamId: schema.shares.teamId })
       .from(schema.shares)
@@ -148,13 +141,100 @@ async function userHasAccess(
   return false;
 }
 
+async function serveFile(worktreeBase: string, relativePath: string) {
+  const resolvedPath = resolveInside(worktreeBase, relativePath);
+  if (!resolvedPath) {
+    return new Response(JSON.stringify({ error: "Invalid path" }), {
+      status: 400,
+      headers: { "Content-Type": "application/json" },
+    });
+  }
+
+  try {
+    const fileStat = await stat(resolvedPath);
+    if (fileStat.isDirectory()) {
+      const indexPath = resolveInside(
+        worktreeBase,
+        relativePath ? `${relativePath}/index.html` : "index.html"
+      );
+
+      if (!indexPath) {
+        return new Response(JSON.stringify({ error: "Invalid path" }), {
+          status: 400,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+
+      const indexStat = await stat(indexPath).catch(() => null);
+      if (!indexStat?.isFile()) {
+        return new Response(JSON.stringify({ error: "Directory index not found" }), {
+          status: 404,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+
+      const headers = securityHeaders();
+      headers["Content-Type"] = resolveContentType(indexPath);
+      return new Response(Bun.file(indexPath), { headers });
+    }
+
+    if (!fileStat.isFile()) {
+      return new Response(JSON.stringify({ error: "Not a file" }), {
+        status: 404,
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+
+    const file = Bun.file(resolvedPath);
+    const contentType = resolveContentType(resolvedPath);
+    const headers = securityHeaders();
+    headers["Content-Type"] = contentType;
+
+    return new Response(file, { headers });
+  } catch {
+    return new Response(JSON.stringify({ error: "File not found" }), {
+      status: 404,
+      headers: { "Content-Type": "application/json" },
+    });
+  }
+}
+
+function validateSharePassword(req: Request, passwordHash: string | null): Response | null {
+  if (!passwordHash) return null;
+
+  const providedPassword = req.headers.get("X-Share-Password");
+
+  if (!providedPassword || hashToken(providedPassword) !== passwordHash) {
+    return new Response(JSON.stringify({ error: "Share password required" }), {
+      status: 401,
+      headers: { "Content-Type": "application/json" },
+    });
+  }
+
+  return null;
+}
+
+function joinSharePath(basePath: string | null, childPath: string): string | null {
+  const normalizedBase = normalizeRelativePath(basePath);
+  const normalizedChild = normalizeRelativePath(childPath);
+
+  if (normalizedBase === null || normalizedChild === null) return null;
+  if (!normalizedBase) return normalizedChild;
+  if (!normalizedChild) return normalizedBase;
+  return `${normalizedBase}/${normalizedChild}`;
+}
+
 /**
  * GET /public/:token/* — Serve files via public share link.
- * No auth required. Validates token and checks expiry.
+ * No auth required for "public" links.
+ * "org" links require auth + matching email domain.
  */
 app.get("/public/:token/*", async (c) => {
   const token = c.req.param("token");
-  const filePath = c.req.path.replace(`/public/${token}/`, "").replace(/^\//, "");
+  const publicPrefix = `/view/public/${token}/`;
+  const filePath = c.req.path.startsWith(publicPrefix)
+    ? c.req.path.slice(publicPrefix.length)
+    : "";
 
   const share = await db
     .select()
@@ -171,37 +251,135 @@ app.get("/public/:token/*", async (c) => {
     return c.json({ error: "Invalid share link" }, 404);
   }
 
-  // Check expiry
   if (share.expiresAt && new Date(share.expiresAt) < new Date()) {
     return c.json({ error: "This share link has expired" }, 410);
   }
 
-  // Resolve the file on disk
-  const resolvedPath = share.path
-    ? join(config.DATA_DIR, "worktrees", share.repoId, share.path, filePath)
-    : join(config.DATA_DIR, "worktrees", share.repoId, filePath);
+  const passwordError = validateSharePassword(c.req.raw, share.passwordHash);
+  if (passwordError) return passwordError;
 
-  // Prevent path traversal
-  const worktreeBase = join(config.DATA_DIR, "worktrees", share.repoId);
-  if (!resolvedPath.startsWith(worktreeBase)) {
+  // Org-level access check
+  if (share.linkAccess === "org" && share.orgDomain) {
+    const userId = c.get("userId");
+    if (!userId) {
+      return c.json(
+        {
+          error: "Authentication required",
+          detail: `This link is restricted to @${share.orgDomain} members. Please sign in.`,
+          linkAccess: "org",
+          orgDomain: share.orgDomain,
+        },
+        401
+      );
+    }
+
+    const user = await db
+      .select()
+      .from(schema.users)
+      .where(eq(schema.users.id, userId))
+      .get();
+
+    const userDomain = user?.email.split("@")[1];
+    if (userDomain !== share.orgDomain) {
+      return c.json(
+        {
+          error: "Access denied",
+          detail: `This link is restricted to @${share.orgDomain} members.`,
+          linkAccess: "org",
+          orgDomain: share.orgDomain,
+        },
+        403
+      );
+    }
+  }
+
+  // Resolve file path: share.path is the base, filePath is relative within it
+  // For file shares (share.path = "report.html"), filePath should be empty
+  // For directory shares, filePath navigates within
+  const worktreeBase = `${config.DATA_DIR}/worktrees/${share.repoId}`;
+  const resolvedRelativePath = joinSharePath(share.path, filePath);
+
+  if (resolvedRelativePath === null) {
     return c.json({ error: "Invalid path" }, 400);
   }
 
-  try {
-    const fileStat = await stat(resolvedPath);
-    if (!fileStat.isFile()) {
-      return c.json({ error: "Not a file" }, 404);
+  return serveFile(worktreeBase, resolvedRelativePath);
+});
+
+/**
+ * Also handle /public/:token with no trailing path (for file-level shares).
+ */
+app.get("/public/:token", async (c) => {
+  const token = c.req.param("token");
+
+  const share = await db
+    .select()
+    .from(schema.shares)
+    .where(
+      and(
+        eq(schema.shares.publicToken, token),
+        eq(schema.shares.shareType, "public_link")
+      )
+    )
+    .get();
+
+  if (!share) {
+    return c.json({ error: "Invalid share link" }, 404);
+  }
+
+  if (share.expiresAt && new Date(share.expiresAt) < new Date()) {
+    return c.json({ error: "This share link has expired" }, 410);
+  }
+
+  const passwordError = validateSharePassword(c.req.raw, share.passwordHash);
+  if (passwordError) return passwordError;
+
+  if (share.linkAccess === "org" && share.orgDomain) {
+    const userId = c.get("userId");
+    if (!userId) {
+      return c.json(
+        {
+          error: "Authentication required",
+          detail: `This link is restricted to @${share.orgDomain} members. Please sign in.`,
+          linkAccess: "org",
+          orgDomain: share.orgDomain,
+        },
+        401
+      );
     }
 
-    const file = Bun.file(resolvedPath);
-    const contentType = resolveContentType(resolvedPath);
-    const headers = securityHeaders();
-    headers["Content-Type"] = contentType;
+    const user = await db
+      .select()
+      .from(schema.users)
+      .where(eq(schema.users.id, userId))
+      .get();
 
-    return new Response(file, { headers });
-  } catch {
-    return c.json({ error: "File not found" }, 404);
+    const userDomain = user?.email.split("@")[1];
+    if (userDomain !== share.orgDomain) {
+      return c.json(
+        {
+          error: "Access denied",
+          detail: `This link is restricted to @${share.orgDomain} members.`,
+          linkAccess: "org",
+          orgDomain: share.orgDomain,
+        },
+        403
+      );
+    }
   }
+
+  if (!share.path) {
+    return c.json({ error: "No file specified in this share" }, 400);
+  }
+
+  const worktreeBase = `${config.DATA_DIR}/worktrees/${share.repoId}`;
+  const normalizedSharePath = normalizeRelativePath(share.path);
+
+  if (normalizedSharePath === null) {
+    return c.json({ error: "Invalid path" }, 400);
+  }
+
+  return serveFile(worktreeBase, normalizedSharePath);
 });
 
 /**
@@ -211,38 +389,18 @@ app.get("/public/:token/*", async (c) => {
 app.get("/:repoId/*", requireAuth, async (c) => {
   const userId = c.get("userId");
   const repoId = c.req.param("repoId");
-  const filePath = c.req.path.replace(`/${repoId}/`, "").replace(/^\//, "");
+  const viewPrefix = `/view/${repoId}/`;
+  const filePath = c.req.path.startsWith(viewPrefix)
+    ? c.req.path.slice(viewPrefix.length)
+    : "";
 
-  // Check access
   const hasAccess = await userHasAccess(userId, repoId);
   if (!hasAccess) {
     return c.json({ error: "Access denied" }, 403);
   }
 
-  // Resolve the file on disk from the worktree
-  const resolvedPath = join(config.DATA_DIR, "worktrees", repoId, filePath);
-
-  // Prevent path traversal
-  const worktreeBase = join(config.DATA_DIR, "worktrees", repoId);
-  if (!resolvedPath.startsWith(worktreeBase)) {
-    return c.json({ error: "Invalid path" }, 400);
-  }
-
-  try {
-    const fileStat = await stat(resolvedPath);
-    if (!fileStat.isFile()) {
-      return c.json({ error: "Not a file" }, 404);
-    }
-
-    const file = Bun.file(resolvedPath);
-    const contentType = resolveContentType(resolvedPath);
-    const headers = securityHeaders();
-    headers["Content-Type"] = contentType;
-
-    return new Response(file, { headers });
-  } catch {
-    return c.json({ error: "File not found" }, 404);
-  }
+  const worktreeBase = `${config.DATA_DIR}/worktrees/${repoId}`;
+  return serveFile(worktreeBase, filePath);
 });
 
 export default app;

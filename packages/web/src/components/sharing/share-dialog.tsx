@@ -1,10 +1,12 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import {
   useCreateEmailShare,
   useCreatePublicLink,
+  useSharesForResource,
+  useRevokeShare,
 } from "@/hooks/use-sharing";
 import { cn } from "@/lib/utils";
-import type { SharePermission } from "@docs-share/shared";
+import type { SharePermission, LinkAccess } from "@docs-share/shared";
 
 interface ShareDialogProps {
   open: boolean;
@@ -24,12 +26,47 @@ export function ShareDialog({
   const [tab, setTab] = useState<"email" | "link">("email");
   const [emails, setEmails] = useState("");
   const [permission, setPermission] = useState<SharePermission>("read");
-  const [publicUrl, setPublicUrl] = useState<string | null>(null);
+  const [linkAccess, setLinkAccess] = useState<LinkAccess>("public");
+  const [initialTabSet, setInitialTabSet] = useState(false);
 
   const emailShare = useCreateEmailShare();
   const publicLink = useCreatePublicLink();
+  const revokeShare = useRevokeShare();
+  const { data: existingShares, refetch } = useSharesForResource(
+    open ? repoId : undefined,
+    path
+  );
+
+  const existingPublicLink = existingShares?.find(
+    (s) => s.shareType === "public_link"
+  );
+
+  useEffect(() => {
+    if (existingPublicLink?.linkAccess) {
+      setLinkAccess(existingPublicLink.linkAccess as LinkAccess);
+    }
+  }, [existingPublicLink]);
+
+  useEffect(() => {
+    if (!initialTabSet && existingShares) {
+      if (existingPublicLink) {
+        setTab("link");
+      }
+      setInitialTabSet(true);
+    }
+  }, [existingShares, existingPublicLink, initialTabSet]);
+
+  useEffect(() => {
+    if (!open) {
+      setInitialTabSet(false);
+    }
+  }, [open]);
 
   if (!open) return null;
+
+  const publicUrl = existingPublicLink?.publicToken
+    ? `${window.location.origin}/view/public/${existingPublicLink.publicToken}/`
+    : null;
 
   const handleEmailShare = () => {
     const parsed = emails
@@ -43,24 +80,28 @@ export function ShareDialog({
       {
         onSuccess: () => {
           setEmails("");
-          onClose();
+          refetch();
         },
-      },
+      }
     );
   };
 
-  const handlePublicLink = () => {
+  const handleCreateOrUpdateLink = () => {
     publicLink.mutate(
-      { repoId, path: path ?? undefined },
+      { repoId, path: path ?? undefined, linkAccess },
       {
-        onSuccess: (data) => {
-          if (data.publicToken) {
-            const url = `${window.location.origin}/view/${repoId}/${path ?? ""}?token=${data.publicToken}`;
-            setPublicUrl(url);
-          }
+        onSuccess: () => {
+          refetch();
         },
-      },
+      }
     );
+  };
+
+  const handleRevokeLink = () => {
+    if (!existingPublicLink) return;
+    revokeShare.mutate(existingPublicLink.id, {
+      onSuccess: () => refetch(),
+    });
   };
 
   return (
@@ -107,7 +148,7 @@ export function ShareDialog({
               "flex-1 rounded-md px-3 py-1.5 text-sm font-medium transition-colors",
               tab === "email"
                 ? "bg-background shadow-sm"
-                : "text-muted-foreground hover:text-foreground",
+                : "text-muted-foreground hover:text-foreground"
             )}
           >
             Email
@@ -119,10 +160,10 @@ export function ShareDialog({
               "flex-1 rounded-md px-3 py-1.5 text-sm font-medium transition-colors",
               tab === "link"
                 ? "bg-background shadow-sm"
-                : "text-muted-foreground hover:text-foreground",
+                : "text-muted-foreground hover:text-foreground"
             )}
           >
-            Public Link
+            Link
           </button>
         </div>
 
@@ -163,6 +204,37 @@ export function ShareDialog({
                 <option value="write">Can edit</option>
               </select>
             </div>
+
+            {/* Show existing email shares */}
+            {existingShares?.filter((s) => s.shareType === "email").length ? (
+              <div className="rounded-lg border border-border p-3">
+                <p className="mb-2 text-xs font-medium text-muted-foreground">
+                  Shared with
+                </p>
+                {existingShares
+                  .filter((s) => s.shareType === "email")
+                  .map((s) => (
+                    <div
+                      key={s.id}
+                      className="flex items-center justify-between py-1"
+                    >
+                      <span className="text-sm">{s.path ?? "All files"}</span>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          revokeShare.mutate(s.id, {
+                            onSuccess: () => refetch(),
+                          })
+                        }
+                        className="text-xs text-destructive hover:underline"
+                      >
+                        Remove
+                      </button>
+                    </div>
+                  ))}
+              </div>
+            ) : null}
+
             <button
               type="button"
               onClick={handleEmailShare}
@@ -176,9 +248,47 @@ export function ShareDialog({
 
         {tab === "link" && (
           <div className="space-y-3">
-            <p className="text-sm text-muted-foreground">
-              Anyone with the link can view this file.
-            </p>
+            {/* Access level selector */}
+            <div>
+              <p className="mb-2 text-sm font-medium">Who can access</p>
+              <div className="space-y-2">
+                <label className="flex cursor-pointer items-start gap-3 rounded-lg border border-border p-3 transition-colors hover:bg-muted/50 has-[:checked]:border-primary has-[:checked]:bg-primary/5">
+                  <input
+                    type="radio"
+                    name="linkAccess"
+                    value="public"
+                    checked={linkAccess === "public"}
+                    onChange={() => setLinkAccess("public")}
+                    className="mt-0.5"
+                  />
+                  <div>
+                    <p className="text-sm font-medium">Anyone with the link</p>
+                    <p className="text-xs text-muted-foreground">
+                      No sign-in required. Anyone can view.
+                    </p>
+                  </div>
+                </label>
+                <label className="flex cursor-pointer items-start gap-3 rounded-lg border border-border p-3 transition-colors hover:bg-muted/50 has-[:checked]:border-primary has-[:checked]:bg-primary/5">
+                  <input
+                    type="radio"
+                    name="linkAccess"
+                    value="org"
+                    checked={linkAccess === "org"}
+                    onChange={() => setLinkAccess("org")}
+                    className="mt-0.5"
+                  />
+                  <div>
+                    <p className="text-sm font-medium">
+                      Anyone in your organization
+                    </p>
+                    <p className="text-xs text-muted-foreground">
+                      Only signed-in users with your email domain can view.
+                    </p>
+                  </div>
+                </label>
+              </div>
+            </div>
+
             {publicUrl ? (
               <div className="space-y-2">
                 <div className="flex items-center gap-2">
@@ -196,16 +306,54 @@ export function ShareDialog({
                     Copy
                   </button>
                 </div>
-                <p className="text-xs text-green-600">Link created.</p>
+
+                {existingPublicLink?.orgDomain && (
+                  <p className="text-xs text-muted-foreground">
+                    Restricted to @{existingPublicLink.orgDomain}
+                  </p>
+                )}
+
+                {/* Update access level if changed */}
+                {existingPublicLink &&
+                  linkAccess !== existingPublicLink.linkAccess && (
+                    <button
+                      type="button"
+                      onClick={handleCreateOrUpdateLink}
+                      disabled={publicLink.isPending}
+                      className="w-full rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90 disabled:opacity-50"
+                    >
+                      {publicLink.isPending
+                        ? "Updating..."
+                        : `Update to ${linkAccess === "org" ? "org-only" : "public"}`}
+                    </button>
+                  )}
+
+                <div className="flex items-center justify-between">
+                  <p className="text-xs text-green-600 dark:text-green-400">
+                    Link active
+                  </p>
+                  <button
+                    type="button"
+                    onClick={handleRevokeLink}
+                    disabled={revokeShare.isPending}
+                    className="text-xs text-destructive hover:underline"
+                  >
+                    {revokeShare.isPending ? "Removing..." : "Remove link"}
+                  </button>
+                </div>
               </div>
             ) : (
               <button
                 type="button"
-                onClick={handlePublicLink}
+                onClick={handleCreateOrUpdateLink}
                 disabled={publicLink.isPending}
                 className="w-full rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90 disabled:opacity-50"
               >
-                {publicLink.isPending ? "Creating..." : "Create Public Link"}
+                {publicLink.isPending
+                  ? "Creating..."
+                  : linkAccess === "org"
+                    ? "Create Org Link"
+                    : "Create Public Link"}
               </button>
             )}
           </div>

@@ -25,6 +25,10 @@ app.get("/repo", requireAuth, async (c) => {
   let repo;
 
   if (ownerType === "user") {
+    if (ownerId !== c.get("userId")) {
+      return c.json({ error: "Access denied" }, 403);
+    }
+
     repo = await db
       .select()
       .from(schema.repos)
@@ -101,9 +105,14 @@ app.post("/hooks/post-receive", async (c) => {
     return c.json({ error: "Repository not found" }, 404);
   }
 
+  const validUpdate = await validateGitUpdate(repo.diskPath, body.ref, body.newRev);
+  if (!validUpdate) {
+    return c.json({ error: "Invalid git update" }, 400);
+  }
+
   // Extract files to worktree and index them in the database
-  await extractRepoFiles(repo.id, body.repoPath, body.ref);
-  await indexRepoFiles(repo.id, body.repoPath, body.ref);
+  await extractRepoFiles(repo.id, repo.diskPath, body.newRev);
+  await indexRepoFiles(repo.id, repo.diskPath, body.newRev);
 
   // Update the repo's lastPushAt and headSha
   await db
@@ -117,5 +126,29 @@ app.post("/hooks/post-receive", async (c) => {
 
   return c.json({ ok: true });
 });
+
+async function validateGitUpdate(
+  repoPath: string,
+  ref: string,
+  newRev: string
+): Promise<boolean> {
+  if (!ref.startsWith("refs/heads/")) return false;
+  if (!/^[0-9a-f]{40}$/i.test(newRev)) return false;
+  if (/^0{40}$/.test(newRev)) return false;
+
+  const refProc = Bun.spawn(["git", "check-ref-format", ref], {
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  await refProc.exited;
+  if (refProc.exitCode !== 0) return false;
+
+  const commitProc = Bun.spawn(["git", "-C", repoPath, "cat-file", "-e", `${newRev}^{commit}`], {
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  await commitProc.exited;
+  return commitProc.exitCode === 0;
+}
 
 export default app;

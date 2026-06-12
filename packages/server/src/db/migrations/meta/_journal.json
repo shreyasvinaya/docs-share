@@ -8,6 +8,27 @@
       "when": 1778844110053,
       "tag": "0000_dark_boomer",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "6",
+      "when": 1778844120000,
+      "tag": "0001_add_team_description",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1778844130000,
+      "tag": "0002_add_link_access",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "6",
+      "when": 1778844140000,
+      "tag": "0003_github_syncs",
+      "breakpoints": true
     }
   ]
 }

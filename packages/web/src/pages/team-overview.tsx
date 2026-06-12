@@ -2,8 +2,10 @@ import { useCallback } from "react";
 import { useParams, Link, useNavigate } from "react-router";
 import { useTeam, useTeamMembers } from "@/hooks/use-teams";
 import { useFiles, useUploadFile } from "@/hooks/use-files";
+import type { UploadItem } from "@/hooks/use-files";
 import { FileTree } from "@/components/files/file-tree";
 import { FileUploadZone } from "@/components/files/file-upload-zone";
+import { GitHubSyncPanel } from "@/components/files/github-sync-panel";
 import { UserAvatar } from "@/components/common/user-avatar";
 import { EmptyState } from "@/components/common/empty-state";
 
@@ -20,9 +22,9 @@ export function TeamOverviewPage() {
   const upload = useUploadFile(repoId);
 
   const handleUpload = useCallback(
-    (fileList: File[]) => {
+    (items: UploadItem[]) => {
       if (!repoId) return;
-      upload.mutate({ files: fileList });
+      upload.mutate({ items });
     },
     [repoId, upload],
   );
@@ -60,7 +62,12 @@ export function TeamOverviewPage() {
       <div className="mb-6 flex items-start justify-between">
         <div>
           <h1 className="text-2xl font-bold">{team.name}</h1>
-          <p className="mt-1 text-sm text-muted-foreground">
+          {team.description && (
+            <p className="mt-1 text-sm text-muted-foreground">
+              {team.description}
+            </p>
+          )}
+          <p className="mt-0.5 text-xs text-muted-foreground">
             {members?.length ?? 0} member{(members?.length ?? 0) !== 1 ? "s" : ""}
           </p>
         </div>
@@ -101,6 +108,8 @@ export function TeamOverviewPage() {
         isUploading={upload.isPending}
         className="mb-6"
       />
+
+      <GitHubSyncPanel repoId={repoId} />
 
       {/* Files */}
       {filesLoading ? (

@@ -34,6 +34,7 @@ export const teams = sqliteTable(
     id: text("id").primaryKey(),
     name: text("name").notNull(),
     slug: text("slug").notNull(),
+    description: text("description"),
     ownerId: text("owner_id")
       .notNull()
       .references(() => users.id, { onDelete: "cascade" }),
@@ -187,6 +188,10 @@ export const shares = sqliteTable(
       .notNull()
       .default("read"),
     publicToken: text("public_token"),
+    linkAccess: text("link_access", { enum: ["public", "org"] }).default(
+      "public"
+    ),
+    orgDomain: text("org_domain"),
     passwordHash: text("password_hash"),
     teamId: text("team_id").references(() => teams.id, {
       onDelete: "cascade",
@@ -246,5 +251,33 @@ export const sessions = sqliteTable(
   (table) => [
     index("sessions_user_idx").on(table.userId),
     index("sessions_expires_idx").on(table.expiresAt),
+  ]
+);
+
+export const githubSyncs = sqliteTable(
+  "github_syncs",
+  {
+    id: text("id").primaryKey(),
+    repoId: text("repo_id")
+      .notNull()
+      .references(() => repos.id, { onDelete: "cascade" }),
+    repoUrl: text("repo_url").notNull(),
+    branch: text("branch").notNull().default("main"),
+    lastCommitSha: text("last_commit_sha"),
+    lastSyncedAt: text("last_synced_at"),
+    status: text("status", { enum: ["idle", "syncing", "success", "error"] })
+      .notNull()
+      .default("idle"),
+    error: text("error"),
+    createdAt: text("created_at")
+      .notNull()
+      .default(sql`(CURRENT_TIMESTAMP)`),
+    updatedAt: text("updated_at")
+      .notNull()
+      .default(sql`(CURRENT_TIMESTAMP)`),
+  },
+  (table) => [
+    uniqueIndex("github_syncs_repo_idx").on(table.repoId),
+    index("github_syncs_status_idx").on(table.status),
   ]
 );

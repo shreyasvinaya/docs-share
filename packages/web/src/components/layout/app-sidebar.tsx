@@ -1,7 +1,9 @@
-import { NavLink } from "react-router";
+import { useState } from "react";
+import { NavLink, useNavigate } from "react-router";
 import { useTeams } from "@/hooks/use-teams";
 import { useUiStore } from "@/stores/ui-store";
 import { cn } from "@/lib/utils";
+import { CreateTeamDialog } from "@/components/teams/create-team-dialog";
 
 const mainNav = [
   {
@@ -35,7 +37,9 @@ const mainNav = [
 
 export function AppSidebar() {
   const collapsed = useUiStore((s) => s.sidebarCollapsed);
+  const navigate = useNavigate();
   const { data: teams } = useTeams();
+  const [showCreateTeam, setShowCreateTeam] = useState(false);
 
   return (
     <aside
@@ -79,33 +83,49 @@ export function AppSidebar() {
           ))}
         </ul>
 
-        {!collapsed && teams && teams.length > 0 && (
+        {!collapsed && (
           <div className="mt-6">
-            <h3 className="mb-1 px-3 text-xs font-medium uppercase tracking-wider text-muted-foreground">
-              Teams
-            </h3>
-            <ul className="space-y-0.5">
-              {teams.map((team) => (
-                <li key={team.id}>
-                  <NavLink
-                    to={`/teams/${team.id}`}
-                    className={({ isActive }) =>
-                      cn(
-                        "flex items-center gap-3 rounded-lg px-3 py-2 text-sm transition-colors",
-                        isActive
-                          ? "bg-muted font-medium text-foreground"
-                          : "text-muted-foreground hover:bg-muted/50 hover:text-foreground",
-                      )
-                    }
-                  >
-                    <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded bg-muted text-[10px] font-bold uppercase">
-                      {team.name[0]}
-                    </span>
-                    <span className="truncate">{team.name}</span>
-                  </NavLink>
-                </li>
-              ))}
-            </ul>
+            <div className="mb-1 flex items-center justify-between px-3">
+              <h3 className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
+                Teams
+              </h3>
+              <button
+                type="button"
+                onClick={() => setShowCreateTeam(true)}
+                className="rounded p-0.5 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+                title="Create team"
+              >
+                <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5v15m7.5-7.5h-15" />
+                </svg>
+              </button>
+            </div>
+            {teams && teams.length > 0 ? (
+              <ul className="space-y-0.5">
+                {teams.map((team) => (
+                  <li key={team.id}>
+                    <NavLink
+                      to={`/teams/${team.id}`}
+                      className={({ isActive }) =>
+                        cn(
+                          "flex items-center gap-3 rounded-lg px-3 py-2 text-sm transition-colors",
+                          isActive
+                            ? "bg-muted font-medium text-foreground"
+                            : "text-muted-foreground hover:bg-muted/50 hover:text-foreground",
+                        )
+                      }
+                    >
+                      <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded bg-muted text-[10px] font-bold uppercase">
+                        {team.name[0]}
+                      </span>
+                      <span className="truncate">{team.name}</span>
+                    </NavLink>
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <p className="px-3 text-xs text-muted-foreground">No teams yet</p>
+            )}
           </div>
         )}
       </nav>
@@ -130,6 +150,11 @@ export function AppSidebar() {
           {!collapsed && <span>Settings</span>}
         </NavLink>
       </div>
+      <CreateTeamDialog
+        open={showCreateTeam}
+        onClose={() => setShowCreateTeam(false)}
+        onCreated={(teamId) => navigate(`/teams/${teamId}`)}
+      />
     </aside>
   );
 }

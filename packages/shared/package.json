@@ -13,6 +13,8 @@
   "scripts": {
     "build": "tsc",
     "typecheck": "tsc --noEmit",
+    "lint": "tsc --noEmit",
+    "test": "bun test --pass-with-no-tests",
     "dev": "tsc --watch"
   },
   "dependencies": {

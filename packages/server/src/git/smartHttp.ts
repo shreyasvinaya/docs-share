@@ -1,9 +1,7 @@
 import { Hono } from "hono";
-import { join } from "path";
 import { and, eq, isNull } from "drizzle-orm";
 import { db, schema } from "../db/index.js";
 import { hashToken } from "../lib/crypto.js";
-import { config } from "../lib/config.js";
 import type { AppEnv } from "../lib/types.js";
 
 const app = new Hono<AppEnv>();
@@ -11,10 +9,6 @@ const app = new Hono<AppEnv>();
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
-
-function resolveRepoPath(ownerType: string, ownerId: string): string {
-  return join(config.DATA_DIR, "repos", `${ownerType}s`, `${ownerId}.git`);
-}
 
 function pktLine(data: string): string {
   const len = (data.length + 4).toString(16).padStart(4, "0");
@@ -26,11 +20,18 @@ function pktLine(data: string): string {
  * apiTokens table. Returns the userId on success, or null on failure.
  */
 async function authenticateBasic(
-  authHeader: string | undefined
+  authHeader: string | undefined,
+  requiredScope: "git:read" | "git:write"
 ): Promise<string | null> {
   if (!authHeader?.startsWith("Basic ")) return null;
 
-  const decoded = atob(authHeader.slice(6));
+  let decoded: string;
+  try {
+    decoded = atob(authHeader.slice(6));
+  } catch {
+    return null;
+  }
+
   const colonIndex = decoded.indexOf(":");
   if (colonIndex === -1) return null;
 
@@ -50,12 +51,86 @@ async function authenticateBasic(
 
   if (
     !apiToken ||
-    (apiToken.expiresAt && new Date(apiToken.expiresAt) <= new Date())
+    (apiToken.expiresAt && new Date(apiToken.expiresAt) <= new Date()) ||
+    !hasScope(apiToken.scopes, requiredScope)
   ) {
     return null;
   }
 
   return apiToken.userId;
+}
+
+function hasScope(scopes: string, requiredScope: "git:read" | "git:write"): boolean {
+  const parsedScopes = scopes
+    .split(/[,\s]+/)
+    .map((scope) => scope.trim())
+    .filter(Boolean);
+
+  return (
+    parsedScopes.includes("*") ||
+    parsedScopes.includes("git:*") ||
+    parsedScopes.includes(requiredScope) ||
+    (requiredScope === "git:read" && parsedScopes.includes("git:write"))
+  );
+}
+
+async function resolveAuthorizedRepoPath(
+  ownerType: string,
+  ownerId: string,
+  userId: string,
+  permission: "read" | "write"
+): Promise<string | null> {
+  if (ownerType === "user") {
+    const repo = await db
+      .select()
+      .from(schema.repos)
+      .where(eq(schema.repos.ownerUserId, ownerId))
+      .get();
+
+    if (!repo || repo.ownerUserId !== userId) return null;
+    return repo.diskPath;
+  }
+
+  if (ownerType === "team") {
+    const team = await db
+      .select()
+      .from(schema.teams)
+      .where(eq(schema.teams.slug, ownerId))
+      .get();
+
+    if (!team) return null;
+
+    const membership = await db
+      .select()
+      .from(schema.teamMembers)
+      .where(
+        and(
+          eq(schema.teamMembers.teamId, team.id),
+          eq(schema.teamMembers.userId, userId)
+        )
+      )
+      .get();
+
+    if (!membership) return null;
+    if (permission === "write" && membership.role === "viewer") return null;
+
+    const repo = await db
+      .select()
+      .from(schema.repos)
+      .where(eq(schema.repos.ownerTeamId, team.id))
+      .get();
+
+    return repo?.diskPath ?? null;
+  }
+
+  return null;
+}
+
+function unauthorizedGitResponse(): Response {
+  return new Response("Authentication required", {
+    status: 401,
+    headers: { "WWW-Authenticate": 'Basic realm="docs-share"' },
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -70,18 +145,22 @@ app.get("/:ownerType/:ownerId/info/refs", async (c) => {
     return c.text("Invalid service", 400);
   }
 
-  // receive-pack (push) requires authentication
-  if (service === "git-receive-pack") {
-    const userId = await authenticateBasic(c.req.header("Authorization"));
-    if (!userId) {
-      return new Response("Authentication required", {
-        status: 401,
-        headers: { "WWW-Authenticate": 'Basic realm="docs-share"' },
-      });
-    }
+  const requiredScope = service === "git-receive-pack" ? "git:write" : "git:read";
+  const userId = await authenticateBasic(c.req.header("Authorization"), requiredScope);
+  if (!userId) {
+    return unauthorizedGitResponse();
   }
 
-  const repoPath = resolveRepoPath(ownerType, ownerId);
+  const repoPath = await resolveAuthorizedRepoPath(
+    ownerType,
+    ownerId,
+    userId,
+    service === "git-receive-pack" ? "write" : "read"
+  );
+
+  if (!repoPath) {
+    return c.text("Repository not found", 404);
+  }
 
   const proc = Bun.spawn([service, "--stateless-rpc", "--advertise-refs", repoPath], {
     stdout: "pipe",
@@ -121,8 +200,17 @@ app.get("/:ownerType/:ownerId/info/refs", async (c) => {
 // ---------------------------------------------------------------------------
 
 app.post("/:ownerType/:ownerId/git-upload-pack", async (c) => {
+  const userId = await authenticateBasic(c.req.header("Authorization"), "git:read");
+  if (!userId) {
+    return unauthorizedGitResponse();
+  }
+
   const { ownerType, ownerId } = c.req.param();
-  const repoPath = resolveRepoPath(ownerType, ownerId);
+  const repoPath = await resolveAuthorizedRepoPath(ownerType, ownerId, userId, "read");
+
+  if (!repoPath) {
+    return c.text("Repository not found", 404);
+  }
 
   const body = await c.req.arrayBuffer();
 
@@ -146,16 +234,17 @@ app.post("/:ownerType/:ownerId/git-upload-pack", async (c) => {
 // ---------------------------------------------------------------------------
 
 app.post("/:ownerType/:ownerId/git-receive-pack", async (c) => {
-  const userId = await authenticateBasic(c.req.header("Authorization"));
+  const userId = await authenticateBasic(c.req.header("Authorization"), "git:write");
   if (!userId) {
-    return new Response("Authentication required", {
-      status: 401,
-      headers: { "WWW-Authenticate": 'Basic realm="docs-share"' },
-    });
+    return unauthorizedGitResponse();
   }
 
   const { ownerType, ownerId } = c.req.param();
-  const repoPath = resolveRepoPath(ownerType, ownerId);
+  const repoPath = await resolveAuthorizedRepoPath(ownerType, ownerId, userId, "write");
+
+  if (!repoPath) {
+    return c.text("Repository not found", 404);
+  }
 
   const body = await c.req.arrayBuffer();
 

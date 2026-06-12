@@ -1,8 +1,70 @@
 import { useCallback, useRef, useState } from "react";
 import { cn } from "@/lib/utils";
+import type { UploadItem } from "@/hooks/use-files";
+
+interface BrowserFileEntry {
+  isFile: true;
+  isDirectory: false;
+  name: string;
+  fullPath: string;
+  file: (success: (file: File) => void, error?: (error: DOMException) => void) => void;
+}
+
+interface BrowserDirectoryEntry {
+  isFile: false;
+  isDirectory: true;
+  name: string;
+  fullPath: string;
+  createReader: () => {
+    readEntries: (
+      success: (entries: BrowserEntry[]) => void,
+      error?: (error: DOMException) => void
+    ) => void;
+  };
+}
+
+type BrowserEntry = BrowserFileEntry | BrowserDirectoryEntry;
+
+function readFileEntry(entry: BrowserFileEntry, prefix: string) {
+  return new Promise<UploadItem>((resolve, reject) => {
+    entry.file(
+      (file) =>
+        resolve({
+          file,
+          relativePath: `${prefix}${entry.name}`,
+        }),
+      reject
+    );
+  });
+}
+
+async function readDirectoryEntry(
+  entry: BrowserDirectoryEntry,
+  prefix = ""
+): Promise<UploadItem[]> {
+  const reader = entry.createReader();
+  const entries: BrowserEntry[] = [];
+
+  while (true) {
+    const batch = await new Promise<BrowserEntry[]>((resolve, reject) => {
+      reader.readEntries(resolve, reject);
+    });
+    if (batch.length === 0) break;
+    entries.push(...batch);
+  }
+
+  const nested = await Promise.all(
+    entries.map((child) =>
+      child.isFile
+        ? readFileEntry(child, `${prefix}${entry.name}/`)
+        : readDirectoryEntry(child, `${prefix}${entry.name}/`)
+    )
+  );
+  return nested.flat();
+}
 
 interface FileUploadZoneProps {
-  onUpload: (files: File[]) => void;
+  onUpload: (items: UploadItem[]) => void;
   isUploading?: boolean;
   accept?: string;
   className?: string;
@@ -15,25 +77,56 @@ export function FileUploadZone({
   className,
 }: FileUploadZoneProps) {
   const [isDragging, setIsDragging] = useState(false);
-  const inputRef = useRef<HTMLInputElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const folderInputRef = useRef<HTMLInputElement>(null);
+
+  const createUploadItems = useCallback((files: File[]) => {
+    return files.map((file) => {
+      const fileWithPath = file as File & { webkitRelativePath?: string };
+      return {
+        file,
+        relativePath: fileWithPath.webkitRelativePath || file.name,
+      };
+    });
+  }, []);
 
   const handleDrop = useCallback(
-    (e: React.DragEvent) => {
+    async (e: React.DragEvent) => {
       e.preventDefault();
       setIsDragging(false);
+      const entries = Array.from(e.dataTransfer.items)
+        .map((item) => {
+          const itemWithEntry = item as unknown as {
+            webkitGetAsEntry?: () => BrowserEntry | null;
+          };
+          return itemWithEntry.webkitGetAsEntry?.() ?? null;
+        })
+        .filter((entry): entry is BrowserEntry => entry !== null);
+
+      if (entries.length > 0) {
+        const nested = await Promise.all(
+          entries.map((entry) =>
+            entry.isFile ? readFileEntry(entry, "") : readDirectoryEntry(entry)
+          )
+        );
+        const items = nested.flat();
+        if (items.length > 0) onUpload(items);
+        return;
+      }
+
       const files = Array.from(e.dataTransfer.files);
-      if (files.length > 0) onUpload(files);
+      if (files.length > 0) onUpload(createUploadItems(files));
     },
-    [onUpload],
+    [createUploadItems, onUpload],
   );
 
   const handleFileChange = useCallback(
     (e: React.ChangeEvent<HTMLInputElement>) => {
       const files = Array.from(e.target.files ?? []);
-      if (files.length > 0) onUpload(files);
+      if (files.length > 0) onUpload(createUploadItems(files));
       e.target.value = "";
     },
-    [onUpload],
+    [createUploadItems, onUpload],
   );
 
   return (
@@ -75,25 +168,41 @@ export function FileUploadZone({
             Drop files here or{" "}
             <button
               type="button"
-              onClick={() => inputRef.current?.click()}
+              onClick={() => fileInputRef.current?.click()}
               className="text-primary underline underline-offset-2"
             >
               browse
             </button>
+            <span className="text-muted-foreground"> or </span>
+            <button
+              type="button"
+              onClick={() => folderInputRef.current?.click()}
+              className="text-primary underline underline-offset-2"
+            >
+              choose a folder
+            </button>
           </p>
           <p className="mt-1 text-xs text-muted-foreground">
-            HTML, CSS, JS, and other web files
+            HTML bundles keep their folder paths for linked pages and assets
           </p>
         </>
       )}
 
       <input
-        ref={inputRef}
+        ref={fileInputRef}
         type="file"
         multiple
         accept={accept}
         onChange={handleFileChange}
         className="hidden"
+      />
+      <input
+        ref={folderInputRef}
+        type="file"
+        multiple
+        onChange={handleFileChange}
+        className="hidden"
+        {...{ webkitdirectory: "", directory: "" }}
       />
     </div>
   );

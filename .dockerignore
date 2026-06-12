@@ -1,0 +1,16 @@
+.git
+.github
+.omx
+.turbo
+dist
+node_modules
+packages/*/dist
+packages/server/data
+packages/web/tsconfig.tsbuildinfo
+*.db
+*.db-shm
+*.db-wal
+.env
+.env.local
+Dockerfile
+docker-compose.yml

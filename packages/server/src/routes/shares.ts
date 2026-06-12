@@ -1,11 +1,86 @@
 import { Hono } from "hono";
-import { eq, and } from "drizzle-orm";
+import { eq, and, isNull } from "drizzle-orm";
 import { db, schema } from "../db/index.js";
 import { requireAuth } from "../middleware/requireAuth.js";
 import { generateId, generatePublicToken, hashToken } from "../lib/crypto.js";
 import type { AppEnv } from "../lib/types.js";
 
 const app = new Hono<AppEnv>();
+
+async function checkRepoAccess(
+  repoId: string,
+  userId: string
+): Promise<boolean> {
+  const repo = await db
+    .select()
+    .from(schema.repos)
+    .where(eq(schema.repos.id, repoId))
+    .get();
+
+  if (!repo) return false;
+
+  if (repo.ownerType === "user" && repo.ownerUserId === userId) {
+    return true;
+  }
+
+  if (repo.ownerType === "team" && repo.ownerTeamId) {
+    const membership = await db
+      .select()
+      .from(schema.teamMembers)
+      .where(
+        and(
+          eq(schema.teamMembers.teamId, repo.ownerTeamId),
+          eq(schema.teamMembers.userId, userId)
+        )
+      )
+      .get();
+
+    if (membership && membership.role !== "viewer") {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+/**
+ * GET /for-resource — Get existing shares for a specific repoId+path.
+ */
+app.get("/for-resource", requireAuth, async (c) => {
+  const userId = c.get("userId");
+  const repoId = c.req.query("repoId");
+  const path = c.req.query("path") || null;
+
+  if (!repoId) {
+    return c.json({ error: "repoId is required" }, 400);
+  }
+
+  const hasAccess = await checkRepoAccess(repoId, userId);
+  if (!hasAccess) {
+    return c.json({ error: "Access denied" }, 403);
+  }
+
+  let shares;
+  if (path) {
+    shares = await db
+      .select()
+      .from(schema.shares)
+      .where(
+        and(eq(schema.shares.repoId, repoId), eq(schema.shares.path, path))
+      )
+      .all();
+  } else {
+    shares = await db
+      .select()
+      .from(schema.shares)
+      .where(
+        and(eq(schema.shares.repoId, repoId), isNull(schema.shares.path))
+      )
+      .all();
+  }
+
+  return c.json({ data: shares });
+});
 
 /**
  * POST / — Create a share.
@@ -23,38 +98,7 @@ app.post("/", requireAuth, async (c) => {
     return c.json({ error: "Invalid shareType" }, 400);
   }
 
-  // Verify the repo exists and user has write access (owns it or is a team member with write)
-  const repo = await db
-    .select()
-    .from(schema.repos)
-    .where(eq(schema.repos.id, repoId))
-    .get();
-
-  if (!repo) {
-    return c.json({ error: "Repository not found" }, 404);
-  }
-
-  let hasAccess = false;
-
-  if (repo.ownerType === "user" && repo.ownerUserId === userId) {
-    hasAccess = true;
-  } else if (repo.ownerType === "team" && repo.ownerTeamId) {
-    const membership = await db
-      .select()
-      .from(schema.teamMembers)
-      .where(
-        and(
-          eq(schema.teamMembers.teamId, repo.ownerTeamId),
-          eq(schema.teamMembers.userId, userId)
-        )
-      )
-      .get();
-
-    if (membership && membership.role !== "viewer") {
-      hasAccess = true;
-    }
-  }
-
+  const hasAccess = await checkRepoAccess(repoId, userId);
   if (!hasAccess) {
     return c.json({ error: "Access denied" }, 403);
   }
@@ -69,33 +113,37 @@ app.post("/", requireAuth, async (c) => {
 
     const sharePermission = permission === "write" ? "write" : "read";
 
-    await db.insert(schema.shares).values({
-      id: shareId,
-      repoId,
-      path: path || null,
-      createdById: userId,
-      shareType: "email",
-      permission: sharePermission,
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-    }).run();
+    await db
+      .insert(schema.shares)
+      .values({
+        id: shareId,
+        repoId,
+        path: path || null,
+        createdById: userId,
+        shareType: "email",
+        permission: sharePermission,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      })
+      .run();
 
-    // Create share recipients
     for (const email of emails) {
-      // Try to find existing user by email
       const existingUser = await db
         .select()
         .from(schema.users)
         .where(eq(schema.users.email, email))
         .get();
 
-      await db.insert(schema.shareRecipients).values({
-        id: generateId(),
-        shareId,
-        email,
-        userId: existingUser?.id || null,
-        createdAt: new Date().toISOString(),
-      }).run();
+      await db
+        .insert(schema.shareRecipients)
+        .values({
+          id: generateId(),
+          shareId,
+          email,
+          userId: existingUser?.id || null,
+          createdAt: new Date().toISOString(),
+        })
+        .run();
     }
 
     const share = await db
@@ -114,8 +162,83 @@ app.post("/", requireAuth, async (c) => {
   }
 
   if (shareType === "public_link") {
-    const { expiresIn, password } = body;
+    const { expiresIn, password, linkAccess } = body;
+    const access = linkAccess === "org" ? "org" : "public";
 
+    // Extract org domain from creator's email
+    const creator = await db
+      .select()
+      .from(schema.users)
+      .where(eq(schema.users.id, userId))
+      .get();
+
+    const orgDomain =
+      access === "org" && creator
+        ? creator.email.split("@")[1] || null
+        : null;
+
+    // Check for existing public_link share on same repoId+path
+    let existingShare;
+    if (path) {
+      existingShare = await db
+        .select()
+        .from(schema.shares)
+        .where(
+          and(
+            eq(schema.shares.repoId, repoId),
+            eq(schema.shares.path, path),
+            eq(schema.shares.shareType, "public_link")
+          )
+        )
+        .get();
+    } else {
+      existingShare = await db
+        .select()
+        .from(schema.shares)
+        .where(
+          and(
+            eq(schema.shares.repoId, repoId),
+            isNull(schema.shares.path),
+            eq(schema.shares.shareType, "public_link")
+          )
+        )
+        .get();
+    }
+
+    if (existingShare) {
+      const updates: Record<string, string | null> = {
+        linkAccess: access,
+        orgDomain,
+        updatedAt: new Date().toISOString(),
+      };
+
+      if ("password" in body) {
+        updates.passwordHash = password ? hashToken(password) : null;
+      }
+
+      if ("expiresIn" in body) {
+        const duration = expiresIn ? parseDuration(expiresIn) : null;
+        updates.expiresAt = duration
+          ? new Date(Date.now() + duration).toISOString()
+          : null;
+      }
+
+      await db
+        .update(schema.shares)
+        .set(updates)
+        .where(eq(schema.shares.id, existingShare.id))
+        .run();
+
+      const updated = await db
+        .select()
+        .from(schema.shares)
+        .where(eq(schema.shares.id, existingShare.id))
+        .get();
+
+      return c.json({ data: { ...updated, publicToken: updated!.publicToken } });
+    }
+
+    // Create new public link
     const publicToken = generatePublicToken();
     let expiresAt: string | null = null;
 
@@ -131,19 +254,24 @@ app.post("/", requireAuth, async (c) => {
       passwordHash = hashToken(password);
     }
 
-    await db.insert(schema.shares).values({
-      id: shareId,
-      repoId,
-      path: path || null,
-      createdById: userId,
-      shareType: "public_link",
-      permission: "read",
-      publicToken,
-      passwordHash,
-      expiresAt,
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-    }).run();
+    await db
+      .insert(schema.shares)
+      .values({
+        id: shareId,
+        repoId,
+        path: path || null,
+        createdById: userId,
+        shareType: "public_link",
+        permission: "read",
+        publicToken,
+        linkAccess: access,
+        orgDomain,
+        passwordHash,
+        expiresAt,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      })
+      .run();
 
     const share = await db
       .select()
@@ -162,7 +290,6 @@ app.post("/", requireAuth, async (c) => {
 
     const sharePermission = permission === "write" ? "write" : "read";
 
-    // Verify team exists
     const team = await db
       .select()
       .from(schema.teams)
@@ -173,17 +300,20 @@ app.post("/", requireAuth, async (c) => {
       return c.json({ error: "Team not found" }, 404);
     }
 
-    await db.insert(schema.shares).values({
-      id: shareId,
-      repoId,
-      path: path || null,
-      createdById: userId,
-      shareType: "team",
-      permission: sharePermission,
-      teamId,
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-    }).run();
+    await db
+      .insert(schema.shares)
+      .values({
+        id: shareId,
+        repoId,
+        path: path || null,
+        createdById: userId,
+        shareType: "team",
+        permission: sharePermission,
+        teamId,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      })
+      .run();
 
     const share = await db
       .select()
@@ -214,7 +344,6 @@ app.get("/", requireAuth, async (c) => {
 
 /**
  * GET /incoming — List shares where current user is a recipient.
- * Joins shareRecipients on user's email.
  */
 app.get("/incoming", requireAuth, async (c) => {
   const userId = c.get("userId");
@@ -236,7 +365,10 @@ app.get("/incoming", requireAuth, async (c) => {
       acceptedAt: schema.shareRecipients.acceptedAt,
     })
     .from(schema.shareRecipients)
-    .innerJoin(schema.shares, eq(schema.shareRecipients.shareId, schema.shares.id))
+    .innerJoin(
+      schema.shares,
+      eq(schema.shareRecipients.shareId, schema.shares.id)
+    )
     .where(eq(schema.shareRecipients.email, user.email))
     .all();
 
@@ -276,8 +408,7 @@ app.delete("/:shareId", requireAuth, async (c) => {
 });
 
 /**
- * GET /public/:token — Resolve public share link. No auth required.
- * Returns share metadata + repo/path info. Checks expiry.
+ * GET /public/:token — Resolve public share link metadata. No auth required.
  */
 app.get("/public/:token", async (c) => {
   const token = c.req.param("token");
@@ -297,12 +428,51 @@ app.get("/public/:token", async (c) => {
     return c.json({ error: "Share not found or invalid token" }, 404);
   }
 
-  // Check expiry
   if (share.expiresAt && new Date(share.expiresAt) < new Date()) {
     return c.json({ error: "This share link has expired" }, 410);
   }
 
-  // Get repo info
+  if (share.passwordHash) {
+    const providedPassword = c.req.header("X-Share-Password");
+    if (!providedPassword || hashToken(providedPassword) !== share.passwordHash) {
+      return c.json({
+        data: {
+          id: share.id,
+          linkAccess: share.linkAccess,
+          orgDomain: share.orgDomain,
+          expiresAt: share.expiresAt,
+          hasPassword: true,
+        },
+      });
+    }
+  }
+
+  if (share.linkAccess === "org" && share.orgDomain) {
+    const userId = c.get("userId");
+    if (!userId) {
+      return c.json({
+        data: {
+          id: share.id,
+          linkAccess: share.linkAccess,
+          orgDomain: share.orgDomain,
+          expiresAt: share.expiresAt,
+          hasPassword: !!share.passwordHash,
+          requiresAuth: true,
+        },
+      });
+    }
+
+    const user = await db
+      .select()
+      .from(schema.users)
+      .where(eq(schema.users.id, userId))
+      .get();
+
+    if (user?.email.split("@")[1] !== share.orgDomain) {
+      return c.json({ error: "Access denied" }, 403);
+    }
+  }
+
   const repo = await db
     .select()
     .from(schema.repos)
@@ -315,18 +485,15 @@ app.get("/public/:token", async (c) => {
       repoId: share.repoId,
       path: share.path,
       permission: share.permission,
+      linkAccess: share.linkAccess,
+      orgDomain: share.orgDomain,
       expiresAt: share.expiresAt,
       hasPassword: !!share.passwordHash,
-      repo: repo
-        ? { id: repo.id, ownerType: repo.ownerType }
-        : null,
+      repo: repo ? { id: repo.id, ownerType: repo.ownerType } : null,
     },
   });
 });
 
-/**
- * Parse a human-readable duration string (e.g., "7d", "24h", "30m") into milliseconds.
- */
 function parseDuration(input: string): number | null {
   const match = input.match(/^(\d+)(m|h|d|w)$/);
   if (!match) return null;

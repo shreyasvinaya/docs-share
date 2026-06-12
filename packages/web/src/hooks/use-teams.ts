@@ -38,6 +38,18 @@ export function useCreateTeam() {
   });
 }
 
+export function useUpdateTeam(teamId: string | undefined) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (data: { name?: string; description?: string | null }) =>
+      api.patch<Team>(`/api/teams/${teamId}`, data),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["teams"] });
+      qc.invalidateQueries({ queryKey: ["teams", teamId] });
+    },
+  });
+}
+
 export function useInviteMember(teamId: string) {
   const qc = useQueryClient();
   return useMutation({

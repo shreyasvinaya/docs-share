@@ -6,6 +6,7 @@ import { DashboardPage } from "@/pages/dashboard";
 import { PersonalFilesPage } from "@/pages/personal-files";
 import { SharedWithMePage } from "@/pages/shared-with-me";
 import { FilePreviewPage } from "@/pages/file-preview";
+import { TeamsIndexPage } from "@/pages/teams-index";
 import { TeamOverviewPage } from "@/pages/team-overview";
 import { TeamSettingsPage } from "@/pages/team-settings";
 import { SettingsPage } from "@/pages/settings";
@@ -39,6 +40,7 @@ export function App() {
           <Route path="files/*" element={<PersonalFilesPage />} />
           <Route path="shared" element={<SharedWithMePage />} />
           <Route path="preview/:repoId/*" element={<FilePreviewPage />} />
+          <Route path="teams" element={<TeamsIndexPage />} />
           <Route path="teams/:teamId" element={<TeamOverviewPage />} />
           <Route
             path="teams/:teamId/settings"

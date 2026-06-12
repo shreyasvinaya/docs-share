@@ -4,6 +4,8 @@ import { usePersonalRepo } from "@/hooks/use-personal-repo";
 import { useFiles, useUploadFile } from "@/hooks/use-files";
 import { FileTree } from "@/components/files/file-tree";
 import { FileUploadZone } from "@/components/files/file-upload-zone";
+import { GitHubSyncPanel } from "@/components/files/github-sync-panel";
+import type { UploadItem } from "@/hooks/use-files";
 import { EmptyState } from "@/components/common/empty-state";
 
 function useCurrentPath() {
@@ -23,9 +25,9 @@ export function PersonalFilesPage() {
   const upload = useUploadFile(repoId);
 
   const handleUpload = useCallback(
-    (fileList: File[]) => {
+    (items: UploadItem[]) => {
       if (!repoId) return;
-      upload.mutate({ files: fileList, path: currentPath });
+      upload.mutate({ items, path: currentPath });
     },
     [repoId, currentPath, upload],
   );
@@ -86,6 +88,8 @@ export function PersonalFilesPage() {
         isUploading={upload.isPending}
         className="mb-6"
       />
+
+      <GitHubSyncPanel repoId={repoId} />
 
       {/* File list */}
       {isLoading ? (

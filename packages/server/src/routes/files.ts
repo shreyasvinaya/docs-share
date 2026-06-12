@@ -3,10 +3,14 @@ import { eq, and, like } from "drizzle-orm";
 import { db, schema } from "../db/index.js";
 import { requireAuth } from "../middleware/requireAuth.js";
 import { checkAccess } from "../middleware/shareAccess.js";
-import { generateId } from "../lib/crypto.js";
 import { config } from "../lib/config.js";
-import { join } from "path";
-import { mkdtemp, rm } from "fs/promises";
+import { normalizeRelativePath, resolveInside } from "../lib/security.js";
+import {
+  extractRepoFiles,
+  indexRepoFiles,
+} from "../services/fileExtractor.js";
+import { dirname, join } from "path";
+import { mkdir, mkdtemp, rm } from "fs/promises";
 import { tmpdir } from "os";
 
 import type { FileNode } from "@docs-share/shared";
@@ -193,13 +197,32 @@ app.post("/:repoId/upload", checkAccess("write"), async (c) => {
   }
 
   const formData = await c.req.formData();
-  const targetPath = (formData.get("path") as string) || "";
+  const targetPathInput = (formData.get("path") as string) || "";
+  const targetPath = normalizeRelativePath(targetPathInput);
   const commitMessage = (formData.get("message") as string) || "Upload files";
+
+  if (targetPath === null) {
+    return c.json({ error: "Invalid upload path" }, 400);
+  }
+
+  const manifestRaw = formData.get("manifest");
+  let manifest: string[] | null = null;
+  if (typeof manifestRaw === "string" && manifestRaw.trim()) {
+    try {
+      const parsed = JSON.parse(manifestRaw);
+      if (!Array.isArray(parsed) || parsed.some((item) => typeof item !== "string")) {
+        return c.json({ error: "Invalid upload manifest" }, 400);
+      }
+      manifest = parsed;
+    } catch {
+      return c.json({ error: "Invalid upload manifest" }, 400);
+    }
+  }
 
   // Collect uploaded files
   const uploadedFiles: Array<{ name: string; data: ArrayBuffer }> = [];
   for (const [key, value] of formData.entries()) {
-    if (key === "path" || key === "message") continue;
+    if (key === "path" || key === "message" || key === "manifest") continue;
     // Bun types declare entries() as [string, string], but at runtime
     // file uploads arrive as File/Blob objects. Use a type assertion to
     // allow the instanceof check.
@@ -214,6 +237,10 @@ app.post("/:repoId/upload", checkAccess("write"), async (c) => {
 
   if (uploadedFiles.length === 0) {
     return c.json({ error: "No files provided" }, 400);
+  }
+
+  if (manifest && manifest.length !== uploadedFiles.length) {
+    return c.json({ error: "Upload manifest does not match files" }, 400);
   }
 
   // Work in a temp directory: clone, add files, commit, push
@@ -260,24 +287,25 @@ app.post("/:repoId/upload", checkAccess("write"), async (c) => {
     // Write files to the clone
     const fileRecords: Array<{ path: string; sizeBytes: number; mimeType: string | null }> = [];
 
-    for (const file of uploadedFiles) {
-      const fileDest = targetPath
-        ? join(clonePath, targetPath, file.name)
-        : join(clonePath, file.name);
-
-      // Ensure parent directory exists
-      const parentDir = fileDest.substring(0, fileDest.lastIndexOf("/"));
-      const mkdirProc = Bun.spawn(["mkdir", "-p", parentDir], {
-        stdout: "pipe",
-        stderr: "pipe",
-      });
-      await mkdirProc.exited;
-
-      await Bun.write(fileDest, file.data);
+    for (const [index, file] of uploadedFiles.entries()) {
+      const requestedPath = manifest?.[index] ?? file.name;
+      const normalizedFileName = normalizeRelativePath(requestedPath);
+      if (!normalizedFileName) {
+        return c.json({ error: `Invalid file path: ${requestedPath}` }, 400);
+      }
 
       const relativePath = targetPath
-        ? `${targetPath}/${file.name}`
-        : file.name;
+        ? `${targetPath}/${normalizedFileName}`
+        : normalizedFileName;
+      const fileDest = resolveInside(clonePath, relativePath);
+
+      if (!fileDest) {
+        return c.json({ error: `Invalid upload path: ${file.name}` }, 400);
+      }
+
+      await mkdir(dirname(fileDest), { recursive: true });
+
+      await Bun.write(fileDest, file.data);
 
       fileRecords.push({
         path: relativePath,
@@ -335,46 +363,8 @@ app.post("/:repoId/upload", checkAccess("write"), async (c) => {
       .where(eq(schema.repos.id, repoId))
       .run();
 
-    // Upsert file records in the DB
-    const now = new Date().toISOString();
-    for (const fr of fileRecords) {
-      const existing = await db
-        .select()
-        .from(schema.files)
-        .where(
-          and(
-            eq(schema.files.repoId, repoId),
-            eq(schema.files.path, fr.path)
-          )
-        )
-        .get();
-
-      if (existing) {
-        await db
-          .update(schema.files)
-          .set({
-            sizeBytes: fr.sizeBytes,
-            mimeType: fr.mimeType,
-            blobSha: headSha,
-            updatedAt: now,
-          })
-          .where(eq(schema.files.id, existing.id))
-          .run();
-      } else {
-        await db
-          .insert(schema.files)
-          .values({
-            id: generateId(),
-            repoId,
-            path: fr.path,
-            blobSha: headSha,
-            sizeBytes: fr.sizeBytes,
-            mimeType: fr.mimeType,
-            updatedAt: now,
-          })
-          .run();
-      }
-    }
+    await extractRepoFiles(repoId, repo.diskPath, headSha);
+    await indexRepoFiles(repoId, repo.diskPath, headSha);
 
     return c.json({
       data: {

@@ -24,7 +24,10 @@ export function useLogout() {
 export function useApiTokens() {
   return useQuery({
     queryKey: ["api-tokens"],
-    queryFn: () => api.get<ApiToken[]>("/api/auth/tokens"),
+    queryFn: async () => {
+      const res = await api.get<{ tokens: ApiToken[] }>("/api/auth/tokens");
+      return res.tokens;
+    },
   });
 }
 

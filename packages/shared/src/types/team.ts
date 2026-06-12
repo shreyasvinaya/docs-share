@@ -7,6 +7,7 @@ export const teamSchema = z.object({
   id: z.string(),
   name: z.string(),
   slug: z.string(),
+  description: z.string().nullable().optional(),
   ownerId: z.string(),
   createdAt: z.string(),
 });
@@ -20,6 +21,7 @@ export const createTeamSchema = z.object({
     .min(1)
     .max(50)
     .regex(/^[a-z0-9-]+$/, "Slug must be lowercase alphanumeric with hyphens"),
+  description: z.string().max(500).optional(),
 });
 
 export type CreateTeam = z.infer<typeof createTeamSchema>;

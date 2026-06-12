@@ -1,10 +1,12 @@
 node_modules/
 dist/
 .turbo/
+*.tsbuildinfo
 *.db
 *.db-wal
 *.db-shm
 .env
 .env.local
 /data/
+packages/server/data/
 .DS_Store
