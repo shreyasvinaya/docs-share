@@ -3,6 +3,7 @@
 import { Command } from "commander";
 import { loginCommand } from "./commands/login.js";
 import { pushCommand } from "./commands/push.js";
+import { draftCommand } from "./commands/draft.js";
 import { lsCommand } from "./commands/ls.js";
 import { shareCommand } from "./commands/share.js";
 import { teamsCommand } from "./commands/teams.js";
@@ -49,6 +50,7 @@ program.hook("preAction", (_thisCommand, actionCommand) => {
 // Register commands
 program.addCommand(loginCommand);
 program.addCommand(pushCommand);
+program.addCommand(draftCommand);
 program.addCommand(lsCommand);
 program.addCommand(shareCommand);
 program.addCommand(teamsCommand);

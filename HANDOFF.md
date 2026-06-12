@@ -94,6 +94,8 @@ Monorepo layout (`packages/*`):
   permission, publicToken, **linkAccess** (`public`/`org`), **orgDomain**, passwordHash, teamId, expiresAt.
 - **share_recipients** — shareId, email, userId, acceptedAt.
 - **github_syncs** — repoId, repoUrl, branch, status, lastCommitSha, lastSyncedAt, error.
+- **drafts** — ownerUserId, storagePath, title, sourceFilename, sizeBytes, contentSha256,
+  publicToken, expiresAt.
 - **sessions** — id, userId, expiresAt.
 
 Migrations live in `packages/server/src/db/migrations/` and run automatically at startup
@@ -145,6 +147,20 @@ without configuring Google OAuth.
 - File serving (`/view/:repoId/*`) with auth + access check; directory requests fall back to
   `index.html`.
 
+**Drafts / Postplan-style HTML plan publishing**
+- API-token/session upload (`POST /api/drafts`) for a single `.html`/`.htm` draft.
+- CLI command `docs-share draft <plan.html>` publishes one draft and prints the hosted URL.
+- Draft metadata is first-class in SQLite (`drafts` table); content is stored under
+  `/data/drafts/_drafts/<draftId>/index.html`, not in generic repo files or shares.
+- Authenticated draft wrapper (`/d/:draftId`) renders a thin Postplan-style top bar and a
+  sandboxed iframe. The iframe deliberately omits `allow-same-origin`.
+- Raw draft content is served through short-lived signed `/draft-content/:draftId?...` URLs
+  on `CONTENT_ORIGIN` with a CSP `sandbox allow-scripts` header and no-referrer policy,
+  rather than through `/view`. Those content URLs are short-lived bearer URLs signed with
+  `DRAFT_CONTENT_SECRET`.
+- API-token upload requires `draft:write`, `draft:*`, or `*` scope; browser sessions bypass
+  API-token scope checks.
+
 **Teams (Google-Group-style)**
 - Full CRUD, **descriptions**, member management with roles, invite by email.
 - `/teams` index page (card grid) + per-team overview + settings (incl. danger zone).
@@ -172,9 +188,11 @@ without configuring Google OAuth.
 - `GET /api/repos/:repoId/github-sync` — sync status (`syncing`/`success`/`error` + last commit).
 - URL/branch validation in `services/githubSync.ts` (https + github.com only, sanitized branch).
 
-**CLI (`packages/cli`)** — `login`, `push`, `ls`, `share`, `teams`, `whoami`.
+**CLI (`packages/cli`)** — `login`, `push`, `draft`, `ls`, `share`, `teams`, `whoami`.
 - `push` collects files (recurses dirs, skips dotfiles), uploads multipart, prints preview
   URLs, and can `--share <email>` / `--share-team <slug>` in one shot. JSON output when piped.
+- `draft` uploads a single HTML draft and prints only the hosted URL by default. `--json`
+  prints `{ id, url, title, createdAt }`.
 
 **Frontend polish**
 - Dark mode (Tailwind v4 class strategy, light/dark/system toggle, persisted).
@@ -212,6 +230,8 @@ Repos    GET/POST /api/repos/:repoId/github-sync
 Files    GET /api/files/:repoId · /:repoId/commits   POST /:repoId/upload
 Shares   POST/GET /api/shares   GET /api/shares/for-resource · /incoming
          DELETE /api/shares/:id   GET /api/shares/public/:token
+Drafts   POST/GET /api/drafts[/:draftId]   GET /d/:draftId
+         GET /draft-content/:draftId?exp=...&sig=...
 Git      /git/*  (smart HTTP)
 View     /view/:repoId/*   /view/public/:token[/*]
 Internal /internal/*  (post-receive hook target, HOOK_SECRET-gated)
@@ -243,8 +263,8 @@ Self-hosting via Docker is documented in `docs/self-hosting.md` (build the web a
 
 ### Key env vars
 `PORT`, `HOST`, `APP_URL`, `API_URL`, `DATA_DIR`, `WEB_DIST_DIR`, `ENABLE_DEV_LOGIN`,
-`GOOGLE_CLIENT_ID/SECRET/REDIRECT_URI`, `SESSION_SECRET`, `HOOK_SECRET`, `HOOK_BASE_URL`,
-`CONTENT_ORIGIN`, `ALLOW_INSECURE_APP_URL`.
+`GOOGLE_CLIENT_ID/SECRET/REDIRECT_URI`, `SESSION_SECRET`, `DRAFT_CONTENT_SECRET`,
+`HOOK_SECRET`, `HOOK_BASE_URL`, `CONTENT_ORIGIN`, `ALLOW_INSECURE_APP_URL`.
 
 ---
 
@@ -258,6 +278,10 @@ Self-hosting via Docker is documented in `docs/self-hosting.md` (build the web a
   with an empty trailing path — don't double-join.
 - **Migrations are forgiving by design:** the runner swallows "already exists" / "duplicate
   column name". If a migration silently no-ops, check `_journal.json` has the entry.
+- **Draft HTML is untrusted content:** keep `/d/:draftId` as the authenticated wrapper and
+  keep raw HTML behind signed `CONTENT_ORIGIN` `/draft-content` URLs with CSP sandboxing.
+  Do not point draft iframes at `/view`, and do not add `allow-same-origin` to the draft
+  iframe sandbox. Treat signed content URLs as short-lived bearer URLs.
 - **Session vs token:** `sessionMiddleware` never 401s; it just *maybe* sets `userId`. That's
   what lets `org` public links check "is the viewer signed in?" without forcing auth on the
   route. Enforcement is `requireAuth` only.

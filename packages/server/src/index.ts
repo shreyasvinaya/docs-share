@@ -10,6 +10,7 @@ import teamRoutes from "./routes/teams.js";
 import projectRoutes from "./routes/projects.js";
 import repoRoutes from "./routes/repos.js";
 import fileRoutes from "./routes/files.js";
+import draftRoutes, { renderDraftPage, serveDraftContent } from "./routes/drafts.js";
 import shareRoutes from "./routes/shares.js";
 import internalRoutes from "./routes/internal.js";
 import viewRoutes from "./routes/view.js";
@@ -35,11 +36,26 @@ app.route("/api/teams", teamRoutes);
 app.route("/api/projects", projectRoutes);
 app.route("/api/repos", repoRoutes);
 app.route("/api/files", fileRoutes);
+app.route("/api/drafts", draftRoutes);
 app.route("/api/shares", shareRoutes);
 
 app.route("/git", gitRoutes);
 app.route("/internal", internalRoutes);
 app.route("/view", viewRoutes);
+
+app.get("/d/:draftId", async (c) => {
+  const userId = c.get("userId");
+  if (!userId) return c.redirect(`/login?next=${encodeURIComponent(c.req.path)}`);
+  return renderDraftPage(c.req.param("draftId"), userId);
+});
+
+app.get("/draft-content/:draftId", (c) =>
+  serveDraftContent(
+    c.req.param("draftId"),
+    c.req.query("exp"),
+    c.req.query("sig")
+  )
+);
 
 app.get("/health", (c) => c.json({ ok: true }));
 

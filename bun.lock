@@ -20,6 +20,7 @@
         "commander": "^13",
       },
       "devDependencies": {
+        "@types/bun": "latest",
         "@types/node": "^22",
         "tsup": "^8",
         "typescript": "^5.8",

@@ -14,9 +14,10 @@ The app listens on port `3000`. The container serves both the API and the built 
 - `NODE_ENV=production`
 - `APP_URL=https://your-domain`
 - `API_URL=https://your-domain`
-- `CONTENT_ORIGIN=https://your-domain`
+- `CONTENT_ORIGIN=https://content.your-domain` for sandboxed draft HTML content
 - `GOOGLE_REDIRECT_URI=https://your-domain/api/auth/google/callback`
 - `SESSION_SECRET` with at least 32 random characters
+- `DRAFT_CONTENT_SECRET` with at least 32 random characters, distinct from `SESSION_SECRET`
 - `HOOK_SECRET` with at least 32 random characters
 - `ENABLE_DEV_LOGIN=false`
 
@@ -51,6 +52,8 @@ Terminate TLS at your proxy and forward all paths to the app container:
 - `/git`
 - `/internal`
 - `/view`
+- `/draft-content` on `CONTENT_ORIGIN`; for local-only installs this can point at the same
+  app, but production should use a separate content host.
 
 Make sure large request bodies are allowed if users upload large files.
 

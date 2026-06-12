@@ -30,6 +30,10 @@ export const config = {
   ),
 
   SESSION_SECRET: env("SESSION_SECRET", "dev-secret-change-in-production"),
+  DRAFT_CONTENT_SECRET: env(
+    "DRAFT_CONTENT_SECRET",
+    "dev-draft-content-secret-change-in-production"
+  ),
   HOOK_SECRET: env("HOOK_SECRET", "dev-hook-secret-change-in-production"),
   HOOK_BASE_URL: env("HOOK_BASE_URL", `http://localhost:${env("PORT", "3000")}`),
 
@@ -37,6 +41,7 @@ export const config = {
 };
 
 assertProductionSecret("SESSION_SECRET", config.SESSION_SECRET);
+assertProductionSecret("DRAFT_CONTENT_SECRET", config.DRAFT_CONTENT_SECRET);
 assertProductionSecret("HOOK_SECRET", config.HOOK_SECRET);
 
 if (

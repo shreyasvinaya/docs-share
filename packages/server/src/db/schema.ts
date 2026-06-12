@@ -170,6 +170,30 @@ export const files = sqliteTable(
   ]
 );
 
+export const drafts = sqliteTable(
+  "drafts",
+  {
+    id: text("id").primaryKey(),
+    ownerUserId: text("owner_user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    storagePath: text("storage_path").notNull(),
+    title: text("title").notNull(),
+    sourceFilename: text("source_filename").notNull(),
+    sizeBytes: integer("size_bytes").notNull(),
+    contentSha256: text("content_sha256").notNull(),
+    createdAt: text("created_at")
+      .notNull()
+      .default(sql`(CURRENT_TIMESTAMP)`),
+    updatedAt: text("updated_at")
+      .notNull()
+      .default(sql`(CURRENT_TIMESTAMP)`),
+  },
+  (table) => [
+    index("drafts_owner_idx").on(table.ownerUserId),
+  ]
+);
+
 export const shares = sqliteTable(
   "shares",
   {
