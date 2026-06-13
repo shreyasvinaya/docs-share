@@ -7,6 +7,26 @@
     },
     "dev": {
       "dependsOn": ["^build"],
+      "passThroughEnv": [
+        "ALLOW_INSECURE_APP_URL",
+        "API_URL",
+        "APP_ENV",
+        "APP_URL",
+        "CONTENT_ORIGIN",
+        "DATA_DIR",
+        "DRAFT_CONTENT_SECRET",
+        "ENABLE_DEV_LOGIN",
+        "GOOGLE_CLIENT_ID",
+        "GOOGLE_CLIENT_SECRET",
+        "GOOGLE_REDIRECT_URI",
+        "HOOK_BASE_URL",
+        "HOOK_SECRET",
+        "HOST",
+        "NODE_ENV",
+        "PORT",
+        "SESSION_SECRET",
+        "WEB_DIST_DIR"
+      ],
       "persistent": true,
       "cache": false
     },
