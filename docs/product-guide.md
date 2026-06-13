@@ -60,8 +60,9 @@ Disable dev login in production with:
 ENABLE_DEV_LOGIN=false
 ```
 
-API tokens default to `*` scope from the web UI. The draft upload route accepts
-tokens with `*`, `draft:*`, or `draft:write`.
+API tokens default to `*` scope from the web UI. Draft upload and deletion
+accept tokens with `*`, `draft:*`, or `draft:write`; draft list and lookup
+accept tokens with `*`, `draft:*`, or `draft:read`.
 
 ## Publishing A Single Authenticated HTML Draft
 
@@ -104,6 +105,9 @@ Draft rules:
 The draft viewer is intentionally minimal: a 28px dark bar labeled `Postplan`
 and an iframe containing the uploaded HTML. It does not show the full app shell,
 file tree, history, or share dialog.
+
+Open **Drafts** in the authenticated web app to search owner drafts, open a
+draft URL, copy its URL, or delete the draft record and stored HTML.
 
 ## Uploading Static HTML Bundles
 

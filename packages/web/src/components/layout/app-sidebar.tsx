@@ -26,6 +26,16 @@ const mainNav = [
     ),
   },
   {
+    label: "Drafts",
+    to: "/drafts",
+    icon: (
+      <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
+        <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 4.875c0-.621.504-1.125 1.125-1.125h8.25c.298 0 .585.119.795.33l6 6c.211.21.33.497.33.795v8.25c0 .621-.504 1.125-1.125 1.125H4.875a1.125 1.125 0 01-1.125-1.125V4.875z" />
+        <path strokeLinecap="round" strokeLinejoin="round" d="M13.5 3.75v6.75H20.25M8.25 15h7.5M8.25 17.25h4.5" />
+      </svg>
+    ),
+  },
+  {
     label: "Shared with me",
     to: "/shared",
     icon: (

@@ -143,6 +143,24 @@ Draft lookup:
 GET /api/drafts/:draftId
 ```
 
+Draft listing:
+
+```text
+GET /api/drafts
+```
+
+Returns owner drafts sorted newest first. API-token callers need `*`,
+`draft:*`, or `draft:read`.
+
+Draft deletion:
+
+```text
+DELETE /api/drafts/:draftId
+```
+
+Deletes the owner draft metadata and stored HTML. API-token callers need `*`,
+`draft:*`, or `draft:write`.
+
 Draft viewer:
 
 ```text
@@ -261,8 +279,8 @@ Also run a markdown/link sanity check if a local markdown tool is available.
   to `docs-share push` for a folder.
 - `Draft upload exceeds the 10 MB limit`: reduce or split the file. Linked asset
   bundles should use repository upload instead.
-- `Token scope does not allow this action`: create a token with `draft:write`,
-  `draft:*`, or `*`.
+- `Token scope does not allow this action`: create a token with `draft:read`,
+  `draft:write`, `draft:*`, or `*`, depending on the requested operation.
 - Relative CSS or page links fail from a public file share: share the containing
   directory instead of the single HTML file.
 - `/draft-content/...` returns 403: signed content URLs expire after a short TTL;

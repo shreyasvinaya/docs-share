@@ -2,6 +2,7 @@ import { useState } from "react";
 import { Link, useNavigate } from "react-router";
 import { usePersonalRepo } from "@/hooks/use-personal-repo";
 import { useFiles } from "@/hooks/use-files";
+import { useDrafts } from "@/hooks/use-drafts";
 import { useTeams } from "@/hooks/use-teams";
 import { useIncomingShares } from "@/hooks/use-sharing";
 import { EmptyState } from "@/components/common/empty-state";
@@ -13,10 +14,12 @@ export function DashboardPage() {
   const { data: personalRepo } = usePersonalRepo();
   const repoId = personalRepo?.repo?.id;
   const { data: files } = useFiles(repoId);
+  const { data: drafts } = useDrafts();
   const { data: teams } = useTeams();
   const { data: incoming } = useIncomingShares();
 
   const recentFiles = (files ?? []).slice(0, 8);
+  const recentDrafts = (drafts ?? []).slice(0, 5);
   const recentShared = (incoming ?? []).slice(0, 5);
 
   return (
@@ -34,6 +37,17 @@ export function DashboardPage() {
             <path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5m-13.5-9L12 3m0 0l4.5 4.5M12 3v13.5" />
           </svg>
           Upload HTML
+        </button>
+        <button
+          type="button"
+          onClick={() => navigate("/drafts")}
+          className="flex items-center gap-2 rounded-lg border border-border px-4 py-2.5 text-sm font-medium transition-colors hover:bg-muted"
+        >
+          <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 4.875c0-.621.504-1.125 1.125-1.125h8.25c.298 0 .585.119.795.33l6 6c.211.21.33.497.33.795v8.25c0 .621-.504 1.125-1.125 1.125H4.875a1.125 1.125 0 01-1.125-1.125V4.875z" />
+            <path strokeLinecap="round" strokeLinejoin="round" d="M13.5 3.75v6.75H20.25M8.25 15h7.5M8.25 17.25h4.5" />
+          </svg>
+          Drafts
         </button>
         <button
           type="button"
@@ -111,6 +125,57 @@ export function DashboardPage() {
                 className="rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90"
               >
                 Go to Files
+              </Link>
+            }
+          />
+        )}
+      </section>
+
+      {/* Recent drafts */}
+      <section className="mb-8">
+        <div className="mb-3 flex items-center justify-between">
+          <h2 className="text-lg font-semibold">Recent Drafts</h2>
+          <Link
+            to="/drafts"
+            className="text-sm text-muted-foreground transition-colors hover:text-foreground"
+          >
+            View all
+          </Link>
+        </div>
+        {recentDrafts.length > 0 ? (
+          <div className="rounded-lg border border-border">
+            {recentDrafts.map((draft, i) => (
+              <a
+                key={draft.id}
+                href={draft.url}
+                target="_blank"
+                rel="noreferrer"
+                className={`flex items-center justify-between gap-4 px-4 py-3 transition-colors hover:bg-muted/50 ${
+                  i < recentDrafts.length - 1 ? "border-b border-border" : ""
+                }`}
+              >
+                <div className="min-w-0">
+                  <p className="truncate text-sm font-medium">{draft.title}</p>
+                  <p className="mt-0.5 truncate text-xs text-muted-foreground">
+                    {draft.sourceFilename}
+                  </p>
+                </div>
+                <span className="shrink-0 text-xs text-muted-foreground">
+                  {new Date(draft.createdAt).toLocaleDateString()}
+                </span>
+              </a>
+            ))}
+          </div>
+        ) : (
+          <EmptyState
+            title="No drafts yet"
+            description="Drafts published by the CLI will appear here."
+            action={
+              <Link
+                to="/drafts"
+                className="rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90"
+              >
+                Open Drafts
               </Link>
             }
           />

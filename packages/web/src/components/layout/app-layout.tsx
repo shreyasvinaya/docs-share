@@ -15,6 +15,7 @@ function useBreadcrumbs(pathname: string) {
   const crumbs: { label: string; to: string | null; key: string }[] = [];
 
   const labelMap: Record<string, string> = {
+    drafts: "Drafts",
     files: "Files",
     shared: "Shared with me",
     preview: "Preview",

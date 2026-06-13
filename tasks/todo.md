@@ -74,7 +74,7 @@ Build a Postplan-shaped mode for this repo: agents can upload a single static HT
 - [x] Phase 4: Add CLI `draft` command with URL-first output and JSON mode.
 - [x] Phase 5: Add focused tests for draft helpers, scope enforcement, shell sandboxing, and CLI behavior.
 - [x] Phase 6: Document the command and security boundary in `HANDOFF.md`.
-- [ ] Phase 7: Polish dashboard/listing only after the upload-to-URL loop feels excellent.
+- [x] Phase 7: Polish dashboard/listing only after the upload-to-URL loop feels excellent.
 
 ## Public Website + Docs Surface Plan
 
@@ -96,6 +96,8 @@ Build a Postplan-shaped mode for this repo: agents can upload a single static HT
 - Implemented first-class authenticated drafts with dedicated draft storage, signed content URLs, scoped API-token upload, and Postplan-style wrapper.
 - Avoided using `/view` for draft iframe content after architecture review flagged same-origin HTML as a security boundary.
 - Verification evidence: focused draft/scope tests pass; full `bun run check` passes.
+- Phase 7 update: added an authenticated draft listing dashboard at `/drafts`, owner-scoped `GET /api/drafts`, write-scoped draft deletion, sidebar/dashboard navigation, URL copy/open/delete actions, and shared list item types.
+- Phase 7 verification evidence: draft helper and route tests pass; server and web typechecks pass; full `bun run check` passes.
 
 ## Public Site And Docs
 

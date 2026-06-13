@@ -150,6 +150,8 @@ without configuring Google OAuth.
 **Drafts / Postplan-style HTML plan publishing**
 - API-token/session upload (`POST /api/drafts`) for a single `.html`/`.htm` draft.
 - CLI command `docs-share draft <plan.html>` publishes one draft and prints the hosted URL.
+- Authenticated web listing (`/drafts`) shows owner drafts with search, open, copy URL,
+  and delete actions.
 - Draft metadata is first-class in SQLite (`drafts` table); content is stored under
   `/data/drafts/_drafts/<draftId>/index.html`, not in generic repo files or shares.
 - Authenticated draft wrapper (`/d/:draftId`) renders a thin Postplan-style top bar and a
@@ -158,7 +160,8 @@ without configuring Google OAuth.
   on `CONTENT_ORIGIN` with a CSP `sandbox allow-scripts` header and no-referrer policy,
   rather than through `/view`. Those content URLs are short-lived bearer URLs signed with
   `DRAFT_CONTENT_SECRET`.
-- API-token upload requires `draft:write`, `draft:*`, or `*` scope; browser sessions bypass
+- API-token upload/delete requires `draft:write`, `draft:*`, or `*` scope. API-token list
+  and lookup requires `draft:read`, `draft:*`, or `*` scope; browser sessions bypass
   API-token scope checks.
 
 **Teams (Google-Group-style)**
@@ -230,7 +233,8 @@ Repos    GET/POST /api/repos/:repoId/github-sync
 Files    GET /api/files/:repoId · /:repoId/commits   POST /:repoId/upload
 Shares   POST/GET /api/shares   GET /api/shares/for-resource · /incoming
          DELETE /api/shares/:id   GET /api/shares/public/:token
-Drafts   POST/GET /api/drafts[/:draftId]   GET /d/:draftId
+Drafts   POST/GET /api/drafts[/:draftId]   DELETE /api/drafts/:draftId
+         GET /d/:draftId
          GET /draft-content/:draftId?exp=...&sig=...
 Git      /git/*  (smart HTTP)
 View     /view/:repoId/*   /view/public/:token[/*]

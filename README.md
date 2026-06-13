@@ -76,6 +76,10 @@ docs-share push ./site --to personal --message "Publish site"
 docs-share teams
 ```
 
+Drafts published with `docs-share draft` are visible in the authenticated web
+app under **Drafts**, where owners can open, copy, search, and delete their
+private draft URLs.
+
 ## Linked HTML Bundles
 
 docs-share serves files by their repo-relative path. If `index.html` links to `about.html` or `assets/app.css`, those links resolve when the linked files exist at the matching paths in the same repo tree.
@@ -103,6 +107,7 @@ bun run check
 Back up the full `DATA_DIR`. It contains:
 
 - `docs-share.db`
+- `drafts/`
 - `repos/`
 - `worktrees/`
 

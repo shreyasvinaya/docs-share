@@ -1,6 +1,6 @@
 import { Hono } from "hono";
-import { eq } from "drizzle-orm";
-import { mkdir, readFile } from "fs/promises";
+import { desc, eq } from "drizzle-orm";
+import { mkdir, readFile, rm } from "fs/promises";
 import { dirname, join } from "path";
 import { createHmac, timingSafeEqual } from "crypto";
 import { db, schema } from "../db/index.js";
@@ -29,6 +29,12 @@ interface DraftResponse {
   createdAt: string;
 }
 
+interface DraftListRecord extends DraftResponse {
+  sourceFilename: string;
+  sizeBytes: number;
+  updatedAt: string;
+}
+
 function baseUrl(): string {
   return config.API_URL.replace(/\/+$/, "");
 }
@@ -48,6 +54,37 @@ function draftResponse(draft: {
     title: draft.title,
     createdAt: draft.createdAt,
   };
+}
+
+function draftListItemResponse(draft: {
+  id: string;
+  title: string;
+  sourceFilename: string;
+  sizeBytes: number;
+  createdAt: string;
+  updatedAt: string;
+}): DraftListRecord {
+  return {
+    ...draftResponse(draft),
+    sourceFilename: draft.sourceFilename,
+    sizeBytes: draft.sizeBytes,
+    updatedAt: draft.updatedAt,
+  };
+}
+
+export function draftListResponse(
+  drafts: {
+    id: string;
+    title: string;
+    sourceFilename: string;
+    sizeBytes: number;
+    createdAt: string;
+    updatedAt: string;
+  }[]
+): DraftListRecord[] {
+  return [...drafts]
+    .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+    .map(draftListItemResponse);
 }
 
 function draftsBaseDir(): string {
@@ -137,7 +174,18 @@ app.post("/", requireAuth, requireScope("draft:write"), async (c) => {
   return c.json({ data: draftResponse({ id: draftId, title, createdAt: now }) });
 });
 
-app.get("/:draftId", requireAuth, async (c) => {
+app.get("/", requireAuth, requireScope("draft:read"), async (c) => {
+  const userId = c.get("userId");
+  const drafts = await db
+    .select()
+    .from(schema.drafts)
+    .where(eq(schema.drafts.ownerUserId, userId))
+    .orderBy(desc(schema.drafts.createdAt));
+
+  return c.json({ data: draftListResponse(drafts) });
+});
+
+app.get("/:draftId", requireAuth, requireScope("draft:read"), async (c) => {
   const userId = c.get("userId");
   const draftId = c.req.param("draftId");
   const draft = await db
@@ -150,6 +198,32 @@ app.get("/:draftId", requireAuth, async (c) => {
   if (draft.ownerUserId !== userId) return c.json({ error: "Access denied" }, 403);
 
   return c.json({ data: draftResponse(draft) });
+});
+
+app.delete("/:draftId", requireAuth, requireScope("draft:write"), async (c) => {
+  const userId = c.get("userId");
+  const draftId = c.req.param("draftId");
+  const draft = await db
+    .select()
+    .from(schema.drafts)
+    .where(eq(schema.drafts.id, draftId))
+    .get();
+
+  if (!draft) return c.json({ error: "Draft not found" }, 404);
+  if (draft.ownerUserId !== userId) return c.json({ error: "Access denied" }, 403);
+
+  const absolutePath = draftStorageAbsolutePath(draft.storagePath);
+  if (!absolutePath) return c.json({ error: "Invalid draft path" }, 400);
+
+  try {
+    await rm(dirname(absolutePath), { recursive: true, force: true });
+  } catch {
+    return c.json({ error: "Failed to delete draft content" }, 500);
+  }
+
+  await db.delete(schema.drafts).where(eq(schema.drafts.id, draftId)).run();
+
+  return c.json({ data: { deleted: true } });
 });
 
 export async function renderDraftPage(draftId: string, userId: string): Promise<Response> {
