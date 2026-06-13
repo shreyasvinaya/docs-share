@@ -1,5 +1,7 @@
 # Self-Hosting
 
+For platform-specific deployment paths, see [`deployment.md`](deployment.md).
+
 ## Docker Compose
 
 ```bash

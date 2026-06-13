@@ -49,6 +49,9 @@ Minimum production settings:
 
 If you terminate TLS at a reverse proxy, forward traffic to the container on port `3000`.
 
+For Render, Fly.io, Railway, VPS, Docker, and Kubernetes notes, see
+[`docs/deployment.md`](docs/deployment.md).
+
 ## CLI
 
 Build the CLI:
