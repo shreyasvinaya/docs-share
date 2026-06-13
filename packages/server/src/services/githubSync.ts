@@ -32,6 +32,14 @@ export interface GitHubRepositoryOption {
   defaultBranch: string;
   private: boolean;
   pushedAt: string | null;
+  updatedAt: string | null;
+  ownerLogin: string;
+}
+
+export interface GitHubOrganizationOption {
+  login: string;
+  description: string | null;
+  avatarUrl: string | null;
 }
 
 const RECOMMENDED_BRANCH_ORDER = [
@@ -159,16 +167,27 @@ export function filterGitHubTree(
 }
 
 export async function listGitHubAccessibleRepos(
-  token: string
+  token: string,
+  ownerLogin = ""
 ): Promise<GitHubRepositoryOption[]> {
   if (!token.trim()) return [];
+  const normalizedOwnerLogin = normalizeGitHubOwnerLogin(ownerLogin);
+  if (normalizedOwnerLogin === null) {
+    throw new Error("Invalid GitHub organization name");
+  }
 
   const repos: GitHubRepositoryOption[] = [];
   for (let page = 1; page <= MAX_GITHUB_PAGES; page += 1) {
-    const url = new URL("https://api.github.com/user/repos");
-    url.searchParams.set("affiliation", "owner,collaborator,organization_member");
-    url.searchParams.set("visibility", "all");
-    url.searchParams.set("sort", "pushed");
+    const url = normalizedOwnerLogin
+      ? new URL(`https://api.github.com/orgs/${encodeURIComponent(normalizedOwnerLogin)}/repos`)
+      : new URL("https://api.github.com/user/repos");
+    if (normalizedOwnerLogin) {
+      url.searchParams.set("type", "all");
+    } else {
+      url.searchParams.set("affiliation", "owner,collaborator,organization_member");
+      url.searchParams.set("visibility", "all");
+    }
+    url.searchParams.set("sort", "updated");
     url.searchParams.set("direction", "desc");
     url.searchParams.set("per_page", "100");
     url.searchParams.set("page", String(page));
@@ -184,10 +203,13 @@ export async function listGitHubAccessibleRepos(
       default_branch?: string;
       private?: boolean;
       pushed_at?: string | null;
+      updated_at?: string | null;
+      owner?: { login?: string };
     }[];
     for (const repo of pageRepos) {
       if (!repo.full_name || !repo.clone_url || !repo.default_branch) continue;
       const normalizedUrl = normalizeGitHubRepoUrl(repo.clone_url);
+      const repoOwnerLogin = repo.owner?.login ?? repo.full_name.split("/")[0] ?? "";
       if (!normalizedUrl) continue;
       repos.push({
         fullName: repo.full_name,
@@ -195,6 +217,8 @@ export async function listGitHubAccessibleRepos(
         defaultBranch: repo.default_branch,
         private: Boolean(repo.private),
         pushedAt: repo.pushed_at ?? null,
+        updatedAt: repo.updated_at ?? null,
+        ownerLogin: repoOwnerLogin,
       });
     }
 
@@ -202,6 +226,42 @@ export async function listGitHubAccessibleRepos(
   }
 
   return repos;
+}
+
+export async function listGitHubOrganizations(
+  token: string
+): Promise<GitHubOrganizationOption[]> {
+  if (!token.trim()) return [];
+
+  const organizations: GitHubOrganizationOption[] = [];
+  for (let page = 1; page <= MAX_GITHUB_PAGES; page += 1) {
+    const url = new URL("https://api.github.com/user/orgs");
+    url.searchParams.set("per_page", "100");
+    url.searchParams.set("page", String(page));
+
+    const res = await fetch(url, { headers: githubApiHeaders(token) });
+    if (!res.ok) {
+      throw new Error(`GitHub organization lookup failed: ${res.status} ${res.statusText}`);
+    }
+
+    const pageOrganizations = (await res.json()) as {
+      login?: string;
+      description?: string | null;
+      avatar_url?: string | null;
+    }[];
+    for (const organization of pageOrganizations) {
+      if (!organization.login) continue;
+      organizations.push({
+        login: organization.login,
+        description: organization.description ?? null,
+        avatarUrl: organization.avatar_url ?? null,
+      });
+    }
+
+    if (pageOrganizations.length < 100) break;
+  }
+
+  return organizations.sort((a, b) => a.login.localeCompare(b.login));
 }
 
 export async function listGitHubBranches(params: {
@@ -413,6 +473,13 @@ function parseGitHubRepo(normalizedUrl: string): { owner: string; repo: string }
   const parsed = new URL(normalizedUrl);
   const [owner, repoWithGit] = parsed.pathname.replace(/^\/|\/$/g, "").split("/");
   return { owner, repo: repoWithGit.replace(/\.git$/, "") };
+}
+
+function normalizeGitHubOwnerLogin(ownerLogin: string | null | undefined): string | null {
+  const value = ownerLogin?.trim() ?? "";
+  if (!value) return "";
+  if (!/^[A-Za-z0-9_.-]+$/.test(value)) return null;
+  return value;
 }
 
 function githubApiHeaders(token?: string): Record<string, string> {

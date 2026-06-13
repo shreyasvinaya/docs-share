@@ -7,6 +7,7 @@ import { generateId } from "../lib/crypto.js";
 import {
   listGitHubAccessibleRepos,
   listGitHubBranches,
+  listGitHubOrganizations,
   listGitHubRemoteTree,
   normalizeGitBranch,
   normalizeGitHubImportPath,
@@ -33,13 +34,29 @@ app.get("/:repoId/github-sync", checkAccess("read"), async (c) => {
 
 app.get("/:repoId/github-sync/repositories", checkAccess("read"), async (c) => {
   const userId = c.get("userId");
+  const ownerLogin = c.req.query("ownerLogin") ?? "";
 
   try {
-    const repositories = await listGitHubAccessibleRepos(await getUserGitHubToken(userId));
+    const repositories = await listGitHubAccessibleRepos(
+      await getUserGitHubToken(userId),
+      ownerLogin
+    );
     return c.json({ data: repositories });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     return c.json({ error: "GitHub repository lookup failed", details: message }, 502);
+  }
+});
+
+app.get("/:repoId/github-sync/organizations", checkAccess("read"), async (c) => {
+  const userId = c.get("userId");
+
+  try {
+    const organizations = await listGitHubOrganizations(await getUserGitHubToken(userId));
+    return c.json({ data: organizations });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    return c.json({ error: "GitHub organization lookup failed", details: message }, 502);
   }
 });
 

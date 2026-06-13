@@ -34,6 +34,14 @@ export interface GitHubRepositoryOption {
   defaultBranch: string;
   private: boolean;
   pushedAt: string | null;
+  updatedAt: string | null;
+  ownerLogin: string;
+}
+
+export interface GitHubOrganizationOption {
+  login: string;
+  description: string | null;
+  avatarUrl: string | null;
 }
 
 export function useFiles(repoId: string | undefined, path?: string) {
@@ -134,12 +142,32 @@ export function useRunGitHubSync(repoId: string | undefined) {
   });
 }
 
-export function useGitHubRepositories(repoId: string | undefined, enabled = true) {
+export function useGitHubRepositories(
+  repoId: string | undefined,
+  ownerLogin = "",
+  enabled = true
+) {
   return useQuery({
-    queryKey: ["github-repositories", repoId],
+    queryKey: ["github-repositories", repoId, ownerLogin],
+    queryFn: () => {
+      const params = new URLSearchParams();
+      if (ownerLogin) params.set("ownerLogin", ownerLogin);
+      const query = params.toString();
+      return api.get<GitHubRepositoryOption[]>(
+        `/api/repos/${repoId}/github-sync/repositories${query ? `?${query}` : ""}`
+      );
+    },
+    enabled: !!repoId && enabled,
+    retry: false,
+  });
+}
+
+export function useGitHubOrganizations(repoId: string | undefined, enabled = true) {
+  return useQuery({
+    queryKey: ["github-organizations", repoId],
     queryFn: () =>
-      api.get<GitHubRepositoryOption[]>(
-        `/api/repos/${repoId}/github-sync/repositories`
+      api.get<GitHubOrganizationOption[]>(
+        `/api/repos/${repoId}/github-sync/organizations`
       ),
     enabled: !!repoId && enabled,
     retry: false,

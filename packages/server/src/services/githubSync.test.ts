@@ -3,6 +3,7 @@ import {
   filterGitHubTree,
   listGitHubAccessibleRepos,
   listGitHubBranches,
+  listGitHubOrganizations,
   normalizeGitBranch,
   normalizeGitHubImportPath,
   normalizeGitHubRepoUrl,
@@ -68,7 +69,7 @@ describe("orderGitHubBranches", () => {
 });
 
 describe("listGitHubAccessibleRepos", () => {
-  test("returns token-scoped repositories from GitHub in pushed order", async () => {
+  test("returns token-scoped repositories from GitHub in last-updated order", async () => {
     const requestedUrls: string[] = [];
     globalThis.fetch = (async (input, init) => {
       requestedUrls.push(String(input));
@@ -81,6 +82,8 @@ describe("listGitHubAccessibleRepos", () => {
             default_branch: "staging",
             private: true,
             pushed_at: "2026-06-12T10:00:00Z",
+            updated_at: "2026-06-12T12:00:00Z",
+            owner: { login: "acme" },
           },
         ]),
         { status: 200 }
@@ -94,10 +97,13 @@ describe("listGitHubAccessibleRepos", () => {
         defaultBranch: "staging",
         private: true,
         pushedAt: "2026-06-12T10:00:00Z",
+        updatedAt: "2026-06-12T12:00:00Z",
+        ownerLogin: "acme",
       },
     ]);
     expect(requestedUrls[0]).toContain("/user/repos?");
     expect(requestedUrls[0]).toContain("visibility=all");
+    expect(requestedUrls[0]).toContain("sort=updated");
   });
 
   test("does not call GitHub when no token is available", async () => {
@@ -106,6 +112,74 @@ describe("listGitHubAccessibleRepos", () => {
     }) as unknown as typeof fetch;
 
     await expect(listGitHubAccessibleRepos("")).resolves.toEqual([]);
+  });
+
+  test("limits repositories to a selected organization", async () => {
+    let requestedUrl = "";
+    globalThis.fetch = (async (input, init) => {
+      requestedUrl = String(input);
+      expect((init?.headers as Record<string, string>).Authorization).toBe("Bearer user-token");
+      return new Response(
+        JSON.stringify([
+          {
+            full_name: "acme/site",
+            clone_url: "https://github.com/acme/site.git",
+            default_branch: "main",
+            private: false,
+            pushed_at: "2026-06-11T10:00:00Z",
+            updated_at: "2026-06-12T10:00:00Z",
+            owner: { login: "acme" },
+          },
+        ]),
+        { status: 200 }
+      );
+    }) as typeof fetch;
+
+    await expect(listGitHubAccessibleRepos("user-token", "acme")).resolves.toEqual([
+      {
+        fullName: "acme/site",
+        repoUrl: "https://github.com/acme/site.git",
+        defaultBranch: "main",
+        private: false,
+        pushedAt: "2026-06-11T10:00:00Z",
+        updatedAt: "2026-06-12T10:00:00Z",
+        ownerLogin: "acme",
+      },
+    ]);
+    expect(requestedUrl).toContain("/orgs/acme/repos?");
+    expect(requestedUrl).toContain("type=all");
+    expect(requestedUrl).toContain("sort=updated");
+  });
+});
+
+describe("listGitHubOrganizations", () => {
+  test("returns organization choices for the connected token", async () => {
+    let requestedUrl = "";
+    globalThis.fetch = (async (input, init) => {
+      requestedUrl = String(input);
+      expect((init?.headers as Record<string, string>).Authorization).toBe("Bearer user-token");
+      return new Response(
+        JSON.stringify([
+          { login: "acme", description: "Acme Docs", avatar_url: "https://example.com/acme.png" },
+          { login: "octo-org", description: null, avatar_url: null },
+        ]),
+        { status: 200 }
+      );
+    }) as typeof fetch;
+
+    await expect(listGitHubOrganizations("user-token")).resolves.toEqual([
+      {
+        login: "acme",
+        description: "Acme Docs",
+        avatarUrl: "https://example.com/acme.png",
+      },
+      {
+        login: "octo-org",
+        description: null,
+        avatarUrl: null,
+      },
+    ]);
+    expect(requestedUrl).toContain("/user/orgs?");
   });
 });
 

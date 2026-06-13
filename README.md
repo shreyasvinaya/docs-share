@@ -88,7 +88,7 @@ Upload options:
 
 - Website: upload individual files for flat bundles, or choose/drop a folder to preserve nested paths.
 - CLI: `docs-share push ./site --to personal` preserves paths under `./site`.
-- GitHub sync: choose from repositories accessible to the importing user's GitHub token, or enter another `https://github.com/owner/repo` URL. Branches load after a repository URL is selected, with common branch names shown first, and users can browse/select one file or folder before syncing.
+- GitHub sync: choose from repositories accessible to the importing user's GitHub token, narrow by organization, or enter another `https://github.com/owner/repo` URL. Repository choices are ordered by last updated, branches load after a repository URL is selected, and users can browse/select one file or folder before syncing.
 
 For public links, share the containing directory when an HTML page depends on sibling pages or assets. File-only shares expose only that file.
 

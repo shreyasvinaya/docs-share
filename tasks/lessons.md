@@ -14,3 +14,5 @@
 - GitHub import UX should prefer repositories accessible to the current user's
   token, then offer a manual URL fallback. Do not force URL-first flows for
   private repository imports.
+- Token-scoped GitHub repo pickers can get large quickly. Order choices by last
+  updated and provide organization filters before adding more visible entries.

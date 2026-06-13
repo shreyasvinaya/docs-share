@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { useGitHubTokenStatus } from "@/hooks/use-auth";
 import {
   useGitHubBranches,
+  useGitHubOrganizations,
   useGitHubRepositories,
   useGitHubSync,
   useGitHubTree,
@@ -18,7 +19,9 @@ export function GitHubSyncPanel({ repoId }: GitHubSyncPanelProps) {
   const { data: githubToken } = useGitHubTokenStatus();
   const { data: sync } = useGitHubSync(repoId);
   const runSync = useRunGitHubSync(repoId);
-  const repositories = useGitHubRepositories(repoId, githubToken?.connected === true);
+  const [ownerFilter, setOwnerFilter] = useState("");
+  const repositories = useGitHubRepositories(repoId, ownerFilter, githubToken?.connected === true);
+  const organizations = useGitHubOrganizations(repoId, githubToken?.connected === true);
   const [repoUrl, setRepoUrl] = useState("");
   const [repoChoice, setRepoChoice] = useState("");
   const [branch, setBranch] = useState("main");
@@ -66,7 +69,11 @@ export function GitHubSyncPanel({ repoId }: GitHubSyncPanelProps) {
         </p>
       </div>
       <form
-        className="grid gap-3 md:grid-cols-[1fr_10rem_auto]"
+        className={
+          githubToken?.connected === true
+            ? "grid gap-3 md:grid-cols-[12rem_1fr_10rem_auto]"
+            : "grid gap-3 md:grid-cols-[1fr_10rem_auto]"
+        }
         onSubmit={(event) => {
           event.preventDefault();
           if (!canSync) return;
@@ -77,6 +84,29 @@ export function GitHubSyncPanel({ repoId }: GitHubSyncPanelProps) {
           });
         }}
       >
+        {githubToken?.connected === true && (
+          <select
+            value={ownerFilter}
+            onChange={(event) => {
+              setOwnerFilter(event.target.value);
+              setRepoChoice("");
+              setRepoUrl("");
+              setBranch("main");
+              setBrowsePath("");
+              setSelectedPath("");
+            }}
+            className="rounded-md border border-input bg-background px-3 py-2 text-sm"
+          >
+            <option value="">
+              {organizations.isLoading ? "Loading orgs..." : "All repositories"}
+            </option>
+            {organizations.data?.map((organization) => (
+              <option key={organization.login} value={organization.login}>
+                {organization.login}
+              </option>
+            ))}
+          </select>
+        )}
         <div className="grid gap-2">
           {githubToken?.connected === true && (
             <select
@@ -109,7 +139,11 @@ export function GitHubSyncPanel({ repoId }: GitHubSyncPanelProps) {
               className="rounded-md border border-input bg-background px-3 py-2 text-sm"
             >
               <option value="">
-                {repositories.isLoading ? "Loading GitHub repositories..." : "Choose a repository"}
+                {repositories.isLoading
+                  ? "Loading repositories..."
+                  : ownerFilter
+                    ? `Choose from ${ownerFilter}`
+                    : "Choose a repository"}
               </option>
               {repositories.data?.map((repository) => (
                 <option key={repository.fullName} value={repository.fullName}>
