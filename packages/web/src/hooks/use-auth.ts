@@ -1,6 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/api-client";
-import type { User, ApiToken, CreateToken } from "@docs-share/shared";
+import type { User, ApiToken, CreateToken, UpdateUser } from "@docs-share/shared";
 
 export function useSession() {
   return useQuery({
@@ -17,6 +17,17 @@ export function useLogout() {
     onSuccess: () => {
       qc.clear();
       window.location.href = "/login";
+    },
+  });
+}
+
+export function useUpdateProfile() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (data: UpdateUser) => api.patch<User>("/api/users/me", data),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["session"] });
+      qc.invalidateQueries({ queryKey: ["personal-repo"] });
     },
   });
 }

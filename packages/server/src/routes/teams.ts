@@ -11,6 +11,22 @@ const app = new Hono<AppEnv>();
 
 app.use("*", requireAuth);
 
+async function teamWithRepo(team: typeof schema.teams.$inferSelect) {
+  const repo = await db
+    .select({
+      id: schema.repos.id,
+      headSha: schema.repos.headSha,
+    })
+    .from(schema.repos)
+    .where(eq(schema.repos.ownerTeamId, team.id))
+    .get();
+
+  return {
+    ...team,
+    repo: repo ?? null,
+  };
+}
+
 /**
  * POST / — Create team.
  * Creates team, adds creator as owner member, creates a bare repo for the team.
@@ -84,7 +100,7 @@ app.post("/", async (c) => {
     .where(eq(schema.teams.id, teamId))
     .get();
 
-  return c.json({ data: team }, 201);
+  return c.json({ data: team ? await teamWithRepo(team) : team }, 201);
 });
 
 /**
@@ -104,10 +120,12 @@ app.get("/", async (c) => {
     .all();
 
   return c.json({
-    data: memberships.map((m) => ({
-      ...m.team,
-      role: m.role,
-    })),
+    data: await Promise.all(
+      memberships.map(async (m) => ({
+        ...(await teamWithRepo(m.team)),
+        role: m.role,
+      }))
+    ),
   });
 });
 
@@ -143,7 +161,7 @@ app.get("/:teamId", async (c) => {
     return c.json({ error: "Team not found" }, 404);
   }
 
-  return c.json({ data: team });
+  return c.json({ data: await teamWithRepo(team) });
 });
 
 /**
@@ -199,7 +217,7 @@ app.patch("/:teamId", async (c) => {
     .where(eq(schema.teams.id, teamId))
     .get();
 
-  return c.json({ data: team });
+  return c.json({ data: team ? await teamWithRepo(team) : team });
 });
 
 /**

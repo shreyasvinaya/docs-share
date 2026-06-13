@@ -2,9 +2,11 @@ import { useState, useEffect } from "react";
 import {
   useCreateEmailShare,
   useCreatePublicLink,
+  useCreateTeamShare,
   useSharesForResource,
   useRevokeShare,
 } from "@/hooks/use-sharing";
+import { useTeams } from "@/hooks/use-teams";
 import { cn } from "@/lib/utils";
 import type { SharePermission, LinkAccess } from "@docs-share/shared";
 
@@ -23,15 +25,18 @@ export function ShareDialog({
   path,
   fileName,
 }: ShareDialogProps) {
-  const [tab, setTab] = useState<"email" | "link">("email");
+  const [tab, setTab] = useState<"email" | "team" | "link">("email");
   const [emails, setEmails] = useState("");
+  const [teamId, setTeamId] = useState("");
   const [permission, setPermission] = useState<SharePermission>("read");
   const [linkAccess, setLinkAccess] = useState<LinkAccess>("public");
   const [initialTabSet, setInitialTabSet] = useState(false);
 
   const emailShare = useCreateEmailShare();
+  const teamShare = useCreateTeamShare();
   const publicLink = useCreatePublicLink();
   const revokeShare = useRevokeShare();
+  const { data: teams } = useTeams();
   const { data: existingShares, refetch } = useSharesForResource(
     open ? repoId : undefined,
     path
@@ -97,6 +102,20 @@ export function ShareDialog({
     );
   };
 
+  const handleTeamShare = () => {
+    if (!teamId) return;
+
+    teamShare.mutate(
+      { repoId, path: path ?? undefined, teamId, permission },
+      {
+        onSuccess: () => {
+          setTeamId("");
+          refetch();
+        },
+      }
+    );
+  };
+
   const handleRevokeLink = () => {
     if (!existingPublicLink) return;
     revokeShare.mutate(existingPublicLink.id, {
@@ -152,6 +171,18 @@ export function ShareDialog({
             )}
           >
             Email
+          </button>
+          <button
+            type="button"
+            onClick={() => setTab("team")}
+            className={cn(
+              "flex-1 rounded-md px-3 py-1.5 text-sm font-medium transition-colors",
+              tab === "team"
+                ? "bg-background shadow-sm"
+                : "text-muted-foreground hover:text-foreground"
+            )}
+          >
+            Team
           </button>
           <button
             type="button"
@@ -242,6 +273,94 @@ export function ShareDialog({
               className="w-full rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90 disabled:opacity-50"
             >
               {emailShare.isPending ? "Sharing..." : "Share"}
+            </button>
+          </div>
+        )}
+
+        {tab === "team" && (
+          <div className="space-y-3">
+            <div>
+              <label
+                htmlFor="share-team"
+                className="mb-1 block text-sm font-medium"
+              >
+                Team
+              </label>
+              <select
+                id="share-team"
+                value={teamId}
+                onChange={(e) => setTeamId(e.target.value)}
+                className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm outline-none focus:border-primary focus:ring-1 focus:ring-primary"
+              >
+                <option value="">Choose a team</option>
+                {teams?.map((team) => (
+                  <option key={team.id} value={team.id}>
+                    {team.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label
+                htmlFor="share-team-permission"
+                className="mb-1 block text-sm font-medium"
+              >
+                Permission
+              </label>
+              <select
+                id="share-team-permission"
+                value={permission}
+                onChange={(e) =>
+                  setPermission(e.target.value as SharePermission)
+                }
+                className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm outline-none focus:border-primary focus:ring-1 focus:ring-primary"
+              >
+                <option value="read">Can view</option>
+                <option value="write">Can edit</option>
+              </select>
+            </div>
+
+            {existingShares?.filter((s) => s.shareType === "team").length ? (
+              <div className="rounded-lg border border-border p-3">
+                <p className="mb-2 text-xs font-medium text-muted-foreground">
+                  Shared with teams
+                </p>
+                {existingShares
+                  .filter((s) => s.shareType === "team")
+                  .map((s) => {
+                    const team = teams?.find((item) => item.id === s.teamId);
+                    return (
+                      <div
+                        key={s.id}
+                        className="flex items-center justify-between py-1"
+                      >
+                        <span className="text-sm">
+                          {team?.name ?? s.teamId ?? "Team"} · {s.permission}
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() =>
+                            revokeShare.mutate(s.id, {
+                              onSuccess: () => refetch(),
+                            })
+                          }
+                          className="text-xs text-destructive hover:underline"
+                        >
+                          Remove
+                        </button>
+                      </div>
+                    );
+                  })}
+              </div>
+            ) : null}
+
+            <button
+              type="button"
+              onClick={handleTeamShare}
+              disabled={teamShare.isPending || !teamId}
+              className="w-full rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90 disabled:opacity-50"
+            >
+              {teamShare.isPending ? "Sharing..." : "Share with team"}
             </button>
           </div>
         )}

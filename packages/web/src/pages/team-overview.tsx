@@ -15,9 +15,7 @@ export function TeamOverviewPage() {
   const { data: team, isLoading: teamLoading } = useTeam(teamId);
   const { data: members } = useTeamMembers(teamId);
 
-  // Team repos share the same teamId as the repoId for simplicity.
-  // In a real app this might come from the team data.
-  const repoId = teamId;
+  const repoId = team?.repo?.id;
   const { data: files, isLoading: filesLoading } = useFiles(repoId);
   const upload = useUploadFile(repoId);
 

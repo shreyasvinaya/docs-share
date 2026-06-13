@@ -5,6 +5,7 @@ interface PersonalRepoData {
   id: string;
   email: string;
   displayName: string;
+  designation: string | null;
   avatarUrl: string | null;
   repo: { id: string; diskPath: string; headSha: string | null } | null;
 }

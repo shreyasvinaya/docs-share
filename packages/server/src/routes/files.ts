@@ -326,11 +326,25 @@ app.post("/:repoId/upload", checkAccess("write"), async (c) => {
       ["git", "-C", clonePath, "commit", "-m", commitMessage],
       { stdout: "pipe", stderr: "pipe" }
     );
+    const commitStdout = await new Response(commitProc.stdout).text();
+    const commitStderr = await new Response(commitProc.stderr).text();
     await commitProc.exited;
 
     if (commitProc.exitCode !== 0) {
-      const stderr = await new Response(commitProc.stderr).text();
-      return c.json({ error: "Git commit failed", details: stderr }, 500);
+      const commitOutput = `${commitStdout}\n${commitStderr}`;
+      if (
+        commitOutput.includes("nothing to commit") ||
+        commitOutput.includes("no changes added to commit")
+      ) {
+        return c.json({
+          data: {
+            commitSha: repo.headSha,
+            filesUploaded: 0,
+            message: "No file changes detected",
+          },
+        });
+      }
+      return c.json({ error: "Git commit failed", details: commitOutput.trim() }, 500);
     }
 
     // Push back to bare repo

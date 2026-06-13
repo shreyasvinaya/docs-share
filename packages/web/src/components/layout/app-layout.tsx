@@ -2,12 +2,14 @@ import { useState, useRef } from "react";
 import { Outlet, useLocation, Link } from "react-router";
 import { useSession, useLogout } from "@/hooks/use-auth";
 import { useTeams } from "@/hooks/use-teams";
+import { usePersonalRepo } from "@/hooks/use-personal-repo";
 import { useUiStore } from "@/stores/ui-store";
 import { UserAvatar } from "@/components/common/user-avatar";
 import { AppSidebar } from "@/components/layout/app-sidebar";
 
 function useBreadcrumbs(pathname: string) {
   const { data: teams } = useTeams();
+  const { data: personalRepo } = usePersonalRepo();
   const segments = pathname.split("/").filter(Boolean);
   const crumbs: { label: string; to: string }[] = [];
 
@@ -28,6 +30,13 @@ function useBreadcrumbs(pathname: string) {
     if (i > 0 && segments[i - 1] === "teams" && teams) {
       const team = teams.find((t) => t.id === segment);
       crumbs.push({ label: team?.name ?? segment, to: path });
+    } else if (i > 0 && segments[i - 1] === "preview") {
+      const team = teams?.find((t) => t.repo?.id === segment);
+      const label =
+        personalRepo?.repo?.id === segment
+          ? personalRepo.displayName
+          : team?.name ?? segment;
+      crumbs.push({ label, to: path });
     } else {
       crumbs.push({
         label: labelMap[segment] ?? decodeURIComponent(segment),

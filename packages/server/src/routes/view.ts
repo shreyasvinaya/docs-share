@@ -141,7 +141,11 @@ async function userHasAccess(
   return false;
 }
 
-async function serveFile(worktreeBase: string, relativePath: string) {
+async function serveFile(
+  worktreeBase: string,
+  relativePath: string,
+  requestPath?: string
+) {
   const resolvedPath = resolveInside(worktreeBase, relativePath);
   if (!resolvedPath) {
     return new Response(JSON.stringify({ error: "Invalid path" }), {
@@ -153,6 +157,10 @@ async function serveFile(worktreeBase: string, relativePath: string) {
   try {
     const fileStat = await stat(resolvedPath);
     if (fileStat.isDirectory()) {
+      if (requestPath && !requestPath.endsWith("/")) {
+        return Response.redirect(`${requestPath}/`, 308);
+      }
+
       const indexPath = resolveInside(
         worktreeBase,
         relativePath ? `${relativePath}/index.html` : "index.html"
@@ -303,7 +311,7 @@ app.get("/public/:token/*", async (c) => {
     return c.json({ error: "Invalid path" }, 400);
   }
 
-  return serveFile(worktreeBase, resolvedRelativePath);
+  return serveFile(worktreeBase, resolvedRelativePath, c.req.path);
 });
 
 /**
@@ -379,7 +387,20 @@ app.get("/public/:token", async (c) => {
     return c.json({ error: "Invalid path" }, 400);
   }
 
-  return serveFile(worktreeBase, normalizedSharePath);
+  return serveFile(worktreeBase, normalizedSharePath, c.req.path);
+});
+
+app.get("/:repoId", requireAuth, async (c) => {
+  const userId = c.get("userId");
+  const repoId = c.req.param("repoId");
+
+  const hasAccess = await userHasAccess(userId, repoId);
+  if (!hasAccess) {
+    return c.json({ error: "Access denied" }, 403);
+  }
+
+  const worktreeBase = `${config.DATA_DIR}/worktrees/${repoId}`;
+  return serveFile(worktreeBase, "", c.req.path);
 });
 
 /**
@@ -400,7 +421,7 @@ app.get("/:repoId/*", requireAuth, async (c) => {
   }
 
   const worktreeBase = `${config.DATA_DIR}/worktrees/${repoId}`;
-  return serveFile(worktreeBase, filePath);
+  return serveFile(worktreeBase, filePath, c.req.path);
 });
 
 export default app;

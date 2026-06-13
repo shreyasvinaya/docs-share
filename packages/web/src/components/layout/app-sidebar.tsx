@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { NavLink, useNavigate } from "react-router";
 import { useTeams } from "@/hooks/use-teams";
+import { useSession } from "@/hooks/use-auth";
 import { useUiStore } from "@/stores/ui-store";
 import { cn } from "@/lib/utils";
 import { CreateTeamDialog } from "@/components/teams/create-team-dialog";
@@ -39,7 +40,9 @@ export function AppSidebar() {
   const collapsed = useUiStore((s) => s.sidebarCollapsed);
   const navigate = useNavigate();
   const { data: teams } = useTeams();
+  const { data: session } = useSession();
   const [showCreateTeam, setShowCreateTeam] = useState(false);
+  const user = session?.user;
 
   return (
     <aside
@@ -82,6 +85,32 @@ export function AppSidebar() {
             </li>
           ))}
         </ul>
+
+        {!collapsed && (
+          <div className="mt-6">
+            <div className="mb-1 px-3">
+              <h3 className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
+                Personal
+              </h3>
+            </div>
+            <NavLink
+              to="/files"
+              className={({ isActive }) =>
+                cn(
+                  "flex items-center gap-3 rounded-lg px-3 py-2 text-sm transition-colors",
+                  isActive
+                    ? "bg-muted font-medium text-foreground"
+                    : "text-muted-foreground hover:bg-muted/50 hover:text-foreground",
+                )
+              }
+            >
+              <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded bg-muted text-[10px] font-bold uppercase">
+                {user?.displayName?.[0] ?? "U"}
+              </span>
+              <span className="truncate">{user?.displayName ?? "My files"}</span>
+            </NavLink>
+          </div>
+        )}
 
         {!collapsed && (
           <div className="mt-6">

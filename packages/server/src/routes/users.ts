@@ -35,6 +35,7 @@ app.get("/me", async (c) => {
       id: user.id,
       email: user.email,
       displayName: user.displayName,
+      designation: user.designation,
       avatarUrl: user.avatarUrl,
       createdAt: user.createdAt,
       repo: repo
@@ -52,20 +53,48 @@ app.get("/me", async (c) => {
 });
 
 /**
- * PATCH /me — Update display name.
+ * PATCH /me — Update editable profile fields.
  */
 app.patch("/me", async (c) => {
   const userId = c.get("userId");
   const body = await c.req.json();
-  const { displayName } = body;
+  const { displayName, designation } = body;
 
-  if (!displayName || typeof displayName !== "string" || displayName.length > 100) {
+  const updates: {
+    displayName?: string;
+    designation?: string | null;
+    updatedAt: string;
+  } = { updatedAt: new Date().toISOString() };
+
+  if ("displayName" in body) {
+    if (
+      typeof displayName !== "string" ||
+      displayName.trim().length === 0 ||
+      displayName.length > 100
+    ) {
+      return c.json({ error: "Invalid displayName" }, 400);
+    }
+    updates.displayName = displayName.trim();
+  }
+
+  if ("designation" in body) {
+    if (
+      designation !== null &&
+      designation !== undefined &&
+      (typeof designation !== "string" || designation.length > 120)
+    ) {
+      return c.json({ error: "Invalid designation" }, 400);
+    }
+    updates.designation = designation?.trim() || null;
+  }
+
+  if (!updates.displayName && !("designation" in updates)) {
     return c.json({ error: "Invalid displayName" }, 400);
   }
 
   await db
     .update(schema.users)
-    .set({ displayName, updatedAt: new Date().toISOString() })
+    .set(updates)
     .where(eq(schema.users.id, userId))
     .run();
 

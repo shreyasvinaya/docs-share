@@ -5,6 +5,7 @@ import type {
   SharedItem,
   CreateEmailShare,
   CreatePublicLink,
+  CreateTeamShare,
 } from "@docs-share/shared";
 
 export function useMyShares() {
@@ -50,6 +51,15 @@ export function useCreatePublicLink() {
   return useMutation({
     mutationFn: (data: CreatePublicLink) =>
       api.post<Share>("/api/shares", { ...data, shareType: "public_link" }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["shares"] }),
+  });
+}
+
+export function useCreateTeamShare() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (data: CreateTeamShare) =>
+      api.post<Share>("/api/shares", { ...data, shareType: "team" }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["shares"] }),
   });
 }

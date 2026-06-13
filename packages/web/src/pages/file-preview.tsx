@@ -1,7 +1,8 @@
 import { useParams, useNavigate } from "react-router";
-import { useCommits } from "@/hooks/use-files";
-import { useState } from "react";
+import { useCommits, useFiles } from "@/hooks/use-files";
+import { useEffect, useState } from "react";
 import { ShareDialog } from "@/components/sharing/share-dialog";
+import { FileTree } from "@/components/files/file-tree";
 
 export function FilePreviewPage() {
   const { repoId, "*": wildcard } = useParams();
@@ -11,9 +12,28 @@ export function FilePreviewPage() {
   const [showShare, setShowShare] = useState(false);
 
   const { data: commits } = useCommits(repoId, filePath);
+  const { data: rootFiles, isLoading: rootFilesLoading } = useFiles(
+    repoId,
+    filePath ? undefined : ""
+  );
 
-  const fileName = filePath.split("/").pop() || "File";
-  const viewUrl = `/view/${repoId}/${filePath}`;
+  useEffect(() => {
+    if (!repoId || filePath || !rootFiles) return;
+
+    const rootIndex = rootFiles.find(
+      (file) => file.type === "file" && file.name.toLowerCase() === "index.html"
+    );
+    const firstDirectory = rootFiles.find((file) => file.type === "directory");
+    const target = rootIndex ?? firstDirectory;
+    if (target) {
+      navigate(`/preview/${repoId}/${target.path}`, { replace: true });
+    }
+  }, [repoId, filePath, rootFiles, navigate]);
+
+  const fileName = filePath.split("/").pop() || "Preview";
+  const viewUrl = repoId
+    ? `/view/${repoId}${filePath ? `/${filePath}` : ""}`
+    : "";
 
   return (
     <div className="flex h-full flex-col">
@@ -72,15 +92,41 @@ export function FilePreviewPage() {
 
       {/* Content */}
       <div className="flex flex-1 overflow-hidden">
-        {/* Iframe preview */}
-        <div className="flex-1">
-          <iframe
-            src={viewUrl}
-            title={fileName}
-            sandbox="allow-scripts allow-same-origin"
-            className="h-full w-full border-0"
-          />
-        </div>
+        {filePath ? (
+          <div className="flex-1">
+            <iframe
+              src={viewUrl}
+              title={fileName}
+              sandbox="allow-scripts"
+              className="h-full w-full border-0"
+            />
+          </div>
+        ) : (
+          <div className="flex-1 overflow-y-auto p-6">
+            <div className="mx-auto max-w-4xl">
+              <h2 className="mb-2 text-lg font-semibold">Choose a file to preview</h2>
+              <p className="mb-4 text-sm text-muted-foreground">
+                This repository root does not have an index.html file. Open a
+                file or folder below.
+              </p>
+              {rootFilesLoading ? (
+                <p className="text-sm text-muted-foreground">Loading files...</p>
+              ) : rootFiles && rootFiles.length > 0 && repoId ? (
+                <FileTree
+                  files={rootFiles}
+                  repoId={repoId}
+                  onNavigate={(path) =>
+                    navigate(`/preview/${repoId}/${path}`)
+                  }
+                />
+              ) : (
+                <p className="text-sm text-muted-foreground">
+                  No files are available to preview.
+                </p>
+              )}
+            </div>
+          </div>
+        )}
 
         {/* Version history sidebar */}
         {showHistory && (

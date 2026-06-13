@@ -1,11 +1,29 @@
 import { Hono } from "hono";
-import { eq, and, isNull } from "drizzle-orm";
+import { eq, and, isNull, inArray } from "drizzle-orm";
 import { db, schema } from "../db/index.js";
 import { requireAuth } from "../middleware/requireAuth.js";
 import { generateId, generatePublicToken, hashToken } from "../lib/crypto.js";
 import type { AppEnv } from "../lib/types.js";
 
 const app = new Hono<AppEnv>();
+
+async function toSharedItem(share: typeof schema.shares.$inferSelect) {
+  const owner = await db
+    .select({
+      displayName: schema.users.displayName,
+      email: schema.users.email,
+    })
+    .from(schema.users)
+    .where(eq(schema.users.id, share.createdById))
+    .get();
+
+  return {
+    share,
+    fileName: share.path?.split("/").filter(Boolean).pop() ?? "All files",
+    ownerName: owner?.displayName ?? "Unknown",
+    ownerEmail: owner?.email ?? "",
+  };
+}
 
 async function checkRepoAccess(
   repoId: string,
@@ -300,6 +318,60 @@ app.post("/", requireAuth, async (c) => {
       return c.json({ error: "Team not found" }, 404);
     }
 
+    const targetMembership = await db
+      .select()
+      .from(schema.teamMembers)
+      .where(
+        and(
+          eq(schema.teamMembers.teamId, teamId),
+          eq(schema.teamMembers.userId, userId)
+        )
+      )
+      .get();
+
+    if (!targetMembership) {
+      return c.json({ error: "You can only share with teams you belong to" }, 403);
+    }
+
+    const existingShare = await db
+      .select()
+      .from(schema.shares)
+      .where(
+        path
+          ? and(
+              eq(schema.shares.repoId, repoId),
+              eq(schema.shares.path, path),
+              eq(schema.shares.shareType, "team"),
+              eq(schema.shares.teamId, teamId)
+            )
+          : and(
+              eq(schema.shares.repoId, repoId),
+              isNull(schema.shares.path),
+              eq(schema.shares.shareType, "team"),
+              eq(schema.shares.teamId, teamId)
+            )
+      )
+      .get();
+
+    if (existingShare) {
+      await db
+        .update(schema.shares)
+        .set({
+          permission: sharePermission,
+          updatedAt: new Date().toISOString(),
+        })
+        .where(eq(schema.shares.id, existingShare.id))
+        .run();
+
+      const share = await db
+        .select()
+        .from(schema.shares)
+        .where(eq(schema.shares.id, existingShare.id))
+        .get();
+
+      return c.json({ data: share });
+    }
+
     await db
       .insert(schema.shares)
       .values({
@@ -372,13 +444,32 @@ app.get("/incoming", requireAuth, async (c) => {
     .where(eq(schema.shareRecipients.email, user.email))
     .all();
 
-  return c.json({
-    data: incoming.map((row) => ({
-      ...row.share,
-      recipientId: row.recipientId,
-      acceptedAt: row.acceptedAt,
-    })),
-  });
+  const memberships = await db
+    .select({ teamId: schema.teamMembers.teamId })
+    .from(schema.teamMembers)
+    .where(eq(schema.teamMembers.userId, userId))
+    .all();
+
+  const teamIds = memberships.map((membership) => membership.teamId);
+  const teamShares = teamIds.length
+    ? await db
+        .select({ share: schema.shares })
+        .from(schema.shares)
+        .where(
+          and(
+            eq(schema.shares.shareType, "team"),
+            inArray(schema.shares.teamId, teamIds)
+          )
+        )
+        .all()
+    : [];
+
+  const sharedItems = await Promise.all([
+    ...incoming.map((row) => toSharedItem(row.share)),
+    ...teamShares.map((row) => toSharedItem(row.share)),
+  ]);
+
+  return c.json({ data: sharedItems });
 });
 
 /**

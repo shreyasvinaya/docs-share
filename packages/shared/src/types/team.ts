@@ -9,6 +9,13 @@ export const teamSchema = z.object({
   slug: z.string(),
   description: z.string().nullable().optional(),
   ownerId: z.string(),
+  repo: z
+    .object({
+      id: z.string(),
+      headSha: z.string().nullable(),
+    })
+    .nullable()
+    .optional(),
   createdAt: z.string(),
 });
 

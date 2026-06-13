@@ -1,9 +1,10 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useSession } from "@/hooks/use-auth";
 import {
   useApiTokens,
   useCreateToken,
   useRevokeToken,
+  useUpdateProfile,
 } from "@/hooks/use-auth";
 import { UserAvatar } from "@/components/common/user-avatar";
 import { cn } from "@/lib/utils";
@@ -52,9 +53,32 @@ export function SettingsPage() {
 
 function ProfileTab() {
   const { data: session } = useSession();
+  const updateProfile = useUpdateProfile();
   const user = session?.user;
+  const [displayName, setDisplayName] = useState("");
+  const [designation, setDesignation] = useState("");
+
+  useEffect(() => {
+    if (!user) return;
+    setDisplayName(user.displayName);
+    setDesignation(user.designation ?? "");
+  }, [user]);
 
   if (!user) return null;
+
+  const hasChanges =
+    displayName.trim() !== user.displayName ||
+    designation.trim() !== (user.designation ?? "");
+
+  const handleSubmit = (event: React.FormEvent) => {
+    event.preventDefault();
+    if (!displayName.trim()) return;
+
+    updateProfile.mutate({
+      displayName: displayName.trim(),
+      designation: designation.trim() || null,
+    });
+  };
 
   return (
     <div className="space-y-6">
@@ -66,22 +90,44 @@ function ProfileTab() {
         />
         <div>
           <h2 className="text-lg font-semibold">{user.displayName}</h2>
+          {user.designation && (
+            <p className="text-sm text-muted-foreground">{user.designation}</p>
+          )}
           <p className="text-sm text-muted-foreground">{user.email}</p>
         </div>
       </div>
 
-      <div className="rounded-lg border border-border p-4">
+      <form onSubmit={handleSubmit} className="rounded-lg border border-border p-4">
         <div className="space-y-4">
           <div>
-            <label className="mb-1 block text-sm font-medium">
+            <label htmlFor="display-name" className="mb-1 block text-sm font-medium">
               Display Name
             </label>
             <input
+              id="display-name"
               type="text"
-              readOnly
-              value={user.displayName}
-              className="w-full rounded-lg border border-border bg-muted/50 px-3 py-2 text-sm"
+              value={displayName}
+              onChange={(event) => setDisplayName(event.target.value)}
+              maxLength={100}
+              className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm outline-none focus:border-primary focus:ring-1 focus:ring-primary"
             />
+          </div>
+          <div>
+            <label htmlFor="designation" className="mb-1 block text-sm font-medium">
+              Designation
+            </label>
+            <input
+              id="designation"
+              type="text"
+              value={designation}
+              onChange={(event) => setDesignation(event.target.value)}
+              maxLength={120}
+              placeholder="e.g., Product Engineer"
+              className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm outline-none focus:border-primary focus:ring-1 focus:ring-primary"
+            />
+            <p className="mt-1 text-xs text-muted-foreground">
+              Google may provide this when available; otherwise set it here.
+            </p>
           </div>
           <div>
             <label className="mb-1 block text-sm font-medium">Email</label>
@@ -95,8 +141,20 @@ function ProfileTab() {
               Email is managed by your Google account.
             </p>
           </div>
+          {updateProfile.isError && (
+            <p className="text-sm text-destructive">
+              Profile update failed. Please check your values and try again.
+            </p>
+          )}
+          <button
+            type="submit"
+            disabled={!hasChanges || updateProfile.isPending || !displayName.trim()}
+            className="rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90 disabled:opacity-50"
+          >
+            {updateProfile.isPending ? "Saving..." : "Save profile"}
+          </button>
         </div>
-      </div>
+      </form>
     </div>
   );
 }

@@ -45,6 +45,15 @@ export const createPublicLinkSchema = z.object({
 
 export type CreatePublicLink = z.infer<typeof createPublicLinkSchema>;
 
+export const createTeamShareSchema = z.object({
+  repoId: z.string(),
+  path: z.string().nullable().optional(),
+  teamId: z.string(),
+  permission: z.enum(sharePermissions).default("read"),
+});
+
+export type CreateTeamShare = z.infer<typeof createTeamShareSchema>;
+
 export const sharedItemSchema = z.object({
   share: shareSchema,
   fileName: z.string(),

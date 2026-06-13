@@ -23,6 +23,9 @@ interface GoogleUserInfo {
   email: string;
   name: string;
   picture?: string;
+  title?: string;
+  job_title?: string;
+  position?: string;
 }
 
 const app = new Hono<AppEnv>();
@@ -98,6 +101,8 @@ app.get("/google/callback", async (c) => {
   }
 
   const userInfo: GoogleUserInfo = await userInfoRes.json();
+  const googleDesignation =
+    userInfo.title ?? userInfo.job_title ?? userInfo.position ?? null;
 
   // Find or create user by googleId
   let user = await db
@@ -117,6 +122,7 @@ app.get("/google/callback", async (c) => {
       id: userId,
       email: userInfo.email,
       displayName: userInfo.name,
+      designation: googleDesignation,
       avatarUrl: userInfo.picture ?? null,
       googleId: userInfo.sub,
       createdAt: now,
@@ -135,6 +141,7 @@ app.get("/google/callback", async (c) => {
       .set({
         email: userInfo.email,
         displayName: userInfo.name,
+        designation: user.designation ?? googleDesignation,
         avatarUrl: userInfo.picture ?? null,
         updatedAt: new Date().toISOString(),
       })
@@ -220,6 +227,7 @@ app.post("/dev-login", async (c) => {
       id: userId,
       email,
       displayName,
+      designation: null,
       avatarUrl: null,
       googleId,
       createdAt: now,
@@ -300,6 +308,7 @@ app.get("/session", requireAuth, async (c) => {
       id: schema.users.id,
       email: schema.users.email,
       displayName: schema.users.displayName,
+      designation: schema.users.designation,
       avatarUrl: schema.users.avatarUrl,
       createdAt: schema.users.createdAt,
     })
