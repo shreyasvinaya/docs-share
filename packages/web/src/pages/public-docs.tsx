@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
 import { Link, Navigate, useParams } from "react-router";
+import { PublicAuthAction } from "@/components/layout/public-auth-action";
 import deploymentDoc from "../../../../docs/deployment.md?raw";
 import selfHostingDoc from "../../../../docs/self-hosting.md?raw";
 import productGuideDoc from "../../../../docs/product-guide.md?raw";
@@ -293,12 +294,7 @@ function PublicDocsLayout({ children }: { children: ReactNode }) {
             >
               Home
             </Link>
-            <Link
-              to="/app"
-              className="rounded-lg bg-primary px-3 py-2 font-medium text-primary-foreground transition-colors hover:bg-primary/90"
-            >
-              Open app
-            </Link>
+            <PublicAuthAction />
           </nav>
         </div>
       </header>

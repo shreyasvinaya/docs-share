@@ -10,6 +10,22 @@ export function useSession() {
   });
 }
 
+export function useOptionalSession() {
+  return useQuery({
+    queryKey: ["optional-session"],
+    queryFn: async () => {
+      const res = await fetch("/api/auth/session", {
+        credentials: "include",
+      });
+      if (res.status === 401) return null;
+      if (!res.ok) throw new Error("Failed to load session");
+      const body = (await res.json()) as { user: User };
+      return body;
+    },
+    retry: false,
+  });
+}
+
 export function useLogout() {
   const qc = useQueryClient();
   return useMutation({

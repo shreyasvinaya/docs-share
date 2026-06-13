@@ -1,4 +1,5 @@
 import { Link } from "react-router";
+import { PublicAuthAction } from "@/components/layout/public-auth-action";
 
 const workflows = [
   {
@@ -41,12 +42,7 @@ export function PublicHomePage() {
             <Link to="/docs" className="rounded-lg px-3 py-2 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground">
               Docs
             </Link>
-            <Link to="/login" className="rounded-lg px-3 py-2 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground">
-              Sign in
-            </Link>
-            <Link to="/app" className="rounded-lg bg-primary px-3 py-2 font-medium text-primary-foreground transition-colors hover:bg-primary/90">
-              Open app
-            </Link>
+            <PublicAuthAction />
           </nav>
         </div>
       </header>
@@ -64,9 +60,10 @@ export function PublicHomePage() {
               docs-share turns agent-generated plans, reports, dashboards, and static prototypes into signed-in preview links with team sharing, versioned storage, and CLI-first publishing.
             </p>
             <div className="mt-8 flex flex-wrap gap-3">
-              <Link to="/app" className="rounded-lg bg-primary px-5 py-3 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90">
-                Open workspace
-              </Link>
+              <PublicAuthAction
+                className="px-5 py-3 text-sm"
+                signedInLabel="Open workspace"
+              />
               <Link to="/docs" className="rounded-lg border border-border px-5 py-3 text-sm font-medium transition-colors hover:bg-muted">
                 Read docs
               </Link>
