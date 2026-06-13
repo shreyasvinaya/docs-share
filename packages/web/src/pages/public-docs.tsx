@@ -13,6 +13,7 @@ import skillsDoc from "../../../../SKILLS.md?raw";
 type MarkdownPart =
   | { type: "heading"; depth: number; text: string }
   | { type: "paragraph"; text: string }
+  | { type: "metadata"; text: string }
   | { type: "list"; ordered: boolean; items: string[] }
   | { type: "code"; language: string; text: string }
   | { type: "hr" }
@@ -195,7 +196,10 @@ function parseMarkdown(markdown: string): MarkdownPart[] {
 
     if (codeLines) {
       if (line.startsWith("```")) {
-        parts.push({ type: "code", language, text: codeLines.join("\n") });
+        const text = codeLines.join("\n");
+        if (language || text.trim()) {
+          parts.push({ type: "code", language, text });
+        }
         codeLines = null;
         language = "";
       } else {
@@ -216,6 +220,14 @@ function parseMarkdown(markdown: string): MarkdownPart[] {
       flushParagraph();
       flushList();
       parts.push({ type: "hr" });
+      continue;
+    }
+
+    const metadata = line.match(/^_Last updated:\s*(.+)_$/);
+    if (metadata) {
+      flushParagraph();
+      flushList();
+      parts.push({ type: "metadata", text: `Last updated: ${metadata[1]}` });
       continue;
     }
 
@@ -261,6 +273,11 @@ function parseMarkdown(markdown: string): MarkdownPart[] {
       continue;
     }
 
+    if (/^\s+/.test(line) && listItems.length) {
+      listItems[listItems.length - 1] += ` ${line.trim()}`;
+      continue;
+    }
+
     if (!line.trim()) {
       flushParagraph();
       flushList();
@@ -274,7 +291,10 @@ function parseMarkdown(markdown: string): MarkdownPart[] {
   flushParagraph();
   flushList();
   if (codeLines) {
-    parts.push({ type: "code", language, text: codeLines.join("\n") });
+    const text = codeLines.join("\n");
+    if (language || text.trim()) {
+      parts.push({ type: "code", language, text });
+    }
   }
 
   return parts;
@@ -327,6 +347,14 @@ function MarkdownDoc({ markdown }: { markdown: string }) {
             >
               <code>{part.text}</code>
             </pre>
+          );
+        }
+
+        if (part.type === "metadata") {
+          return (
+            <p key={`meta-${index}`} className="text-sm text-muted-foreground">
+              {part.text}
+            </p>
           );
         }
 
