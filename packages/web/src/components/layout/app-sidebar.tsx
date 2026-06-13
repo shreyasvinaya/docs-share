@@ -86,34 +86,41 @@ export function AppSidebar() {
           ))}
         </ul>
 
-        {!collapsed && (
-          <div className="mt-6">
+        <div className="mt-6">
+          {!collapsed && (
             <div className="mb-1 px-3">
               <h3 className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
                 Personal
               </h3>
             </div>
-            <NavLink
-              to="/files"
-              className={({ isActive }) =>
-                cn(
-                  "flex items-center gap-3 rounded-lg px-3 py-2 text-sm transition-colors",
-                  isActive
-                    ? "bg-muted font-medium text-foreground"
-                    : "text-muted-foreground hover:bg-muted/50 hover:text-foreground",
-                )
-              }
-            >
-              <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded bg-muted text-[10px] font-bold uppercase">
-                {user?.displayName?.[0] ?? "U"}
-              </span>
+          )}
+          <NavLink
+            to="/files"
+            aria-label={
+              collapsed ? (user?.displayName ?? "My files") : undefined
+            }
+            title={collapsed ? (user?.displayName ?? "My files") : undefined}
+            className={({ isActive }) =>
+              cn(
+                "flex items-center gap-3 rounded-lg px-3 py-2 text-sm transition-colors",
+                isActive
+                  ? "bg-muted font-medium text-foreground"
+                  : "text-muted-foreground hover:bg-muted/50 hover:text-foreground",
+                collapsed && "justify-center px-0",
+              )
+            }
+          >
+            <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded bg-muted text-[10px] font-bold uppercase">
+              {user?.displayName?.[0] ?? "U"}
+            </span>
+            {!collapsed && (
               <span className="truncate">{user?.displayName ?? "My files"}</span>
-            </NavLink>
-          </div>
-        )}
+            )}
+          </NavLink>
+        </div>
 
-        {!collapsed && (
-          <div className="mt-6">
+        <div className="mt-6">
+          {!collapsed && (
             <div className="mb-1 flex items-center justify-between px-3">
               <h3 className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
                 Teams
@@ -129,34 +136,39 @@ export function AppSidebar() {
                 </svg>
               </button>
             </div>
-            {teams && teams.length > 0 ? (
-              <ul className="space-y-0.5">
-                {teams.map((team) => (
-                  <li key={team.id}>
-                    <NavLink
-                      to={`/teams/${team.id}`}
-                      className={({ isActive }) =>
-                        cn(
-                          "flex items-center gap-3 rounded-lg px-3 py-2 text-sm transition-colors",
-                          isActive
-                            ? "bg-muted font-medium text-foreground"
-                            : "text-muted-foreground hover:bg-muted/50 hover:text-foreground",
-                        )
-                      }
-                    >
-                      <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded bg-muted text-[10px] font-bold uppercase">
-                        {team.name[0]}
-                      </span>
-                      <span className="truncate">{team.name}</span>
-                    </NavLink>
-                  </li>
-                ))}
-              </ul>
-            ) : (
+          )}
+          {teams && teams.length > 0 ? (
+            <ul className="space-y-0.5">
+              {teams.map((team) => (
+                <li key={team.id}>
+                  <NavLink
+                    to={`/teams/${team.id}`}
+                    aria-label={collapsed ? team.name : undefined}
+                    title={collapsed ? team.name : undefined}
+                    className={({ isActive }) =>
+                      cn(
+                        "flex items-center gap-3 rounded-lg px-3 py-2 text-sm transition-colors",
+                        isActive
+                          ? "bg-muted font-medium text-foreground"
+                          : "text-muted-foreground hover:bg-muted/50 hover:text-foreground",
+                        collapsed && "justify-center px-0",
+                      )
+                    }
+                  >
+                    <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded bg-muted text-[10px] font-bold uppercase">
+                      {team.name[0]}
+                    </span>
+                    {!collapsed && <span className="truncate">{team.name}</span>}
+                  </NavLink>
+                </li>
+              ))}
+            </ul>
+          ) : (
+            !collapsed && (
               <p className="px-3 text-xs text-muted-foreground">No teams yet</p>
-            )}
-          </div>
-        )}
+            )
+          )}
+        </div>
       </nav>
 
       <div className="border-t border-border p-2">
