@@ -22,3 +22,6 @@
 - GitHub owner/org filter options should be derived from the accessible
   `/user/repos` result as well as `/user/orgs`; org membership endpoints can be
   empty even when the token can import private organization repositories.
+- GitHub owner logins must be treated case-insensitively when filtering repo
+  results; GitHub can return canonical capitalization such as `Mstack-Chemicals`
+  while users or URLs often use lowercase org names.

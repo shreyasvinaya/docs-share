@@ -160,6 +160,39 @@ describe("listGitHubAccessibleRepos", () => {
     expect(requestedUrl).toContain("affiliation=owner%2Ccollaborator%2Corganization_member");
     expect(requestedUrl).toContain("sort=updated");
   });
+
+  test("matches selected organization owners case-insensitively", async () => {
+    globalThis.fetch = (async (input, init) => {
+      expect(String(input)).toContain("/user/repos?");
+      expect((init?.headers as Record<string, string>).Authorization).toBe("Bearer user-token");
+      return new Response(
+        JSON.stringify([
+          {
+            full_name: "Mstack-Chemicals/AgentOrg",
+            clone_url: "https://github.com/Mstack-Chemicals/AgentOrg.git",
+            default_branch: "main",
+            private: false,
+            pushed_at: "2026-06-12T10:00:00Z",
+            updated_at: "2026-06-12T10:00:00Z",
+            owner: { login: "Mstack-Chemicals" },
+          },
+        ]),
+        { status: 200 }
+      );
+    }) as typeof fetch;
+
+    await expect(listGitHubAccessibleRepos("user-token", "mstack-chemicals")).resolves.toEqual([
+      {
+        fullName: "Mstack-Chemicals/AgentOrg",
+        repoUrl: "https://github.com/Mstack-Chemicals/AgentOrg.git",
+        defaultBranch: "main",
+        private: false,
+        pushedAt: "2026-06-12T10:00:00Z",
+        updatedAt: "2026-06-12T10:00:00Z",
+        ownerLogin: "Mstack-Chemicals",
+      },
+    ]);
+  });
 });
 
 describe("listGitHubOrganizations", () => {

@@ -205,7 +205,12 @@ export async function listGitHubAccessibleRepos(
       const normalizedUrl = normalizeGitHubRepoUrl(repo.clone_url);
       const repoOwnerLogin = repo.owner?.login ?? repo.full_name.split("/")[0] ?? "";
       if (!normalizedUrl) continue;
-      if (normalizedOwnerLogin && repoOwnerLogin !== normalizedOwnerLogin) continue;
+      if (
+        normalizedOwnerLogin &&
+        repoOwnerLogin.toLowerCase() !== normalizedOwnerLogin.toLowerCase()
+      ) {
+        continue;
+      }
       repos.push({
         fullName: repo.full_name,
         repoUrl: normalizedUrl,
