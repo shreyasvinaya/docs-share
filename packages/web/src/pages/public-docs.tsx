@@ -13,7 +13,9 @@ type MarkdownPart =
   | { type: "heading"; depth: number; text: string }
   | { type: "paragraph"; text: string }
   | { type: "list"; ordered: boolean; items: string[] }
-  | { type: "code"; language: string; text: string };
+  | { type: "code"; language: string; text: string }
+  | { type: "hr" }
+  | { type: "table"; headers: string[]; rows: string[][] };
 
 const guides = [
   {
@@ -88,9 +90,24 @@ function hrefForMarkdownLink(href: string) {
   return `/docs/${guide.slug}${hash ? `#${hash}` : ""}`;
 }
 
+function splitTableRow(line: string) {
+  return line
+    .trim()
+    .replace(/^\|/, "")
+    .replace(/\|$/, "")
+    .split("|")
+    .map((cell) => cell.trim());
+}
+
+function isTableDivider(line: string) {
+  const cells = splitTableRow(line);
+  return cells.length > 1 && cells.every((cell) => /^:?-{3,}:?$/.test(cell));
+}
+
 function inlineMarkdown(text: string) {
   const nodes: ReactNode[] = [];
-  const pattern = /(`[^`]+`|\[[^\]]+\]\([^)]+\))/g;
+  const pattern =
+    /(`[^`]+`|\*\*[^*]+\*\*|\*[^*]+\*|\[[^\]]+\]\([^)]+\))/g;
   let cursor = 0;
   let match: RegExpExecArray | null;
 
@@ -108,6 +125,21 @@ function inlineMarkdown(text: string) {
         >
           {token.slice(1, -1)}
         </code>,
+      );
+    } else if (token.startsWith("**")) {
+      nodes.push(
+        <strong
+          key={`${match.index}-strong`}
+          className="font-semibold text-foreground"
+        >
+          {token.slice(2, -2)}
+        </strong>,
+      );
+    } else if (token.startsWith("*")) {
+      nodes.push(
+        <em key={`${match.index}-em`} className="text-foreground">
+          {token.slice(1, -1)}
+        </em>,
       );
     } else {
       const linkMatch = token.match(/^\[([^\]]+)\]\(([^)]+)\)$/);
@@ -157,7 +189,9 @@ function parseMarkdown(markdown: string): MarkdownPart[] {
     }
   }
 
-  for (const line of lines) {
+  for (let lineIndex = 0; lineIndex < lines.length; lineIndex += 1) {
+    const line = lines[lineIndex];
+
     if (codeLines) {
       if (line.startsWith("```")) {
         parts.push({ type: "code", language, text: codeLines.join("\n") });
@@ -174,6 +208,32 @@ function parseMarkdown(markdown: string): MarkdownPart[] {
       flushList();
       codeLines = [];
       language = line.slice(3).trim();
+      continue;
+    }
+
+    if (/^\s*---+\s*$/.test(line)) {
+      flushParagraph();
+      flushList();
+      parts.push({ type: "hr" });
+      continue;
+    }
+
+    if (line.includes("|") && isTableDivider(lines[lineIndex + 1] ?? "")) {
+      flushParagraph();
+      flushList();
+      const headers = splitTableRow(line);
+      const rows: string[][] = [];
+      let rowIndex = lineIndex + 2;
+      while (
+        rowIndex < lines.length &&
+        lines[rowIndex].includes("|") &&
+        lines[rowIndex].trim()
+      ) {
+        rows.push(splitTableRow(lines[rowIndex]));
+        rowIndex += 1;
+      }
+      parts.push({ type: "table", headers, rows });
+      lineIndex = rowIndex - 1;
       continue;
     }
 
@@ -262,11 +322,56 @@ function MarkdownDoc({ markdown }: { markdown: string }) {
           return (
             <pre
               key={`code-${index}`}
-              className="overflow-x-auto rounded-lg bg-foreground p-4 text-sm text-background"
+              className="overflow-x-auto rounded-lg border border-border bg-muted p-4 text-sm text-foreground"
             >
               <code>{part.text}</code>
             </pre>
           );
+        }
+
+        if (part.type === "table") {
+          return (
+            <div
+              key={`table-${index}`}
+              className="overflow-x-auto rounded-lg border border-border"
+            >
+              <table className="w-full min-w-[640px] border-collapse text-left text-sm">
+                <thead className="bg-muted">
+                  <tr>
+                    {part.headers.map((header) => (
+                      <th
+                        key={header}
+                        className="border-b border-border px-3 py-2 font-semibold text-foreground"
+                      >
+                        {inlineMarkdown(header)}
+                      </th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {part.rows.map((row, rowIndex) => (
+                    <tr
+                      key={`${row.join("-")}-${rowIndex}`}
+                      className="border-b border-border last:border-b-0"
+                    >
+                      {part.headers.map((header, cellIndex) => (
+                        <td
+                          key={`${header}-${cellIndex}`}
+                          className="px-3 py-2 align-top text-muted-foreground"
+                        >
+                          {inlineMarkdown(row[cellIndex] ?? "")}
+                        </td>
+                      ))}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          );
+        }
+
+        if (part.type === "hr") {
+          return <hr key={`hr-${index}`} className="border-border" />;
         }
 
         return (
