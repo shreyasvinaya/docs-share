@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 import { Link, Navigate, useParams } from "react-router";
 import { PublicAuthAction } from "@/components/layout/public-auth-action";
+import { PublicThemeControl } from "@/components/layout/public-theme-control";
 import deploymentDoc from "../../../../docs/deployment.md?raw";
 import selfHostingDoc from "../../../../docs/self-hosting.md?raw";
 import productGuideDoc from "../../../../docs/product-guide.md?raw";
@@ -399,6 +400,7 @@ function PublicDocsLayout({ children }: { children: ReactNode }) {
             >
               Home
             </Link>
+            <PublicThemeControl />
             <PublicAuthAction />
           </nav>
         </div>

@@ -1,5 +1,6 @@
 import { Link } from "react-router";
 import { PublicAuthAction } from "@/components/layout/public-auth-action";
+import { PublicThemeControl } from "@/components/layout/public-theme-control";
 
 const workflows = [
   {
@@ -42,6 +43,7 @@ export function PublicHomePage() {
             <Link to="/docs" className="rounded-lg px-3 py-2 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground">
               Docs
             </Link>
+            <PublicThemeControl />
             <PublicAuthAction />
           </nav>
         </div>
