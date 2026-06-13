@@ -3,13 +3,16 @@ import { useSession } from "@/hooks/use-auth";
 import {
   useApiTokens,
   useCreateToken,
+  useDeleteGitHubToken,
+  useGitHubTokenStatus,
   useRevokeToken,
+  useSaveGitHubToken,
   useUpdateProfile,
 } from "@/hooks/use-auth";
 import { UserAvatar } from "@/components/common/user-avatar";
 import { cn } from "@/lib/utils";
 
-type Tab = "profile" | "tokens";
+type Tab = "profile" | "tokens" | "integrations";
 
 export function SettingsPage() {
   const [tab, setTab] = useState<Tab>("profile");
@@ -43,10 +46,104 @@ export function SettingsPage() {
         >
           API Tokens
         </button>
+        <button
+          type="button"
+          onClick={() => setTab("integrations")}
+          className={cn(
+            "border-b-2 px-4 py-2 text-sm font-medium transition-colors",
+            tab === "integrations"
+              ? "border-primary text-foreground"
+              : "border-transparent text-muted-foreground hover:text-foreground",
+          )}
+        >
+          Integrations
+        </button>
       </div>
 
       {tab === "profile" && <ProfileTab />}
       {tab === "tokens" && <TokensTab />}
+      {tab === "integrations" && <IntegrationsTab />}
+    </div>
+  );
+}
+
+function IntegrationsTab() {
+  const { data: githubToken, isLoading } = useGitHubTokenStatus();
+  const saveGitHubToken = useSaveGitHubToken();
+  const deleteGitHubToken = useDeleteGitHubToken();
+  const [token, setToken] = useState("");
+
+  const handleSubmit = (event: React.FormEvent) => {
+    event.preventDefault();
+    if (!token.trim()) return;
+    saveGitHubToken.mutate(token.trim(), {
+      onSuccess: () => setToken(""),
+    });
+  };
+
+  return (
+    <div className="space-y-6">
+      <div className="rounded-lg border border-border p-4">
+        <h3 className="mb-1 text-sm font-semibold">GitHub private imports</h3>
+        <p className="mb-4 text-sm text-muted-foreground">
+          Connect a GitHub token with repository read access to import your private repositories.
+        </p>
+
+        {isLoading ? (
+          <p className="text-sm text-muted-foreground">Loading GitHub status...</p>
+        ) : githubToken?.connected ? (
+          <div className="mb-4 rounded-lg border border-border bg-muted/50 px-3 py-2 text-sm">
+            Connected
+            {githubToken.updatedAt && (
+              <span className="text-muted-foreground">
+                {" "}
+                since {new Date(githubToken.updatedAt).toLocaleDateString()}
+              </span>
+            )}
+          </div>
+        ) : (
+          <div className="mb-4 rounded-lg border border-border bg-muted/50 px-3 py-2 text-sm text-muted-foreground">
+            No GitHub token connected.
+          </div>
+        )}
+
+        <form onSubmit={handleSubmit} className="flex items-end gap-3">
+          <div className="flex-1">
+            <label
+              htmlFor="github-token"
+              className="mb-1 block text-sm font-medium"
+            >
+              GitHub token
+            </label>
+            <input
+              id="github-token"
+              type="password"
+              value={token}
+              onChange={(event) => setToken(event.target.value)}
+              placeholder="github_pat_..."
+              className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm outline-none focus:border-primary focus:ring-1 focus:ring-primary"
+            />
+          </div>
+          <button
+            type="submit"
+            disabled={saveGitHubToken.isPending || !token.trim()}
+            className="rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90 disabled:opacity-50"
+          >
+            {saveGitHubToken.isPending ? "Saving..." : "Save"}
+          </button>
+        </form>
+
+        {githubToken?.connected && (
+          <button
+            type="button"
+            onClick={() => deleteGitHubToken.mutate()}
+            disabled={deleteGitHubToken.isPending}
+            className="mt-4 text-sm text-destructive transition-colors hover:text-destructive/80 disabled:opacity-50"
+          >
+            {deleteGitHubToken.isPending ? "Disconnecting..." : "Disconnect GitHub token"}
+          </button>
+        )}
+      </div>
     </div>
   );
 }

@@ -54,6 +54,12 @@ HOOK_SECRET=replace-with-another-32-plus-random-characters
 
 GOOGLE_CLIENT_ID=replace-me.apps.googleusercontent.com
 GOOGLE_CLIENT_SECRET=replace-me
+
+# Optional integrations.
+GITHUB_TOKEN_SECRET=replace-with-32-plus-random-characters
+EMAIL_FROM="docs-share <notifications@docs.example.com>"
+RESEND_API_KEY=
+SLACK_WEBHOOK_URL=
 ```
 
 ## Docker Compose

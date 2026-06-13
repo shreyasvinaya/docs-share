@@ -1,4 +1,5 @@
 import { createId } from "@paralleldrive/cuid2";
+import { createCipheriv, createDecipheriv, createHash, randomBytes } from "crypto";
 
 export function generateId(): string {
   return createId();
@@ -26,4 +27,40 @@ export function hashToken(token: string): string {
 export function generatePublicToken(): string {
   const randomBytes = crypto.getRandomValues(new Uint8Array(24));
   return Buffer.from(randomBytes).toString("base64url");
+}
+
+export function encryptSecret(value: string, secret: string): string {
+  const iv = randomBytes(12);
+  const cipher = createCipheriv("aes-256-gcm", secretKey(secret), iv);
+  const ciphertext = Buffer.concat([
+    cipher.update(value, "utf8"),
+    cipher.final(),
+  ]);
+  const tag = cipher.getAuthTag();
+  return [iv, tag, ciphertext]
+    .map((part) => part.toString("base64url"))
+    .join(".");
+}
+
+export function decryptSecret(encrypted: string, secret: string): string {
+  const [ivValue, tagValue, ciphertextValue] = encrypted.split(".");
+  if (!ivValue || !tagValue || !ciphertextValue) {
+    throw new Error("Invalid encrypted secret");
+  }
+
+  const decipher = createDecipheriv(
+    "aes-256-gcm",
+    secretKey(secret),
+    Buffer.from(ivValue, "base64url")
+  );
+  decipher.setAuthTag(Buffer.from(tagValue, "base64url"));
+  const plaintext = Buffer.concat([
+    decipher.update(Buffer.from(ciphertextValue, "base64url")),
+    decipher.final(),
+  ]);
+  return plaintext.toString("utf8");
+}
+
+function secretKey(secret: string): Buffer {
+  return createHash("sha256").update(secret).digest();
 }

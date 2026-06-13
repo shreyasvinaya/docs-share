@@ -1,8 +1,20 @@
-import { describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, test } from "bun:test";
 import {
+  filterGitHubTree,
+  listGitHubAccessibleRepos,
+  listGitHubBranches,
   normalizeGitBranch,
+  normalizeGitHubImportPath,
   normalizeGitHubRepoUrl,
+  orderGitHubBranches,
+  redactSensitiveGitOutput,
 } from "./githubSync.js";
+
+const originalFetch = globalThis.fetch;
+
+afterEach(() => {
+  globalThis.fetch = originalFetch;
+});
 
 describe("normalizeGitHubRepoUrl", () => {
   test("accepts public GitHub repository URLs", () => {
@@ -20,6 +32,16 @@ describe("normalizeGitHubRepoUrl", () => {
     expect(normalizeGitHubRepoUrl("https://github.com/acme")).toBeNull();
     expect(normalizeGitHubRepoUrl("not a url")).toBeNull();
   });
+
+  test("redacts GitHub tokens from git output", () => {
+    const output =
+      "fatal: Authentication failed for https://x-access-token:ghp_secret@github.com/acme/private.git github_pat_abc123";
+
+    const redacted = redactSensitiveGitOutput(output);
+    expect(redacted).not.toContain("ghp_secret");
+    expect(redacted).not.toContain("github_pat_abc123");
+    expect(redacted).toContain("[redacted]");
+  });
 });
 
 describe("normalizeGitBranch", () => {
@@ -34,5 +56,118 @@ describe("normalizeGitBranch", () => {
     expect(normalizeGitBranch("-main")).toBeNull();
     expect(normalizeGitBranch("feature branch")).toBeNull();
     expect(normalizeGitBranch("main\0")).toBeNull();
+  });
+});
+
+describe("orderGitHubBranches", () => {
+  test("places common branch names first when present", () => {
+    expect(
+      orderGitHubBranches(["feature-x", "gh-pages", "master", "main", "staging"])
+    ).toEqual(["main", "master", "staging", "gh-pages", "feature-x"]);
+  });
+});
+
+describe("listGitHubAccessibleRepos", () => {
+  test("returns token-scoped repositories from GitHub in pushed order", async () => {
+    const requestedUrls: string[] = [];
+    globalThis.fetch = (async (input, init) => {
+      requestedUrls.push(String(input));
+      expect((init?.headers as Record<string, string>).Authorization).toBe("Bearer user-token");
+      return new Response(
+        JSON.stringify([
+          {
+            full_name: "acme/private-docs",
+            clone_url: "https://github.com/acme/private-docs.git",
+            default_branch: "staging",
+            private: true,
+            pushed_at: "2026-06-12T10:00:00Z",
+          },
+        ]),
+        { status: 200 }
+      );
+    }) as typeof fetch;
+
+    await expect(listGitHubAccessibleRepos("user-token")).resolves.toEqual([
+      {
+        fullName: "acme/private-docs",
+        repoUrl: "https://github.com/acme/private-docs.git",
+        defaultBranch: "staging",
+        private: true,
+        pushedAt: "2026-06-12T10:00:00Z",
+      },
+    ]);
+    expect(requestedUrls[0]).toContain("/user/repos?");
+    expect(requestedUrls[0]).toContain("visibility=all");
+  });
+
+  test("does not call GitHub when no token is available", async () => {
+    globalThis.fetch = (async () => {
+      throw new Error("fetch should not be called");
+    }) as unknown as typeof fetch;
+
+    await expect(listGitHubAccessibleRepos("")).resolves.toEqual([]);
+  });
+});
+
+describe("listGitHubBranches", () => {
+  test("lists branches for the selected repository with recommended names first", async () => {
+    let requestedUrl = "";
+    globalThis.fetch = (async (input, init) => {
+      requestedUrl = String(input);
+      expect((init?.headers as Record<string, string>).Authorization).toBe("Bearer user-token");
+      return new Response(
+        JSON.stringify([
+          { name: "feature-x" },
+          { name: "gh-pages" },
+          { name: "main" },
+          { name: "master" },
+        ]),
+        { status: 200 }
+      );
+    }) as typeof fetch;
+
+    await expect(
+      listGitHubBranches({
+        repoUrl: "https://github.com/acme/site",
+        token: "user-token",
+      })
+    ).resolves.toEqual(["main", "master", "gh-pages", "feature-x"]);
+    expect(requestedUrl).toContain("/repos/acme/site/branches?");
+  });
+});
+
+describe("normalizeGitHubImportPath", () => {
+  test("accepts root, normal files, and nested folders", () => {
+    expect(normalizeGitHubImportPath(undefined)).toBe("");
+    expect(normalizeGitHubImportPath("")).toBe("");
+    expect(normalizeGitHubImportPath("docs")).toBe("docs");
+    expect(normalizeGitHubImportPath("docs/index.html")).toBe("docs/index.html");
+  });
+
+  test("rejects traversal, absolute, and git metadata paths", () => {
+    expect(normalizeGitHubImportPath("../docs")).toBeNull();
+    expect(normalizeGitHubImportPath("/docs")).toBeNull();
+    expect(normalizeGitHubImportPath("docs/.git/config")).toBeNull();
+    expect(normalizeGitHubImportPath("docs\0bad")).toBeNull();
+  });
+});
+
+describe("filterGitHubTree", () => {
+  test("returns picker nodes for root and selected subtrees", () => {
+    const tree = [
+      { path: "docs", type: "tree" as const },
+      { path: "docs/index.html", type: "blob" as const, size: 120 },
+      { path: "docs/assets/app.css", type: "blob" as const, size: 40 },
+      { path: "README.md", type: "blob" as const, size: 80 },
+    ];
+
+    expect(filterGitHubTree(tree, "")).toEqual([
+      { path: "docs", name: "docs", type: "directory", size: null },
+      { path: "README.md", name: "README.md", type: "file", size: 80 },
+    ]);
+    expect(filterGitHubTree(tree, "docs")).toEqual([
+      { path: "docs/assets", name: "assets", type: "directory", size: null },
+      { path: "docs/index.html", name: "index.html", type: "file", size: 120 },
+    ]);
   });
 });

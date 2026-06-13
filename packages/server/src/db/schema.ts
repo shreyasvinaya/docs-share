@@ -16,6 +16,8 @@ export const users = sqliteTable(
     designation: text("designation"),
     avatarUrl: text("avatar_url"),
     googleId: text("google_id").notNull(),
+    githubTokenEncrypted: text("github_token_encrypted"),
+    githubTokenUpdatedAt: text("github_token_updated_at"),
     createdAt: text("created_at")
       .notNull()
       .default(sql`(CURRENT_TIMESTAMP)`),
@@ -288,6 +290,7 @@ export const githubSyncs = sqliteTable(
       .references(() => repos.id, { onDelete: "cascade" }),
     repoUrl: text("repo_url").notNull(),
     branch: text("branch").notNull().default("main"),
+    sourcePath: text("source_path").default(""),
     lastCommitSha: text("last_commit_sha"),
     lastSyncedAt: text("last_synced_at"),
     status: text("status", { enum: ["idle", "syncing", "success", "error"] })

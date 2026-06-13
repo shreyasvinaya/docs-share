@@ -238,6 +238,9 @@ Important share behavior:
 - Public links use `/view/public/:token`.
 - Organization-only links require sign-in and a matching email domain.
 - Public links can expire when created with `--expires`.
+- Email shares send notification email when `RESEND_API_KEY` and `EMAIL_FROM`
+  are configured.
+- Share activity posts to Slack when `SLACK_WEBHOOK_URL` is configured.
 
 Draft URLs are not the same as public share links. Current draft URLs are
 private to the creating user and are not team-shareable from the UI.
@@ -315,6 +318,9 @@ Production settings to review:
 - Put TLS in front of the app.
 - Allow large upload request bodies at the proxy/platform layer.
 - Keep `ENABLE_DEV_LOGIN=false`.
+- Set `GITHUB_TOKEN_SECRET` so per-user GitHub tokens can be encrypted at rest.
+- Set `EMAIL_FROM` plus `RESEND_API_KEY` for share notification emails.
+- Set `SLACK_WEBHOOK_URL` for Slack share/activity notifications.
 - Use `/health` for platform health checks.
 
 For upgrades, back up `DATA_DIR`, deploy the new image or source, then check

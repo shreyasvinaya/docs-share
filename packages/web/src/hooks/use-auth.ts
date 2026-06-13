@@ -2,6 +2,11 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/api-client";
 import type { User, ApiToken, CreateToken, UpdateUser } from "@docs-share/shared";
 
+export interface GitHubTokenStatus {
+  connected: boolean;
+  updatedAt: string | null;
+}
+
 export function useSession() {
   return useQuery({
     queryKey: ["session"],
@@ -72,5 +77,29 @@ export function useRevokeToken() {
   return useMutation({
     mutationFn: (tokenId: string) => api.del(`/api/auth/tokens/${tokenId}`),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["api-tokens"] }),
+  });
+}
+
+export function useGitHubTokenStatus() {
+  return useQuery({
+    queryKey: ["github-token"],
+    queryFn: () => api.get<GitHubTokenStatus>("/api/users/me/github-token"),
+  });
+}
+
+export function useSaveGitHubToken() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (token: string) =>
+      api.put<GitHubTokenStatus>("/api/users/me/github-token", { token }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["github-token"] }),
+  });
+}
+
+export function useDeleteGitHubToken() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () => api.del<GitHubTokenStatus>("/api/users/me/github-token"),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["github-token"] }),
   });
 }

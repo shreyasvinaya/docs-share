@@ -38,11 +38,21 @@ export const config = {
   HOOK_BASE_URL: env("HOOK_BASE_URL", `http://localhost:${env("PORT", "3000")}`),
 
   CONTENT_ORIGIN: env("CONTENT_ORIGIN", "http://localhost:3000"),
+
+  GITHUB_TOKEN_SECRET: env(
+    "GITHUB_TOKEN_SECRET",
+    "dev-github-token-secret-change-in-production"
+  ),
+
+  EMAIL_FROM: env("EMAIL_FROM", ""),
+  RESEND_API_KEY: env("RESEND_API_KEY", ""),
+  SLACK_WEBHOOK_URL: env("SLACK_WEBHOOK_URL", ""),
 };
 
 assertProductionSecret("SESSION_SECRET", config.SESSION_SECRET);
 assertProductionSecret("DRAFT_CONTENT_SECRET", config.DRAFT_CONTENT_SECRET);
 assertProductionSecret("HOOK_SECRET", config.HOOK_SECRET);
+assertProductionSecret("GITHUB_TOKEN_SECRET", config.GITHUB_TOKEN_SECRET);
 
 if (
   isProduction() &&

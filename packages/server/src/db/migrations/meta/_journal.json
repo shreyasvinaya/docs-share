@@ -43,6 +43,20 @@
       "when": 1781320000000,
       "tag": "0005_user_designation",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "6",
+      "when": 1781364000000,
+      "tag": "0006_github_sync_source_path",
+      "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "6",
+      "when": 1781365000000,
+      "tag": "0007_user_github_token",
+      "breakpoints": true
     }
   ]
 }

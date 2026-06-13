@@ -3,6 +3,13 @@ import { eq, and, isNull, inArray } from "drizzle-orm";
 import { db, schema } from "../db/index.js";
 import { requireAuth } from "../middleware/requireAuth.js";
 import { generateId, generatePublicToken, hashToken } from "../lib/crypto.js";
+import { config } from "../lib/config.js";
+import {
+  buildEmailShareNotification,
+  buildSlackShareNotification,
+  sendShareEmailNotifications,
+  sendSlackNotification,
+} from "../services/notifications.js";
 import type { AppEnv } from "../lib/types.js";
 
 const app = new Hono<AppEnv>();
@@ -59,6 +66,55 @@ async function checkRepoAccess(
   }
 
   return false;
+}
+
+async function notifyShareCreated(params: {
+  createdById: string;
+  shareType: "email" | "team" | "public_link";
+  permission: "read" | "write";
+  path: string | null;
+  recipientEmails?: string[];
+}): Promise<void> {
+  const creator = await db
+    .select()
+    .from(schema.users)
+    .where(eq(schema.users.id, params.createdById))
+    .get();
+  const sharerName = creator?.displayName ?? creator?.email ?? "Someone";
+  const resourceLabel = params.path || "All files";
+
+  try {
+    if (params.shareType === "email" && params.recipientEmails?.length) {
+      await sendShareEmailNotifications({
+        apiKey: config.RESEND_API_KEY,
+        from: config.EMAIL_FROM,
+        messages: params.recipientEmails.map((recipientEmail) =>
+          buildEmailShareNotification({
+            appUrl: config.APP_URL,
+            recipientEmail,
+            sharerName,
+            resourceLabel,
+          })
+        ),
+      });
+    }
+
+    await sendSlackNotification({
+      webhookUrl: config.SLACK_WEBHOOK_URL,
+      text: buildSlackShareNotification({
+        appUrl: config.APP_URL,
+        sharerName,
+        resourceLabel,
+        shareType: params.shareType,
+        permission: params.permission,
+      }),
+    });
+  } catch (error) {
+    console.warn(
+      "Share notification failed",
+      error instanceof Error ? error.message : String(error)
+    );
+  }
 }
 
 /**
@@ -176,6 +232,14 @@ app.post("/", requireAuth, async (c) => {
       .where(eq(schema.shareRecipients.shareId, shareId))
       .all();
 
+    await notifyShareCreated({
+      createdById: userId,
+      shareType: "email",
+      permission: sharePermission,
+      path: path || null,
+      recipientEmails: emails,
+    });
+
     return c.json({ data: { ...share, recipients } }, 201);
   }
 
@@ -253,6 +317,13 @@ app.post("/", requireAuth, async (c) => {
         .where(eq(schema.shares.id, existingShare.id))
         .get();
 
+      await notifyShareCreated({
+        createdById: userId,
+        shareType: "public_link",
+        permission: "read",
+        path: path || null,
+      });
+
       return c.json({ data: { ...updated, publicToken: updated!.publicToken } });
     }
 
@@ -296,6 +367,13 @@ app.post("/", requireAuth, async (c) => {
       .from(schema.shares)
       .where(eq(schema.shares.id, shareId))
       .get();
+
+    await notifyShareCreated({
+      createdById: userId,
+      shareType: "public_link",
+      permission: "read",
+      path: path || null,
+    });
 
     return c.json({ data: { ...share, publicToken } }, 201);
   }
@@ -369,6 +447,13 @@ app.post("/", requireAuth, async (c) => {
         .where(eq(schema.shares.id, existingShare.id))
         .get();
 
+      await notifyShareCreated({
+        createdById: userId,
+        shareType: "team",
+        permission: sharePermission,
+        path: path || null,
+      });
+
       return c.json({ data: share });
     }
 
@@ -392,6 +477,13 @@ app.post("/", requireAuth, async (c) => {
       .from(schema.shares)
       .where(eq(schema.shares.id, shareId))
       .get();
+
+    await notifyShareCreated({
+      createdById: userId,
+      shareType: "team",
+      permission: sharePermission,
+      path: path || null,
+    });
 
     return c.json({ data: share }, 201);
   }

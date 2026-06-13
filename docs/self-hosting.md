@@ -41,9 +41,9 @@ Set `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, and `GOOGLE_REDIRECT_URI`.
 
 ## GitHub Sync
 
-Users can configure a public GitHub repository and branch from the file page. Sync imports the branch into the same Git-backed repo tree used by uploads, so interlinked HTML pages and assets resolve by relative path without rewriting.
+Users can choose from GitHub repositories accessible to their connected token, or enter another GitHub repository URL from the file page. Branch options appear after a repository URL is selected, with common branch names prioritized in the picker. Sync imports the selected branch into the same Git-backed repo tree used by uploads, so interlinked HTML pages and assets resolve by relative path without rewriting.
 
-Only public `https://github.com/owner/repo` URLs are supported in the initial implementation.
+Private repositories require each user to connect a GitHub token in **Settings -> Integrations**. Use a fine-scoped token with read access to the repositories that user wants docs-share to import. Tokens are encrypted at rest with `GITHUB_TOKEN_SECRET`. The web picker can browse the remote tree and select the whole repository, one folder, or one file before sync.
 
 ## Reverse Proxy
 

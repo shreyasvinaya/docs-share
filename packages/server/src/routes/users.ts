@@ -2,6 +2,8 @@ import { Hono } from "hono";
 import { eq } from "drizzle-orm";
 import { db, schema } from "../db/index.js";
 import { requireAuth } from "../middleware/requireAuth.js";
+import { config } from "../lib/config.js";
+import { decryptSecret, encryptSecret } from "../lib/crypto.js";
 import type { AppEnv } from "../lib/types.js";
 
 const app = new Hono<AppEnv>();
@@ -106,5 +108,75 @@ app.patch("/me", async (c) => {
 
   return c.json({ data: user });
 });
+
+app.get("/me/github-token", async (c) => {
+  const userId = c.get("userId");
+  const user = await db
+    .select({
+      githubTokenEncrypted: schema.users.githubTokenEncrypted,
+      githubTokenUpdatedAt: schema.users.githubTokenUpdatedAt,
+    })
+    .from(schema.users)
+    .where(eq(schema.users.id, userId))
+    .get();
+
+  if (!user) return c.json({ error: "User not found" }, 404);
+
+  return c.json({
+    data: {
+      connected: !!user.githubTokenEncrypted,
+      updatedAt: user.githubTokenUpdatedAt,
+    },
+  });
+});
+
+app.put("/me/github-token", async (c) => {
+  const userId = c.get("userId");
+  const body = await c.req.json<{ token?: string }>();
+  const token = body.token?.trim();
+
+  if (!token || token.length < 20) {
+    return c.json({ error: "A GitHub token is required" }, 400);
+  }
+
+  const now = new Date().toISOString();
+  await db
+    .update(schema.users)
+    .set({
+      githubTokenEncrypted: encryptSecret(token, config.GITHUB_TOKEN_SECRET),
+      githubTokenUpdatedAt: now,
+      updatedAt: now,
+    })
+    .where(eq(schema.users.id, userId))
+    .run();
+
+  return c.json({ data: { connected: true, updatedAt: now } });
+});
+
+app.delete("/me/github-token", async (c) => {
+  const userId = c.get("userId");
+  await db
+    .update(schema.users)
+    .set({
+      githubTokenEncrypted: null,
+      githubTokenUpdatedAt: null,
+      updatedAt: new Date().toISOString(),
+    })
+    .where(eq(schema.users.id, userId))
+    .run();
+
+  return c.json({ data: { connected: false, updatedAt: null } });
+});
+
+export async function getUserGitHubToken(userId: string): Promise<string> {
+  const user = await db
+    .select({ githubTokenEncrypted: schema.users.githubTokenEncrypted })
+    .from(schema.users)
+    .where(eq(schema.users.id, userId))
+    .get();
+
+  if (!user?.githubTokenEncrypted) return "";
+  return decryptSecret(user.githubTokenEncrypted, config.GITHUB_TOKEN_SECRET);
+}
 
 export default app;

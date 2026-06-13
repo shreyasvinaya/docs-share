@@ -8,3 +8,9 @@
   list content inside the same bullet; do not expose source filenames as UI copy.
 - Team folder clicks should match personal folder behavior: open the folder
   management/listing route, not the preview iframe route.
+- Private repository integrations must be user-scoped by default. Do not use a
+  single server-wide credential when each user needs access to their own private
+  repositories.
+- GitHub import UX should prefer repositories accessible to the current user's
+  token, then offer a manual URL fallback. Do not force URL-first flows for
+  private repository imports.

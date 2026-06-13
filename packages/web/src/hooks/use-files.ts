@@ -12,12 +12,28 @@ export interface GitHubSync {
   repoId: string;
   repoUrl: string;
   branch: string;
+  sourcePath: string | null;
   lastCommitSha: string | null;
   lastSyncedAt: string | null;
   status: "idle" | "syncing" | "success" | "error";
   error: string | null;
   createdAt: string;
   updatedAt: string;
+}
+
+export interface GitHubTreeNode {
+  path: string;
+  name: string;
+  type: "file" | "directory";
+  size: number | null;
+}
+
+export interface GitHubRepositoryOption {
+  fullName: string;
+  repoUrl: string;
+  defaultBranch: string;
+  private: boolean;
+  pushedAt: string | null;
 }
 
 export function useFiles(repoId: string | undefined, path?: string) {
@@ -108,12 +124,65 @@ export function useGitHubSync(repoId: string | undefined) {
 export function useRunGitHubSync(repoId: string | undefined) {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (data: { repoUrl?: string; branch?: string }) =>
+    mutationFn: (data: { repoUrl?: string; branch?: string; sourcePath?: string }) =>
       api.post<GitHubSync>(`/api/repos/${repoId}/github-sync`, data),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["github-sync", repoId] });
       qc.invalidateQueries({ queryKey: ["files", repoId] });
       qc.invalidateQueries({ queryKey: ["commits", repoId] });
     },
+  });
+}
+
+export function useGitHubRepositories(repoId: string | undefined, enabled = true) {
+  return useQuery({
+    queryKey: ["github-repositories", repoId],
+    queryFn: () =>
+      api.get<GitHubRepositoryOption[]>(
+        `/api/repos/${repoId}/github-sync/repositories`
+      ),
+    enabled: !!repoId && enabled,
+    retry: false,
+  });
+}
+
+export function useGitHubBranches(
+  repoId: string | undefined,
+  repoUrl: string,
+  enabled = true
+) {
+  return useQuery({
+    queryKey: ["github-branches", repoId, repoUrl],
+    queryFn: () => {
+      const params = new URLSearchParams({ repoUrl });
+      return api.get<string[]>(
+        `/api/repos/${repoId}/github-sync/branches?${params.toString()}`
+      );
+    },
+    enabled: !!repoId && !!repoUrl.trim() && enabled,
+    retry: false,
+  });
+}
+
+export function useGitHubTree(
+  repoId: string | undefined,
+  repoUrl: string,
+  branch: string,
+  path: string
+) {
+  return useQuery({
+    queryKey: ["github-tree", repoId, repoUrl, branch, path],
+    queryFn: () => {
+      const params = new URLSearchParams({
+        repoUrl,
+        branch: branch || "main",
+      });
+      if (path) params.set("path", path);
+      return api.get<GitHubTreeNode[]>(
+        `/api/repos/${repoId}/github-sync/tree?${params.toString()}`
+      );
+    },
+    enabled: !!repoId && !!repoUrl.trim() && !!branch.trim(),
+    retry: false,
   });
 }

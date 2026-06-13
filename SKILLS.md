@@ -79,6 +79,13 @@ With `ENABLE_DEV_LOGIN=true`, use any email and password `dev`.
   delete UI actions.
 - `packages/web/src/components/sharing/share-dialog.tsx`: email/team/link share
   options.
+- `packages/web/src/components/files/github-sync-panel.tsx`: GitHub repository,
+  branch, remote tree picker, and selected path sync UI.
+- `packages/server/src/services/githubSync.ts`: GitHub URL/branch/path
+  validation, private token clone URL handling, remote tree listing, and
+  selected file/folder import.
+- `packages/server/src/services/notifications.ts`: Resend email and Slack
+  webhook notification adapters used by share routes.
 
 ## Verification
 

@@ -5,10 +5,15 @@ import { requireAuth } from "../middleware/requireAuth.js";
 import { checkAccess } from "../middleware/shareAccess.js";
 import { generateId } from "../lib/crypto.js";
 import {
+  listGitHubAccessibleRepos,
+  listGitHubBranches,
+  listGitHubRemoteTree,
   normalizeGitBranch,
+  normalizeGitHubImportPath,
   normalizeGitHubRepoUrl,
   syncGitHubRepo,
 } from "../services/githubSync.js";
+import { getUserGitHubToken } from "./users.js";
 import type { AppEnv } from "../lib/types.js";
 
 const app = new Hono<AppEnv>();
@@ -26,11 +31,69 @@ app.get("/:repoId/github-sync", checkAccess("read"), async (c) => {
   return c.json({ data: sync ?? null });
 });
 
+app.get("/:repoId/github-sync/repositories", checkAccess("read"), async (c) => {
+  const userId = c.get("userId");
+
+  try {
+    const repositories = await listGitHubAccessibleRepos(await getUserGitHubToken(userId));
+    return c.json({ data: repositories });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    return c.json({ error: "GitHub repository lookup failed", details: message }, 502);
+  }
+});
+
+app.get("/:repoId/github-sync/branches", checkAccess("read"), async (c) => {
+  const userId = c.get("userId");
+  const repoUrl = c.req.query("repoUrl");
+
+  if (!repoUrl) {
+    return c.json({ error: "repoUrl is required" }, 400);
+  }
+
+  try {
+    const branches = await listGitHubBranches({
+      repoUrl,
+      token: await getUserGitHubToken(userId),
+    });
+    return c.json({ data: branches });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    return c.json({ error: "GitHub branch lookup failed", details: message }, 502);
+  }
+});
+
+app.get("/:repoId/github-sync/tree", checkAccess("read"), async (c) => {
+  const userId = c.get("userId");
+  const repoUrl = c.req.query("repoUrl");
+  const branch = c.req.query("branch") ?? "main";
+  const path = c.req.query("path") ?? "";
+
+  if (!repoUrl) {
+    return c.json({ error: "repoUrl is required" }, 400);
+  }
+
+  try {
+    const nodes = await listGitHubRemoteTree({
+      repoUrl,
+      branch,
+      path,
+      token: await getUserGitHubToken(userId),
+    });
+    return c.json({ data: nodes });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    return c.json({ error: "GitHub tree lookup failed", details: message }, 502);
+  }
+});
+
 app.post("/:repoId/github-sync", checkAccess("write"), async (c) => {
+  const userId = c.get("userId");
   const repoId = c.req.param("repoId");
   const body = await c.req.json<{
     repoUrl?: string;
     branch?: string;
+    sourcePath?: string;
   }>();
 
   const repo = await db
@@ -51,17 +114,22 @@ app.post("/:repoId/github-sync", checkAccess("write"), async (c) => {
 
   const repoUrl = body.repoUrl ?? existing?.repoUrl;
   const branch = body.branch ?? existing?.branch ?? "main";
+  const sourcePath = body.sourcePath ?? existing?.sourcePath ?? "";
   if (!repoUrl) {
     return c.json({ error: "repoUrl is required for the first sync" }, 400);
   }
 
   const normalizedUrl = normalizeGitHubRepoUrl(repoUrl);
   const normalizedBranch = normalizeGitBranch(branch);
+  const normalizedSourcePath = normalizeGitHubImportPath(sourcePath);
   if (!normalizedUrl) {
-    return c.json({ error: "Only public https://github.com/<owner>/<repo> URLs are supported" }, 400);
+    return c.json({ error: "Only https://github.com/<owner>/<repo> URLs are supported" }, 400);
   }
   if (!normalizedBranch) {
     return c.json({ error: "Invalid GitHub branch name" }, 400);
+  }
+  if (normalizedSourcePath === null) {
+    return c.json({ error: "Invalid GitHub import path" }, 400);
   }
 
   const now = new Date().toISOString();
@@ -71,6 +139,7 @@ app.post("/:repoId/github-sync", checkAccess("write"), async (c) => {
       .set({
         repoUrl: normalizedUrl,
         branch: normalizedBranch,
+        sourcePath: normalizedSourcePath,
         status: "syncing",
         error: null,
         updatedAt: now,
@@ -85,6 +154,7 @@ app.post("/:repoId/github-sync", checkAccess("write"), async (c) => {
         repoId,
         repoUrl: normalizedUrl,
         branch: normalizedBranch,
+        sourcePath: normalizedSourcePath,
         status: "syncing",
         createdAt: now,
         updatedAt: now,
@@ -93,7 +163,13 @@ app.post("/:repoId/github-sync", checkAccess("write"), async (c) => {
   }
 
   try {
-    const result = await syncGitHubRepo(repo, normalizedUrl, normalizedBranch);
+    const result = await syncGitHubRepo(
+      repo,
+      normalizedUrl,
+      normalizedBranch,
+      normalizedSourcePath,
+      await getUserGitHubToken(userId)
+    );
     await db
       .update(schema.githubSyncs)
       .set({

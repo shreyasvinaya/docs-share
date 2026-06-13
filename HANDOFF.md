@@ -186,10 +186,14 @@ without configuring Google OAuth.
 - "Shared with me" page + `GET /api/shares/incoming`.
 
 **GitHub sync** (newer addition)
-- `POST /api/repos/:repoId/github-sync` — shallow-clones a **public** `github.com/<owner>/<repo>`
-  on a given branch, force-pushes into the entity's bare repo, re-extracts + re-indexes.
+- `POST /api/repos/:repoId/github-sync` — shallow-clones `github.com/<owner>/<repo>`
+  on a given branch, uses the signed-in user's encrypted GitHub token when connected,
+  optionally imports one selected file or folder, force-pushes into the entity's bare repo,
+  re-extracts + re-indexes.
 - `GET /api/repos/:repoId/github-sync` — sync status (`syncing`/`success`/`error` + last commit).
-- URL/branch validation in `services/githubSync.ts` (https + github.com only, sanitized branch).
+- `GET /api/repos/:repoId/github-sync/tree` — remote tree picker data for selecting one file
+  or folder before import.
+- URL/branch/path validation in `services/githubSync.ts` (https + github.com only, sanitized branch and import path).
 
 **CLI (`packages/cli`)** — `login`, `push`, `draft`, `ls`, `share`, `teams`, `whoami`.
 - `push` collects files (recurses dirs, skips dotfiles), uploads multipart, prints preview
@@ -208,8 +212,9 @@ without configuring Google OAuth.
 - `docs/self-hosting.md`, plus `SECURITY.md`, `CONTRIBUTING.md`, `LICENSE`, CI under `.github/`.
 
 ### ⚠️ Known limitations / not done
-- **GitHub sync is public-repo only** — no auth token support for private repos, and it's
-  manual (no webhook / scheduled re-sync).
+- **GitHub sync uses per-user tokens** — private repo import uses the signed-in user's
+  GitHub token from Settings, encrypted with `GITHUB_TOKEN_SECRET`. Sync remains manual
+  (no webhook / scheduled re-sync).
 - **No content-origin isolation yet** — content is served from the same origin with a CSP,
   not a separate sandbox subdomain (the plan's `content.*` subdomain is unimplemented).
 - **No rate limiting** on auth endpoints.
@@ -325,7 +330,7 @@ Roughly ordered by value-to-effort. None are started.
   once isolated.
 
 **GitHub sync**
-- Support **private repos** via a stored deploy token / GitHub App install.
+- Consider a GitHub App install flow if per-user/private-org authorization is needed.
 - **Automatic re-sync**: webhook endpoint + a scheduled fallback poll; show last-sync drift.
 
 **Reliability / ops**
