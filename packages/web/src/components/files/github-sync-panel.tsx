@@ -8,6 +8,7 @@ import {
   useGitHubTree,
   useRunGitHubSync,
 } from "@/hooks/use-files";
+import { getGitHubPrivateRepoNotice } from "@/lib/github-sync-messages";
 
 interface GitHubSyncPanelProps {
   repoId: string | undefined;
@@ -33,6 +34,13 @@ export function GitHubSyncPanel({ repoId }: GitHubSyncPanelProps) {
   const showManualUrl =
     githubToken?.connected !== true || repoChoice === OTHER_REPO_VALUE || repositories.isError;
   const branchOptions = branches.data ?? [];
+  const privateRepoNotice = getGitHubPrivateRepoNotice({
+    tokenConnected: githubToken?.connected === true,
+    repositories: repositories.data,
+    isLoading: repositories.isLoading,
+    isError: repositories.isError,
+    ownerFilter,
+  });
 
   useEffect(() => {
     if (sync) {
@@ -207,6 +215,11 @@ export function GitHubSyncPanel({ repoId }: GitHubSyncPanelProps) {
           {runSync.isPending ? "Syncing..." : "Sync"}
         </button>
       </form>
+      {privateRepoNotice && (
+        <p className="mt-3 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
+          {privateRepoNotice}
+        </p>
+      )}
       {repoUrl.trim() && branch.trim() && (
         <div className="mt-4 rounded-lg border border-border">
           <div className="flex flex-wrap items-center gap-2 border-b border-border px-3 py-2 text-xs">

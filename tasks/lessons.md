@@ -25,3 +25,7 @@
 - GitHub owner logins must be treated case-insensitively when filtering repo
   results; GitHub can return canonical capitalization such as `Mstack-Chemicals`
   while users or URLs often use lowercase org names.
+- When private GitHub repos are missing, verify GitHub's raw
+  `/user/repos?visibility=private` response before changing filters. If GitHub
+  returns zero private repos for the stored PAT, show a permission/access notice
+  instead of silently presenting a public-only picker.
