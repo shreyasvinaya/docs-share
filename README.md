@@ -12,6 +12,13 @@ The project is a Bun/Turbo monorepo:
 New here? Read [`HANDOFF.md`](HANDOFF.md) for the full picture — what the project is, how it's
 built, current feature status, gotchas, and the roadmap.
 
+Product docs:
+
+- [`docs/product-guide.md`](docs/product-guide.md) - practical guide for drafts, uploads, teams, sharing, previews, auth, examples, and operations.
+- [`docs/agent-guide.md`](docs/agent-guide.md) - CLI/API workflows and source anchors for coding agents.
+- [`SKILLS.md`](SKILLS.md) - quick project guide for future coding agents.
+- [`docs/self-hosting.md`](docs/self-hosting.md) and [`docs/deployment.md`](docs/deployment.md) - deployment and operations.
+
 ## Status
 
 This repository is early-stage open-source software. It is suitable for local development and self-hosting evaluation. For production, review `SECURITY.md`, set strong secrets, use HTTPS, and keep the persistent data volume backed up.
@@ -64,6 +71,7 @@ Authenticate with an API token from the web app:
 
 ```bash
 docs-share login --token ds_...
+docs-share draft ./plan.html
 docs-share push ./site --to personal --message "Publish site"
 docs-share teams
 ```

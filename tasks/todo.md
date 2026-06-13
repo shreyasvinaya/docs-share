@@ -76,6 +76,14 @@ Build a Postplan-shaped mode for this repo: agents can upload a single static HT
 - [x] Phase 6: Document the command and security boundary in `HANDOFF.md`.
 - [ ] Phase 7: Polish dashboard/listing only after the upload-to-URL loop feels excellent.
 
+## Public Website + Docs Surface Plan
+
+- [x] Inspect current web framework, route topology, package scripts, and docs files.
+- [x] Make `/` a public product surface for authenticated static HTML draft publishing.
+- [x] Keep the signed-in app reachable under `/app` without changing storage or docs content.
+- [x] Add public docs navigation at `/docs` with links to hosted self-hosting and deployment guidance.
+- [x] Run relevant Bun validation and record changed files plus evidence.
+
 ## Risks
 
 - Same-origin hosted HTML can execute scripts under the app origin today. The longer-term fix is a separate content origin or signed content subdomain.
@@ -88,3 +96,11 @@ Build a Postplan-shaped mode for this repo: agents can upload a single static HT
 - Implemented first-class authenticated drafts with dedicated draft storage, signed content URLs, scoped API-token upload, and Postplan-style wrapper.
 - Avoided using `/view` for draft iframe content after architecture review flagged same-origin HTML as a security boundary.
 - Verification evidence: focused draft/scope tests pass; full `bun run check` passes.
+
+## Public Site And Docs
+
+- [x] Add detailed operator, user, and agent documentation for the current product.
+- [x] Add a public-facing website that advertises the product without requiring sign-in.
+- [x] Host product docs from the public site.
+- [x] Preserve authenticated app routes for dashboard, files, teams, settings, previews, and shared files.
+- [x] Run final lint, typecheck, tests, build, route smoke checks, and code review before commit.

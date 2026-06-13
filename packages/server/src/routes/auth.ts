@@ -185,7 +185,7 @@ app.get("/google/callback", async (c) => {
     maxAge: 30 * 24 * 60 * 60, // 30 days in seconds
   });
 
-  return c.redirect(config.APP_URL);
+  return c.redirect(new URL("/app", config.APP_URL).toString());
 });
 
 // ---------------------------------------------------------------------------

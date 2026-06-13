@@ -24,7 +24,7 @@ export function LoginPage() {
         setError(body.error || "Login failed");
         return;
       }
-      navigate("/");
+      navigate("/app");
     } catch {
       setError("Network error");
     } finally {

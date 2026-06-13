@@ -11,6 +11,7 @@ function useBreadcrumbs(pathname: string) {
   const { data: teams } = useTeams();
   const { data: personalRepo } = usePersonalRepo();
   const segments = pathname.split("/").filter(Boolean);
+  const appSegments = segments[0] === "app" ? segments.slice(1) : segments;
   const crumbs: { label: string; to: string | null; key: string }[] = [];
 
   const labelMap: Record<string, string> = {
@@ -22,15 +23,15 @@ function useBreadcrumbs(pathname: string) {
   };
 
   let path = "";
-  for (let i = 0; i < segments.length; i++) {
-    const segment = segments[i];
+  for (let i = 0; i < appSegments.length; i++) {
+    const segment = appSegments[i];
     path += `/${segment}`;
 
     // If previous segment was "teams", look up the team name
-    if (i > 0 && segments[i - 1] === "teams" && teams) {
+    if (i > 0 && appSegments[i - 1] === "teams" && teams) {
       const team = teams.find((t) => t.id === segment);
       crumbs.push({ label: team?.name ?? segment, to: path, key: path });
-    } else if (i > 0 && segments[i - 1] === "preview") {
+    } else if (i > 0 && appSegments[i - 1] === "preview") {
       const team = teams?.find((t) => t.repo?.id === segment);
       const label =
         personalRepo?.repo?.id === segment
@@ -95,10 +96,10 @@ export function AppLayout() {
 
             <nav className="flex items-center gap-1 text-sm">
               <Link
-                to="/"
+                to="/app"
                 className="text-muted-foreground transition-colors hover:text-foreground"
               >
-                Home
+                App
               </Link>
               {breadcrumbs.map((crumb) => (
                 <span key={crumb.key} className="flex items-center gap-1">

@@ -45,7 +45,7 @@ export function TeamSettingsPage() {
     setIsDeleting(true);
     try {
       await api.del(`/api/teams/${teamId}`);
-      navigate("/");
+      navigate("/teams");
     } catch {
       setIsDeleting(false);
     }
