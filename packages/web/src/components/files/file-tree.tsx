@@ -1,8 +1,10 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { Link } from "react-router";
 import { cn } from "@/lib/utils";
 import { ShareDialog } from "@/components/sharing/share-dialog";
+import { useDeleteFile, useUploadFile } from "@/hooks/use-files";
 import type { FileNode } from "@docs-share/shared";
+import type { UploadItem } from "@/hooks/use-files";
 
 interface FileTreeProps {
   files: FileNode[];
@@ -61,6 +63,10 @@ function FileTreeRow({
   onShare: () => void;
 }) {
   const [expanded, setExpanded] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const folderInputRef = useRef<HTMLInputElement>(null);
+  const upload = useUploadFile(repoId);
+  const deleteFile = useDeleteFile(repoId);
   const isDir = node.type === "directory";
 
   const formatSize = (bytes: number | null) => {
@@ -78,6 +84,103 @@ function FileTreeRow({
       year: "numeric",
     });
   };
+
+  const handleDelete = () => {
+    const confirmed = window.confirm(
+      `Delete ${node.type === "directory" ? "folder" : "file"} "${node.path}"?`
+    );
+    if (!confirmed) return;
+    deleteFile.mutate(node.path);
+  };
+
+  const handleReplacement = (files: FileList | null) => {
+    const selected = Array.from(files ?? []);
+    if (selected.length === 0) return;
+
+    let items: UploadItem[];
+    if (isDir) {
+      items = selected.map((file) => {
+        const fileWithPath = file as File & { webkitRelativePath?: string };
+        const rawPath = fileWithPath.webkitRelativePath || file.name;
+        const segments = rawPath.split("/").filter(Boolean);
+        const pathInsideSelection =
+          segments[0] === node.name ? segments.slice(1).join("/") : rawPath;
+        return {
+          file,
+          relativePath: `${node.path}/${pathInsideSelection || file.name}`,
+        };
+      });
+    } else {
+      const replacement = selected[0];
+      items = [{ file: replacement, relativePath: node.path }];
+    }
+
+    upload.mutate({
+      items,
+      message: `Update ${node.path}`,
+    });
+  };
+
+  const rowActions = (
+    <div className="mr-2 flex items-center gap-1">
+      <button
+        type="button"
+        onClick={(e) => {
+          e.stopPropagation();
+          if (isDir) folderInputRef.current?.click();
+          else fileInputRef.current?.click();
+        }}
+        disabled={upload.isPending}
+        className="rounded px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:opacity-50"
+        title={isDir ? "Update folder" : "Replace file"}
+      >
+        {isDir ? "Update" : "Replace"}
+      </button>
+      <button
+        type="button"
+        onClick={(e) => {
+          e.stopPropagation();
+          onShare();
+        }}
+        className="rounded p-1.5 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+        title="Share"
+      >
+        <ShareIcon />
+      </button>
+      <button
+        type="button"
+        onClick={(e) => {
+          e.stopPropagation();
+          handleDelete();
+        }}
+        disabled={deleteFile.isPending}
+        className="rounded px-2 py-1 text-xs text-destructive transition-colors hover:bg-destructive/10 disabled:opacity-50"
+        title="Delete"
+      >
+        Delete
+      </button>
+      <input
+        ref={fileInputRef}
+        type="file"
+        className="hidden"
+        onChange={(event) => {
+          handleReplacement(event.target.files);
+          event.target.value = "";
+        }}
+      />
+      <input
+        ref={folderInputRef}
+        type="file"
+        multiple
+        className="hidden"
+        onChange={(event) => {
+          handleReplacement(event.target.files);
+          event.target.value = "";
+        }}
+        {...{ webkitdirectory: "", directory: "" }}
+      />
+    </div>
+  );
 
   if (isDir) {
     return (
@@ -101,17 +204,7 @@ function FileTreeRow({
             {formatDate(node.updatedAt)}
           </span>
         </button>
-        <button
-          type="button"
-          onClick={(e) => {
-            e.stopPropagation();
-            onShare();
-          }}
-          className="mr-2 rounded p-1.5 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
-          title="Share"
-        >
-          <ShareIcon />
-        </button>
+        {rowActions}
       </div>
     );
   }
@@ -131,14 +224,7 @@ function FileTreeRow({
           {formatDate(node.updatedAt)}
         </span>
       </Link>
-      <button
-        type="button"
-        onClick={onShare}
-        className="mr-2 rounded p-1.5 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
-        title="Share"
-      >
-        <ShareIcon />
-      </button>
+      {rowActions}
     </div>
   );
 }

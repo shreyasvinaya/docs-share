@@ -97,7 +97,7 @@ export function FilePreviewPage() {
             <iframe
               src={viewUrl}
               title={fileName}
-              sandbox="allow-scripts"
+              sandbox="allow-scripts allow-same-origin"
               className="h-full w-full border-0"
             />
           </div>

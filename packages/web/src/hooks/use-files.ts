@@ -83,6 +83,20 @@ export function useUploadFile(repoId: string | undefined) {
   });
 }
 
+export function useDeleteFile(repoId: string | undefined) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (path: string) =>
+      api.del<{ commitSha: string; path: string; filesDeleted: number }>(
+        `/api/files/${repoId}?path=${encodeURIComponent(path)}`
+      ),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["files", repoId] });
+      qc.invalidateQueries({ queryKey: ["commits", repoId] });
+    },
+  });
+}
+
 export function useGitHubSync(repoId: string | undefined) {
   return useQuery({
     queryKey: ["github-sync", repoId],

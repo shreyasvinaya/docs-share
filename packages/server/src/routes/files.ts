@@ -394,6 +394,146 @@ app.post("/:repoId/upload", checkAccess("write"), async (c) => {
 });
 
 /**
+ * DELETE /:repoId — Delete one file or directory path and commit the removal.
+ * Query: ?path=<relative-path>
+ * Requires auth + write access.
+ */
+app.delete("/:repoId", checkAccess("write"), async (c) => {
+  const repoId = c.req.param("repoId");
+  const userId = c.get("userId");
+  const requestedPath = c.req.query("path");
+  const targetPath = normalizeRelativePath(requestedPath);
+
+  if (!targetPath) {
+    return c.json({ error: "path is required" }, 400);
+  }
+
+  const repo = await db
+    .select()
+    .from(schema.repos)
+    .where(eq(schema.repos.id, repoId))
+    .get();
+
+  if (!repo) {
+    return c.json({ error: "Repository not found" }, 404);
+  }
+
+  const user = await db
+    .select()
+    .from(schema.users)
+    .where(eq(schema.users.id, userId))
+    .get();
+
+  if (!user) {
+    return c.json({ error: "User not found" }, 404);
+  }
+
+  const tmpDir = await mkdtemp(join(tmpdir(), "ds-delete-"));
+
+  try {
+    const clonePath = join(tmpDir, "repo");
+    const cloneProc = Bun.spawn(["git", "clone", repo.diskPath, clonePath], {
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    await cloneProc.exited;
+
+    if (cloneProc.exitCode !== 0) {
+      return c.json({ error: "Repository is empty" }, 404);
+    }
+
+    const lsProc = Bun.spawn(
+      ["git", "-C", clonePath, "ls-files", "--", targetPath, `${targetPath}/`],
+      { stdout: "pipe", stderr: "pipe" }
+    );
+    const trackedMatches = (await new Response(lsProc.stdout).text())
+      .trim()
+      .split("\n")
+      .filter(Boolean);
+    await lsProc.exited;
+
+    if (trackedMatches.length === 0) {
+      return c.json({ error: "File or directory not found" }, 404);
+    }
+
+    await Bun.spawn(
+      ["git", "-C", clonePath, "config", "user.name", user.displayName],
+      { stdout: "pipe", stderr: "pipe" }
+    ).exited;
+    await Bun.spawn(
+      ["git", "-C", clonePath, "config", "user.email", user.email],
+      { stdout: "pipe", stderr: "pipe" }
+    ).exited;
+
+    const rmProc = Bun.spawn(
+      ["git", "-C", clonePath, "rm", "-r", "--", targetPath],
+      { stdout: "pipe", stderr: "pipe" }
+    );
+    const rmStderr = await new Response(rmProc.stderr).text();
+    await rmProc.exited;
+
+    if (rmProc.exitCode !== 0) {
+      return c.json({ error: "Git rm failed", details: rmStderr }, 500);
+    }
+
+    const commitProc = Bun.spawn(
+      ["git", "-C", clonePath, "commit", "-m", `Delete ${targetPath}`],
+      { stdout: "pipe", stderr: "pipe" }
+    );
+    const commitStdout = await new Response(commitProc.stdout).text();
+    const commitStderr = await new Response(commitProc.stderr).text();
+    await commitProc.exited;
+
+    if (commitProc.exitCode !== 0) {
+      return c.json({
+        error: "Git commit failed",
+        details: `${commitStdout}\n${commitStderr}`.trim(),
+      }, 500);
+    }
+
+    const pushProc = Bun.spawn(
+      ["git", "-C", clonePath, "push", "origin", "HEAD"],
+      { stdout: "pipe", stderr: "pipe" }
+    );
+    const pushStderr = await new Response(pushProc.stderr).text();
+    await pushProc.exited;
+
+    if (pushProc.exitCode !== 0) {
+      return c.json({ error: "Git push failed", details: pushStderr }, 500);
+    }
+
+    const revParseProc = Bun.spawn(
+      ["git", "-C", clonePath, "rev-parse", "HEAD"],
+      { stdout: "pipe", stderr: "pipe" }
+    );
+    const headSha = (await new Response(revParseProc.stdout).text()).trim();
+    await revParseProc.exited;
+
+    await db
+      .update(schema.repos)
+      .set({
+        headSha,
+        lastPushAt: new Date().toISOString(),
+      })
+      .where(eq(schema.repos.id, repoId))
+      .run();
+
+    await extractRepoFiles(repoId, repo.diskPath, headSha);
+    await indexRepoFiles(repoId, repo.diskPath, headSha);
+
+    return c.json({
+      data: {
+        commitSha: headSha,
+        path: targetPath,
+        filesDeleted: trackedMatches.length,
+      },
+    });
+  } finally {
+    await rm(tmpDir, { recursive: true, force: true }).catch(() => {});
+  }
+});
+
+/**
  * Simple mime type guesser based on file extension.
  */
 function guessMimeType(filename: string): string | null {
