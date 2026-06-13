@@ -114,7 +114,7 @@ describe("listGitHubAccessibleRepos", () => {
     await expect(listGitHubAccessibleRepos("")).resolves.toEqual([]);
   });
 
-  test("limits repositories to a selected organization", async () => {
+  test("filters accessible private repositories to a selected organization", async () => {
     let requestedUrl = "";
     globalThis.fetch = (async (input, init) => {
       requestedUrl = String(input);
@@ -125,10 +125,19 @@ describe("listGitHubAccessibleRepos", () => {
             full_name: "acme/site",
             clone_url: "https://github.com/acme/site.git",
             default_branch: "main",
-            private: false,
+            private: true,
             pushed_at: "2026-06-11T10:00:00Z",
             updated_at: "2026-06-12T10:00:00Z",
             owner: { login: "acme" },
+          },
+          {
+            full_name: "octo-org/public-site",
+            clone_url: "https://github.com/octo-org/public-site.git",
+            default_branch: "main",
+            private: false,
+            pushed_at: "2026-06-10T10:00:00Z",
+            updated_at: "2026-06-11T10:00:00Z",
+            owner: { login: "octo-org" },
           },
         ]),
         { status: 200 }
@@ -140,14 +149,15 @@ describe("listGitHubAccessibleRepos", () => {
         fullName: "acme/site",
         repoUrl: "https://github.com/acme/site.git",
         defaultBranch: "main",
-        private: false,
+        private: true,
         pushedAt: "2026-06-11T10:00:00Z",
         updatedAt: "2026-06-12T10:00:00Z",
         ownerLogin: "acme",
       },
     ]);
-    expect(requestedUrl).toContain("/orgs/acme/repos?");
-    expect(requestedUrl).toContain("type=all");
+    expect(requestedUrl).toContain("/user/repos?");
+    expect(requestedUrl).toContain("visibility=all");
+    expect(requestedUrl).toContain("affiliation=owner%2Ccollaborator%2Corganization_member");
     expect(requestedUrl).toContain("sort=updated");
   });
 });

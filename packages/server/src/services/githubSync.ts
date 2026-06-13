@@ -178,15 +178,9 @@ export async function listGitHubAccessibleRepos(
 
   const repos: GitHubRepositoryOption[] = [];
   for (let page = 1; page <= MAX_GITHUB_PAGES; page += 1) {
-    const url = normalizedOwnerLogin
-      ? new URL(`https://api.github.com/orgs/${encodeURIComponent(normalizedOwnerLogin)}/repos`)
-      : new URL("https://api.github.com/user/repos");
-    if (normalizedOwnerLogin) {
-      url.searchParams.set("type", "all");
-    } else {
-      url.searchParams.set("affiliation", "owner,collaborator,organization_member");
-      url.searchParams.set("visibility", "all");
-    }
+    const url = new URL("https://api.github.com/user/repos");
+    url.searchParams.set("affiliation", "owner,collaborator,organization_member");
+    url.searchParams.set("visibility", "all");
     url.searchParams.set("sort", "updated");
     url.searchParams.set("direction", "desc");
     url.searchParams.set("per_page", "100");
@@ -211,6 +205,7 @@ export async function listGitHubAccessibleRepos(
       const normalizedUrl = normalizeGitHubRepoUrl(repo.clone_url);
       const repoOwnerLogin = repo.owner?.login ?? repo.full_name.split("/")[0] ?? "";
       if (!normalizedUrl) continue;
+      if (normalizedOwnerLogin && repoOwnerLogin !== normalizedOwnerLogin) continue;
       repos.push({
         fullName: repo.full_name,
         repoUrl: normalizedUrl,

@@ -16,3 +16,6 @@
   private repository imports.
 - Token-scoped GitHub repo pickers can get large quickly. Order choices by last
   updated and provide organization filters before adding more visible entries.
+- Organization filters for GitHub imports must filter the authenticated user's
+  accessible `/user/repos` result, not switch to public-leaning org listing
+  endpoints that can hide private repositories.
