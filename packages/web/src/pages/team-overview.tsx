@@ -8,32 +8,41 @@ import { FileUploadZone } from "@/components/files/file-upload-zone";
 import { GitHubSyncPanel } from "@/components/files/github-sync-panel";
 import { UserAvatar } from "@/components/common/user-avatar";
 import { EmptyState } from "@/components/common/empty-state";
+import {
+  getTeamFilePathFromWildcard,
+  teamFilesRoute,
+} from "@/lib/team-file-routes";
 
 export function TeamOverviewPage() {
-  const { teamId } = useParams();
+  const { teamId, "*": wildcard } = useParams();
   const navigate = useNavigate();
+  const currentPath = getTeamFilePathFromWildcard(wildcard);
   const { data: team, isLoading: teamLoading } = useTeam(teamId);
   const { data: members } = useTeamMembers(teamId);
 
   const repoId = team?.repo?.id;
-  const { data: files, isLoading: filesLoading } = useFiles(repoId);
+  const { data: files, isLoading: filesLoading } = useFiles(repoId, currentPath);
   const upload = useUploadFile(repoId);
 
   const handleUpload = useCallback(
     (items: UploadItem[]) => {
       if (!repoId) return;
-      upload.mutate({ items });
+      upload.mutate({ items, path: currentPath });
     },
-    [repoId, upload],
+    [repoId, currentPath, upload],
   );
 
   const handleNavigate = useCallback(
     (path: string) => {
-      // Navigate to the file preview for team files
-      navigate(`/preview/${repoId}/${path}`);
+      if (!teamId) return;
+      navigate(teamFilesRoute(teamId, path));
     },
-    [repoId, navigate],
+    [teamId, navigate],
   );
+
+  const breadcrumbs = currentPath
+    ? currentPath.split("/").filter(Boolean)
+    : [];
 
   if (teamLoading) {
     return (
@@ -109,6 +118,36 @@ export function TeamOverviewPage() {
 
       <GitHubSyncPanel repoId={repoId} />
 
+      {breadcrumbs.length > 0 && teamId && (
+        <nav className="mb-4 flex items-center gap-1 text-sm">
+          <Link
+            to={`/teams/${teamId}`}
+            className="text-muted-foreground transition-colors hover:text-foreground"
+          >
+            Root
+          </Link>
+          {breadcrumbs.map((segment, i) => {
+            const path = breadcrumbs.slice(0, i + 1).join("/");
+            const isLast = i === breadcrumbs.length - 1;
+            return (
+              <span key={path} className="flex items-center gap-1">
+                <span className="text-muted-foreground">/</span>
+                {isLast ? (
+                  <span className="font-medium">{segment}</span>
+                ) : (
+                  <Link
+                    to={teamFilesRoute(teamId, path)}
+                    className="text-muted-foreground transition-colors hover:text-foreground"
+                  >
+                    {segment}
+                  </Link>
+                )}
+              </span>
+            );
+          })}
+        </nav>
+      )}
+
       {/* Files */}
       {filesLoading ? (
         <div className="py-16 text-center text-sm text-muted-foreground">
@@ -123,7 +162,11 @@ export function TeamOverviewPage() {
       ) : (
         <EmptyState
           title="No team files yet"
-          description="Upload files to share with your team."
+          description={
+            currentPath
+              ? "This folder is empty."
+              : "Upload files to share with your team."
+          }
           icon={
             <svg fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
               <path strokeLinecap="round" strokeLinejoin="round" d="M2.25 12.75V12A2.25 2.25 0 014.5 9.75h15A2.25 2.25 0 0121.75 12v.75m-8.69-6.44l-2.12-2.12a1.5 1.5 0 00-1.061-.44H4.5A2.25 2.25 0 002.25 6v12a2.25 2.25 0 002.25 2.25h15A2.25 2.25 0 0021.75 18V9a2.25 2.25 0 00-2.25-2.25h-5.379a1.5 1.5 0 01-1.06-.44z" />

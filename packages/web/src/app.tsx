@@ -48,6 +48,7 @@ export function App() {
           <Route path="preview/:repoId/*" element={<FilePreviewPage />} />
           <Route path="teams" element={<TeamsIndexPage />} />
           <Route path="teams/:teamId" element={<TeamOverviewPage />} />
+          <Route path="teams/:teamId/files/*" element={<TeamOverviewPage />} />
           <Route
             path="teams/:teamId/settings"
             element={<TeamSettingsPage />}

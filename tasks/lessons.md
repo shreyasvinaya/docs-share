@@ -6,3 +6,5 @@
   like theme selection behind an icon menu instead of a full segmented control.
 - Hosted docs should use human link labels for guide pages and preserve wrapped
   list content inside the same bullet; do not expose source filenames as UI copy.
+- Team folder clicks should match personal folder behavior: open the folder
+  management/listing route, not the preview iframe route.
