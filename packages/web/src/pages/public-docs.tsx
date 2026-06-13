@@ -1,5 +1,5 @@
-import { Link } from "react-router";
 import type { ReactNode } from "react";
+import { Link, Navigate, useParams } from "react-router";
 import deploymentDoc from "../../../../docs/deployment.md?raw";
 import selfHostingDoc from "../../../../docs/self-hosting.md?raw";
 import productGuideDoc from "../../../../docs/product-guide.md?raw";
@@ -14,45 +14,50 @@ type MarkdownPart =
   | { type: "list"; ordered: boolean; items: string[] }
   | { type: "code"; language: string; text: string };
 
-const sections = [
+const guides = [
   {
-    title: "Quick start",
-    items: [
-      "Sign in with Google or dev login in local development.",
-      "Create an API token in Settings when an agent or script needs to publish.",
-      "Upload a single HTML draft with the CLI, or upload a folder when assets and links must stay together.",
-      "Open the preview URL, then share it with a user, team, or link depending on the audience.",
-    ],
+    slug: "product-guide",
+    title: "Product Guide",
+    description: "Drafts, uploads, teams, sharing, previews, auth, examples, and operations.",
+    content: productGuideDoc,
   },
   {
-    title: "Publishing modes",
-    items: [
-      "Draft publishing is optimized for one HTML file and returns a minimal hosted draft URL.",
-      "Personal files are private to the signed-in user unless explicitly shared.",
-      "Team files belong to the selected team workspace and can be reviewed by team members.",
-      "Linked HTML sites should be uploaded as folders so CSS, images, and sibling pages keep their relative paths.",
-    ],
+    slug: "agent-guide",
+    title: "Agent Guide",
+    description: "CLI/API workflows, source anchors, constraints, and common failure modes.",
+    content: agentGuideDoc,
   },
   {
-    title: "Operations",
-    items: [
-      "Run the server with persistent storage for SQLite, bare Git repositories, extracted worktrees, drafts, and hooks.",
-      "Use HTTPS and strong secrets in production.",
-      "Configure CONTENT_ORIGIN separately when possible so untrusted HTML is isolated from the app origin.",
-      "Back up the SQLite database, repositories, worktrees, drafts, and generated hook state together.",
-    ],
+    slug: "agent-skills",
+    title: "Agent Skills",
+    description: "A quick guide for future coding agents working in this repository.",
+    content: skillsDoc,
   },
-];
-
-const referenceDocs = [
-  { label: "Product guide", content: productGuideDoc },
-  { label: "Agent guide", content: agentGuideDoc },
-  { label: "Agent skills", content: skillsDoc },
-  { label: "Deployment guide", content: deploymentDoc },
-  { label: "Self-hosting guide", content: selfHostingDoc },
-  { label: "Engineering handoff", content: handoffDoc },
-  { label: "Security notes", content: securityDoc },
-];
+  {
+    slug: "deployment",
+    title: "Deployment",
+    description: "Production checklist plus Docker, Render, Fly.io, Railway, VPS, and Kubernetes notes.",
+    content: deploymentDoc,
+  },
+  {
+    slug: "self-hosting",
+    title: "Self-Hosting",
+    description: "Required settings, OAuth, persistent data, reverse proxy paths, and backups.",
+    content: selfHostingDoc,
+  },
+  {
+    slug: "handoff",
+    title: "Engineering Handoff",
+    description: "System architecture, feature status, operational notes, and current risks.",
+    content: handoffDoc,
+  },
+  {
+    slug: "security",
+    title: "Security",
+    description: "Security boundaries and production hardening notes.",
+    content: securityDoc,
+  },
+] as const;
 
 function slugify(value: string) {
   return value
@@ -62,27 +67,24 @@ function slugify(value: string) {
     .replace(/(^-|-$)/g, "");
 }
 
-function docId(label: string) {
-  return slugify(label);
-}
-
-function rewriteMarkdownHref(href: string) {
-  const normalized = href.replace(/^\.\//, "");
-  const doc = referenceDocs.find((item) => {
-    const label = docId(item.label);
+function hrefForMarkdownLink(href: string) {
+  const [path, hash] = href.replace(/^\.\//, "").split("#");
+  const guide = guides.find((item) => {
     return (
-      normalized === `${label}.md` ||
-      normalized.endsWith(`/${label}.md`) ||
-      normalized === "SKILLS.md" && item.label === "Agent skills" ||
-      normalized === "HANDOFF.md" && item.label === "Engineering handoff" ||
-      normalized === "SECURITY.md" && item.label === "Security notes" ||
-      normalized.endsWith("deployment.md") && item.label === "Deployment guide" ||
-      normalized.endsWith("self-hosting.md") && item.label === "Self-hosting guide" ||
-      normalized.endsWith("product-guide.md") && item.label === "Product guide" ||
-      normalized.endsWith("agent-guide.md") && item.label === "Agent guide"
+      path === `${item.slug}.md` ||
+      path.endsWith(`/${item.slug}.md`) ||
+      (path === "SKILLS.md" && item.slug === "agent-skills") ||
+      (path === "HANDOFF.md" && item.slug === "handoff") ||
+      (path === "SECURITY.md" && item.slug === "security") ||
+      (path.endsWith("deployment.md") && item.slug === "deployment") ||
+      (path.endsWith("self-hosting.md") && item.slug === "self-hosting") ||
+      (path.endsWith("product-guide.md") && item.slug === "product-guide") ||
+      (path.endsWith("agent-guide.md") && item.slug === "agent-guide")
     );
   });
-  return doc ? `#${docId(doc.label)}` : href;
+
+  if (!guide) return href;
+  return `/docs/${guide.slug}${hash ? `#${hash}` : ""}`;
 }
 
 function inlineMarkdown(text: string) {
@@ -99,7 +101,10 @@ function inlineMarkdown(text: string) {
     const token = match[0];
     if (token.startsWith("`")) {
       nodes.push(
-        <code key={`${match.index}-code`} className="rounded bg-muted px-1 py-0.5 text-xs text-foreground">
+        <code
+          key={`${match.index}-code`}
+          className="rounded bg-muted px-1 py-0.5 text-xs text-foreground"
+        >
           {token.slice(1, -1)}
         </code>,
       );
@@ -107,13 +112,13 @@ function inlineMarkdown(text: string) {
       const linkMatch = token.match(/^\[([^\]]+)\]\(([^)]+)\)$/);
       if (linkMatch) {
         nodes.push(
-          <a
+          <Link
             key={`${match.index}-link`}
-            href={rewriteMarkdownHref(linkMatch[2])}
+            to={hrefForMarkdownLink(linkMatch[2])}
             className="font-medium text-foreground underline underline-offset-4"
           >
             {linkMatch[1]}
-          </a>,
+          </Link>,
         );
       }
     }
@@ -215,15 +220,21 @@ function parseMarkdown(markdown: string): MarkdownPart[] {
 
 function MarkdownDoc({ markdown }: { markdown: string }) {
   return (
-    <div className="space-y-4">
+    <div className="space-y-5">
       {parseMarkdown(markdown).map((part, index) => {
         if (part.type === "heading") {
           const Heading = part.depth <= 1 ? "h2" : part.depth === 2 ? "h3" : "h4";
+          const size =
+            part.depth <= 1
+              ? "text-3xl"
+              : part.depth === 2
+                ? "text-2xl"
+                : "text-lg";
           return (
             <Heading
               key={`${part.text}-${index}`}
               id={slugify(part.text)}
-              className="pt-2 text-lg font-semibold text-foreground"
+              className={`scroll-mt-24 pt-4 font-semibold text-foreground ${size}`}
             >
               {inlineMarkdown(part.text)}
             </Heading>
@@ -235,7 +246,7 @@ function MarkdownDoc({ markdown }: { markdown: string }) {
           return (
             <List
               key={`list-${index}`}
-              className={`space-y-2 pl-5 text-sm leading-6 text-muted-foreground ${
+              className={`space-y-2 pl-6 text-sm leading-7 text-muted-foreground ${
                 part.ordered ? "list-decimal" : "list-disc"
               }`}
             >
@@ -258,7 +269,7 @@ function MarkdownDoc({ markdown }: { markdown: string }) {
         }
 
         return (
-          <p key={`p-${index}`} className="text-sm leading-6 text-muted-foreground">
+          <p key={`p-${index}`} className="text-sm leading-7 text-muted-foreground">
             {inlineMarkdown(part.text)}
           </p>
         );
@@ -267,23 +278,38 @@ function MarkdownDoc({ markdown }: { markdown: string }) {
   );
 }
 
-export function PublicDocsPage() {
+function PublicDocsLayout({ children }: { children: ReactNode }) {
   return (
     <main className="min-h-screen bg-background text-foreground">
       <header className="border-b border-border">
         <div className="mx-auto flex max-w-6xl items-center justify-between px-5 py-4">
-          <Link to="/" className="font-semibold">docs-share</Link>
+          <Link to="/" className="font-semibold">
+            docs-share
+          </Link>
           <nav className="flex items-center gap-2 text-sm">
-            <Link to="/" className="rounded-lg px-3 py-2 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground">
+            <Link
+              to="/"
+              className="rounded-lg px-3 py-2 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+            >
               Home
             </Link>
-            <Link to="/app" className="rounded-lg bg-primary px-3 py-2 font-medium text-primary-foreground transition-colors hover:bg-primary/90">
+            <Link
+              to="/app"
+              className="rounded-lg bg-primary px-3 py-2 font-medium text-primary-foreground transition-colors hover:bg-primary/90"
+            >
               Open app
             </Link>
           </nav>
         </div>
       </header>
+      {children}
+    </main>
+  );
+}
 
+function DocsIndexPage() {
+  return (
+    <PublicDocsLayout>
       <section className="border-b border-border">
         <div className="mx-auto max-w-6xl px-5 py-12">
           <p className="mb-3 text-sm font-medium uppercase text-muted-foreground">
@@ -293,66 +319,79 @@ export function PublicDocsPage() {
             Run, use, and extend docs-share.
           </h1>
           <p className="mt-4 max-w-3xl text-base leading-7 text-muted-foreground">
-            These docs cover the common path for users, operators, and agents. The repository markdown guides are rendered below for deeper deployment and security references.
+            Choose a guide. Each guide is its own page, with normal headings,
+            links, and code blocks.
           </p>
         </div>
       </section>
 
-      <section className="mx-auto grid max-w-6xl gap-8 px-5 py-12 lg:grid-cols-[240px_1fr]">
-        <aside className="space-y-2">
-          {referenceDocs.map((doc) => (
-            <a
-              key={doc.label}
-              href={`#${doc.label.toLowerCase().replaceAll(" ", "-")}`}
-              className="block rounded-lg border border-border px-3 py-2 text-sm transition-colors hover:bg-muted"
-            >
-              {doc.label}
-            </a>
-          ))}
-        </aside>
-
-        <div className="space-y-8">
-          {sections.map((section) => (
-            <section key={section.title} className="rounded-lg border border-border p-6">
-              <h2 className="text-xl font-semibold">{section.title}</h2>
-              <ul className="mt-4 space-y-3">
-                {section.items.map((item) => (
-                  <li key={item} className="flex gap-3 text-sm leading-6 text-muted-foreground">
-                    <span className="mt-2 h-1.5 w-1.5 shrink-0 rounded-full bg-foreground" />
-                    <span>{item}</span>
-                  </li>
-                ))}
-              </ul>
-            </section>
-          ))}
-
-          <section className="rounded-lg border border-border p-6">
-            <h2 className="text-xl font-semibold">CLI commands for agents</h2>
+      <section className="mx-auto grid max-w-6xl gap-4 px-5 py-12 md:grid-cols-2">
+        {guides.map((guide) => (
+          <Link
+            key={guide.slug}
+            to={`/docs/${guide.slug}`}
+            className="rounded-lg border border-border p-5 transition-colors hover:bg-muted/50"
+          >
+            <h2 className="text-lg font-semibold">{guide.title}</h2>
             <p className="mt-3 text-sm leading-6 text-muted-foreground">
-              Agents should prefer URL-first commands with machine-readable output only when they need to pass structured results to another tool.
+              {guide.description}
             </p>
-            <pre className="mt-5 overflow-x-auto rounded-lg bg-foreground p-4 text-sm text-background"><code>{`docs-share draft ./plan.html
-docs-share draft ./plan.html --json
-docs-share push ./site --to team-slug/docs --message "Update docs"`}</code></pre>
-          </section>
+          </Link>
+        ))}
+      </section>
+    </PublicDocsLayout>
+  );
+}
 
-          <section className="space-y-5">
-            <h2 className="text-xl font-semibold">Repository references</h2>
-            {referenceDocs.map((doc) => (
-              <article
-                id={doc.label.toLowerCase().replaceAll(" ", "-")}
-                key={doc.label}
-                className="rounded-lg border border-border p-6"
-              >
-                <h3 className="text-lg font-semibold">{doc.label}</h3>
-                <div className="mt-4 max-h-[620px] overflow-auto rounded-lg border border-border p-4">
-                  <MarkdownDoc markdown={doc.content} />
-                </div>
-              </article>
-            ))}
-          </section>
+function GuidePage({ slug }: { slug: string }) {
+  const guide = guides.find((item) => item.slug === slug);
+  if (!guide) return <Navigate to="/docs" replace />;
+
+  return (
+    <PublicDocsLayout>
+      <section className="border-b border-border">
+        <div className="mx-auto max-w-6xl px-5 py-10">
+          <Link
+            to="/docs"
+            className="text-sm text-muted-foreground transition-colors hover:text-foreground"
+          >
+            Docs
+          </Link>
+          <h1 className="mt-4 max-w-3xl text-4xl font-semibold leading-tight">
+            {guide.title}
+          </h1>
+          <p className="mt-4 max-w-3xl text-base leading-7 text-muted-foreground">
+            {guide.description}
+          </p>
         </div>
       </section>
-    </main>
+
+      <section className="mx-auto grid max-w-6xl gap-8 px-5 py-10 lg:grid-cols-[220px_1fr]">
+        <aside className="space-y-2">
+          {guides.map((item) => (
+            <Link
+              key={item.slug}
+              to={`/docs/${item.slug}`}
+              className={`block rounded-lg border px-3 py-2 text-sm transition-colors ${
+                item.slug === guide.slug
+                  ? "border-primary bg-primary text-primary-foreground"
+                  : "border-border text-muted-foreground hover:bg-muted hover:text-foreground"
+              }`}
+            >
+              {item.title}
+            </Link>
+          ))}
+        </aside>
+        <article className="min-w-0 rounded-lg border border-border p-6">
+          <MarkdownDoc markdown={guide.content} />
+        </article>
+      </section>
+    </PublicDocsLayout>
   );
+}
+
+export function PublicDocsPage() {
+  const { guide } = useParams();
+  if (!guide) return <DocsIndexPage />;
+  return <GuidePage slug={guide} />;
 }

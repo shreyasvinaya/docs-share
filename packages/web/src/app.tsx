@@ -32,6 +32,7 @@ export function App() {
       <Routes>
         <Route path="/" element={<PublicHomePage />} />
         <Route path="/docs" element={<PublicDocsPage />} />
+        <Route path="/docs/:guide" element={<PublicDocsPage />} />
         <Route path="/login" element={<LoginPage />} />
         <Route
           element={
