@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Linked Draft: Architecture</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <main>
+      <nav aria-label="Linked draft pages">
+        <a href="./index.html">Overview</a>
+        <a aria-current="page" href="./architecture.html">Architecture</a>
+        <a href="./checklist.html">Checklist</a>
+      </nav>
+
+      <h1>Draft Publishing Architecture</h1>
+      <p>
+        A static draft starts as files on disk, moves through an authenticated
+        upload, and renders behind a private draft URL.
+      </p>
+
+      <ol>
+        <li>The agent writes reviewable HTML output.</li>
+        <li>The CLI publishes the draft to the server.</li>
+        <li>The browser opens an authenticated wrapper page.</li>
+        <li>The wrapper loads draft content in a sandboxed frame.</li>
+      </ol>
+    </main>
+  </body>
+</html>
