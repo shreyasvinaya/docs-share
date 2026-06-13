@@ -92,6 +92,27 @@ function hrefForMarkdownLink(href: string) {
   return `/docs/${guide.slug}${hash ? `#${hash}` : ""}`;
 }
 
+function labelForMarkdownLink(label: string, href: string) {
+  if (!/\.md$/i.test(label.trim())) return label;
+
+  const [path] = href.replace(/^\.\//, "").split("#");
+  const guide = guides.find((item) => {
+    return (
+      path === `${item.slug}.md` ||
+      path.endsWith(`/${item.slug}.md`) ||
+      (path === "SKILLS.md" && item.slug === "agent-skills") ||
+      (path === "HANDOFF.md" && item.slug === "handoff") ||
+      (path === "SECURITY.md" && item.slug === "security") ||
+      (path.endsWith("deployment.md") && item.slug === "deployment") ||
+      (path.endsWith("self-hosting.md") && item.slug === "self-hosting") ||
+      (path.endsWith("product-guide.md") && item.slug === "product-guide") ||
+      (path.endsWith("agent-guide.md") && item.slug === "agent-guide")
+    );
+  });
+
+  return guide?.title ?? label.replace(/\.md$/i, "");
+}
+
 function splitTableRow(line: string) {
   return line
     .trim()
@@ -152,7 +173,7 @@ function inlineMarkdown(text: string) {
             to={hrefForMarkdownLink(linkMatch[2])}
             className="font-medium text-foreground underline underline-offset-4"
           >
-            {linkMatch[1]}
+            {labelForMarkdownLink(linkMatch[1], linkMatch[2])}
           </Link>,
         );
       }
@@ -175,6 +196,13 @@ function parseMarkdown(markdown: string): MarkdownPart[] {
   let ordered = false;
   let codeLines: string[] | null = null;
   let language = "";
+
+  function nextContentLine(startIndex: number) {
+    for (let index = startIndex; index < lines.length; index += 1) {
+      if (lines[index].trim()) return lines[index];
+    }
+    return "";
+  }
 
   function flushParagraph() {
     if (paragraph.length) {
@@ -280,6 +308,14 @@ function parseMarkdown(markdown: string): MarkdownPart[] {
 
     if (!line.trim()) {
       flushParagraph();
+      if (listItems.length) {
+        const nextLine = nextContentLine(lineIndex + 1);
+        const nextIsList =
+          /^\s*-\s+/.test(nextLine) || /^\s*\d+\.\s+/.test(nextLine);
+        const nextIsContinuation =
+          /^\s+\S/.test(nextLine) && !nextLine.startsWith("```");
+        if (nextIsList || nextIsContinuation) continue;
+      }
       flushList();
       continue;
     }

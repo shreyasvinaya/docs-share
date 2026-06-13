@@ -1,7 +1,7 @@
 # Agent Guide
 
 This guide is for coding agents and automation that need to use docs-share or
-modify it safely. For product behavior, read [`product-guide.md`](product-guide.md).
+modify it safely. For product behavior, read the [Product Guide](product-guide.md).
 
 ## Fast Path For Publishing Agent HTML
 

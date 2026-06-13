@@ -6,7 +6,7 @@ latest tree for browsing and previewing, and can publish a single authenticated
 HTML draft URL for fast agent-to-human handoff.
 
 This guide focuses on practical use. For deployment details, read
-[`self-hosting.md`](self-hosting.md) and [`deployment.md`](deployment.md).
+[Self-Hosting](self-hosting.md) and [Deployment](deployment.md).
 
 ## Core Concepts
 

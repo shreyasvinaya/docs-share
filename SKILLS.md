@@ -15,8 +15,8 @@ docs-share is a Bun/Turbo monorepo:
 - `packages/cli`: `docs-share` command-line client for agents and automation.
 - `packages/shared`: shared TypeScript types and validation schemas.
 
-Read [`docs/product-guide.md`](docs/product-guide.md) before changing product
-behavior. Read [`docs/agent-guide.md`](docs/agent-guide.md) before changing CLI,
+Read the [Product Guide](docs/product-guide.md) before changing product
+behavior. Read the [Agent Guide](docs/agent-guide.md) before changing CLI,
 API, auth, preview, draft, upload, or share behavior.
 
 ## Agent Operating Rules

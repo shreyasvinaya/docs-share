@@ -1,6 +1,6 @@
 # Self-Hosting
 
-For platform-specific deployment paths, see [`deployment.md`](deployment.md).
+For platform-specific deployment paths, see the [Deployment Guide](deployment.md).
 
 ## Docker Compose
 
