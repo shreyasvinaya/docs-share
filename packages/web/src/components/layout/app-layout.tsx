@@ -11,7 +11,7 @@ function useBreadcrumbs(pathname: string) {
   const { data: teams } = useTeams();
   const { data: personalRepo } = usePersonalRepo();
   const segments = pathname.split("/").filter(Boolean);
-  const crumbs: { label: string; to: string }[] = [];
+  const crumbs: { label: string; to: string | null; key: string }[] = [];
 
   const labelMap: Record<string, string> = {
     files: "Files",
@@ -29,18 +29,27 @@ function useBreadcrumbs(pathname: string) {
     // If previous segment was "teams", look up the team name
     if (i > 0 && segments[i - 1] === "teams" && teams) {
       const team = teams.find((t) => t.id === segment);
-      crumbs.push({ label: team?.name ?? segment, to: path });
+      crumbs.push({ label: team?.name ?? segment, to: path, key: path });
     } else if (i > 0 && segments[i - 1] === "preview") {
       const team = teams?.find((t) => t.repo?.id === segment);
       const label =
         personalRepo?.repo?.id === segment
           ? personalRepo.displayName
           : team?.name ?? segment;
-      crumbs.push({ label, to: path });
+      const destination =
+        personalRepo?.repo?.id === segment
+          ? "/files"
+          : team
+            ? `/teams/${team.id}`
+            : null;
+      crumbs.push({ label, to: destination, key: path });
+    } else if (segment === "preview") {
+      crumbs.push({ label: labelMap[segment], to: null, key: path });
     } else {
       crumbs.push({
         label: labelMap[segment] ?? decodeURIComponent(segment),
         to: path,
+        key: path,
       });
     }
   }
@@ -92,14 +101,20 @@ export function AppLayout() {
                 Home
               </Link>
               {breadcrumbs.map((crumb) => (
-                <span key={crumb.to} className="flex items-center gap-1">
+                <span key={crumb.key} className="flex items-center gap-1">
                   <span className="text-muted-foreground">/</span>
-                  <Link
-                    to={crumb.to}
-                    className="text-muted-foreground transition-colors hover:text-foreground last:font-medium last:text-foreground"
-                  >
-                    {crumb.label}
-                  </Link>
+                  {crumb.to ? (
+                    <Link
+                      to={crumb.to}
+                      className="text-muted-foreground transition-colors hover:text-foreground last:font-medium last:text-foreground"
+                    >
+                      {crumb.label}
+                    </Link>
+                  ) : (
+                    <span className="font-medium text-foreground">
+                      {crumb.label}
+                    </span>
+                  )}
                 </span>
               ))}
             </nav>
