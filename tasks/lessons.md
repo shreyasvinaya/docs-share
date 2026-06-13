@@ -19,3 +19,6 @@
 - Organization filters for GitHub imports must filter the authenticated user's
   accessible `/user/repos` result, not switch to public-leaning org listing
   endpoints that can hide private repositories.
+- GitHub owner/org filter options should be derived from the accessible
+  `/user/repos` result as well as `/user/orgs`; org membership endpoints can be
+  empty even when the token can import private organization repositories.

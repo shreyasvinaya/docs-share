@@ -228,35 +228,49 @@ export async function listGitHubOrganizations(
 ): Promise<GitHubOrganizationOption[]> {
   if (!token.trim()) return [];
 
-  const organizations: GitHubOrganizationOption[] = [];
-  for (let page = 1; page <= MAX_GITHUB_PAGES; page += 1) {
-    const url = new URL("https://api.github.com/user/orgs");
-    url.searchParams.set("per_page", "100");
-    url.searchParams.set("page", String(page));
+  const organizations = new Map<string, GitHubOrganizationOption>();
+  try {
+    for (let page = 1; page <= MAX_GITHUB_PAGES; page += 1) {
+      const url = new URL("https://api.github.com/user/orgs");
+      url.searchParams.set("per_page", "100");
+      url.searchParams.set("page", String(page));
 
-    const res = await fetch(url, { headers: githubApiHeaders(token) });
-    if (!res.ok) {
-      throw new Error(`GitHub organization lookup failed: ${res.status} ${res.statusText}`);
+      const res = await fetch(url, { headers: githubApiHeaders(token) });
+      if (!res.ok) break;
+
+      const pageOrganizations = (await res.json()) as {
+        login?: string;
+        description?: string | null;
+        avatar_url?: string | null;
+      }[];
+      for (const organization of pageOrganizations) {
+        if (!organization.login) continue;
+        organizations.set(organization.login.toLowerCase(), {
+          login: organization.login,
+          description: organization.description ?? null,
+          avatarUrl: organization.avatar_url ?? null,
+        });
+      }
+
+      if (pageOrganizations.length < 100) break;
     }
-
-    const pageOrganizations = (await res.json()) as {
-      login?: string;
-      description?: string | null;
-      avatar_url?: string | null;
-    }[];
-    for (const organization of pageOrganizations) {
-      if (!organization.login) continue;
-      organizations.push({
-        login: organization.login,
-        description: organization.description ?? null,
-        avatarUrl: organization.avatar_url ?? null,
-      });
-    }
-
-    if (pageOrganizations.length < 100) break;
+  } catch {
+    // Fall back to repository owners below; /user/repos is the source of truth
+    // for what the connected token can actually import.
   }
 
-  return organizations.sort((a, b) => a.login.localeCompare(b.login));
+  const accessibleRepos = await listGitHubAccessibleRepos(token);
+  for (const repo of accessibleRepos) {
+    const key = repo.ownerLogin.toLowerCase();
+    if (!key || organizations.has(key)) continue;
+    organizations.set(key, {
+      login: repo.ownerLogin,
+      description: null,
+      avatarUrl: null,
+    });
+  }
+
+  return [...organizations.values()].sort((a, b) => a.login.localeCompare(b.login));
 }
 
 export async function listGitHubBranches(params: {

@@ -164,14 +164,35 @@ describe("listGitHubAccessibleRepos", () => {
 
 describe("listGitHubOrganizations", () => {
   test("returns organization choices for the connected token", async () => {
-    let requestedUrl = "";
+    const requestedUrls: string[] = [];
     globalThis.fetch = (async (input, init) => {
-      requestedUrl = String(input);
+      requestedUrls.push(String(input));
       expect((init?.headers as Record<string, string>).Authorization).toBe("Bearer user-token");
+      if (String(input).includes("/user/orgs?")) {
+        return new Response(
+          JSON.stringify([
+            { login: "acme", description: "Acme Docs", avatar_url: "https://example.com/acme.png" },
+            { login: "octo-org", description: null, avatar_url: null },
+          ]),
+          { status: 200 }
+        );
+      }
       return new Response(
         JSON.stringify([
-          { login: "acme", description: "Acme Docs", avatar_url: "https://example.com/acme.png" },
-          { login: "octo-org", description: null, avatar_url: null },
+          {
+            full_name: "acme/private-docs",
+            clone_url: "https://github.com/acme/private-docs.git",
+            default_branch: "main",
+            private: true,
+            owner: { login: "acme" },
+          },
+          {
+            full_name: "zeta/private-docs",
+            clone_url: "https://github.com/zeta/private-docs.git",
+            default_branch: "main",
+            private: true,
+            owner: { login: "zeta" },
+          },
         ]),
         { status: 200 }
       );
@@ -188,8 +209,43 @@ describe("listGitHubOrganizations", () => {
         description: null,
         avatarUrl: null,
       },
+      {
+        login: "zeta",
+        description: null,
+        avatarUrl: null,
+      },
     ]);
-    expect(requestedUrl).toContain("/user/orgs?");
+    expect(requestedUrls[0]).toContain("/user/orgs?");
+    expect(requestedUrls[1]).toContain("/user/repos?");
+  });
+
+  test("uses accessible repository owners when GitHub org membership is empty", async () => {
+    globalThis.fetch = (async (input, init) => {
+      expect((init?.headers as Record<string, string>).Authorization).toBe("Bearer user-token");
+      if (String(input).includes("/user/orgs?")) {
+        return new Response(JSON.stringify([]), { status: 200 });
+      }
+      return new Response(
+        JSON.stringify([
+          {
+            full_name: "acme/private-docs",
+            clone_url: "https://github.com/acme/private-docs.git",
+            default_branch: "main",
+            private: true,
+            owner: { login: "acme" },
+          },
+        ]),
+        { status: 200 }
+      );
+    }) as typeof fetch;
+
+    await expect(listGitHubOrganizations("user-token")).resolves.toEqual([
+      {
+        login: "acme",
+        description: null,
+        avatarUrl: null,
+      },
+    ]);
   });
 });
 
