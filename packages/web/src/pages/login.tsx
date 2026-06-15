@@ -1,5 +1,6 @@
 import { useState } from "react";
-import { useNavigate } from "react-router";
+import { useNavigate, useSearchParams } from "react-router";
+import { buildGoogleAuthHref, safeClientNext } from "@/lib/next-url";
 
 export function LoginPage() {
   const [email, setEmail] = useState("");
@@ -7,6 +8,8 @@ export function LoginPage() {
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
   const navigate = useNavigate();
+  const [params] = useSearchParams();
+  const next = params.get("next");
 
   async function handleDevLogin(e: React.FormEvent) {
     e.preventDefault();
@@ -24,7 +27,12 @@ export function LoginPage() {
         setError(body.error || "Login failed");
         return;
       }
-      navigate("/app");
+      const safe = safeClientNext(next);
+      if (safe) {
+        window.location.assign(safe);
+      } else {
+        navigate("/app");
+      }
     } catch {
       setError("Network error");
     } finally {
@@ -59,7 +67,7 @@ export function LoginPage() {
           </div>
 
           <a
-            href="/api/auth/google"
+            href={buildGoogleAuthHref(next)}
             className="flex w-full items-center justify-center gap-3 rounded-lg border border-border bg-background px-4 py-2.5 text-sm font-medium transition-colors hover:bg-muted"
           >
             <svg className="h-5 w-5" viewBox="0 0 24 24">
