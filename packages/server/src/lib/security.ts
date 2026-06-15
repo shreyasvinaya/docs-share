@@ -54,3 +54,20 @@ export function resolveInside(baseDir: string, relativePath: string): string | n
 
   return null;
 }
+
+/**
+ * Returns `next` only when it is a safe, same-origin path suitable as a
+ * post-login redirect target. Guards against open redirects: rejects absolute
+ * URLs, protocol-relative ("//host"), backslash-containing paths, and control
+ * characters. Returns null when `next` is missing or unsafe.
+ */
+export function safeNextPath(next: string | null | undefined): string | null {
+  if (!next) return null;
+  if (next[0] !== "/") return null; // must be root-relative
+  if (next[1] === "/") return null; // reject protocol-relative //host
+  for (let i = 0; i < next.length; i++) {
+    const code = next.charCodeAt(i);
+    if (code < 32 || code === 127 || code === 92) return null; // control char, DEL, or backslash
+  }
+  return next;
+}

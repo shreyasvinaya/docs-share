@@ -4,6 +4,7 @@ import {
   isProduction,
   normalizeRelativePath,
   resolveInside,
+  safeNextPath,
 } from "./security.js";
 
 describe("isProduction", () => {
@@ -69,5 +70,27 @@ describe("resolveInside", () => {
   test("rejects paths that would escape the base directory", () => {
     expect(resolveInside("/tmp/docs-share", "../secrets")).toBeNull();
     expect(resolveInside("/tmp/docs-share", "/etc/passwd")).toBeNull();
+  });
+});
+
+describe("safeNextPath", () => {
+  test("accepts safe same-origin paths", () => {
+    expect(safeNextPath("/view/public/abc123")).toBe("/view/public/abc123");
+    expect(safeNextPath("/view/public/abc/report.html?x=1")).toBe(
+      "/view/public/abc/report.html?x=1"
+    );
+    expect(safeNextPath("/app")).toBe("/app");
+  });
+
+  test("rejects missing, relative, absolute, and tricky paths", () => {
+    expect(safeNextPath(null)).toBeNull();
+    expect(safeNextPath(undefined)).toBeNull();
+    expect(safeNextPath("")).toBeNull();
+    expect(safeNextPath("app")).toBeNull();
+    expect(safeNextPath("https://evil.com")).toBeNull();
+    expect(safeNextPath("//evil.com")).toBeNull();
+    expect(safeNextPath("/" + String.fromCharCode(92) + "evil.com")).toBeNull(); // backslash trick
+    expect(safeNextPath("/foo" + String.fromCharCode(10) + "bar")).toBeNull(); // control char
+    expect(safeNextPath("/foo" + String.fromCharCode(127) + "bar")).toBeNull(); // DEL
   });
 });

@@ -1,4 +1,4 @@
-import { Hono } from "hono";
+import { Hono, type Context } from "hono";
 import { eq, and } from "drizzle-orm";
 import { db, schema } from "../db/index.js";
 import { requireAuth } from "../middleware/requireAuth.js";
@@ -233,6 +233,62 @@ function joinSharePath(basePath: string | null, childPath: string): string | nul
 }
 
 /**
+ * Enforces org-link access. Returns a Response to send immediately when the
+ * request is NOT allowed, or null when access is granted.
+ *
+ * Browser navigations (Accept: text/html) on a denial are redirected to the
+ * SPA share-gate page so the visitor sees a friendly screen and can sign in
+ * and return here. Non-browser clients keep the JSON 401/403 contract.
+ */
+async function gateOrgAccess(
+  c: Context<AppEnv>,
+  share: { linkAccess: string | null; orgDomain: string | null }
+): Promise<Response | null> {
+  if (share.linkAccess !== "org" || !share.orgDomain) return null;
+
+  const wantsHtml = (c.req.header("Accept") ?? "").includes("text/html");
+  const gateUrl =
+    `/share-gate?next=${encodeURIComponent(c.req.path)}` +
+    `&domain=${encodeURIComponent(share.orgDomain)}`;
+
+  const userId = c.get("userId");
+  if (!userId) {
+    if (wantsHtml) return c.redirect(gateUrl, 302);
+    return c.json(
+      {
+        error: "Authentication required",
+        detail: `This link is restricted to @${share.orgDomain} members. Please sign in.`,
+        linkAccess: "org",
+        orgDomain: share.orgDomain,
+      },
+      401
+    );
+  }
+
+  const user = await db
+    .select()
+    .from(schema.users)
+    .where(eq(schema.users.id, userId))
+    .get();
+
+  const userDomain = user?.email.split("@")[1]?.toLowerCase();
+  if (userDomain !== share.orgDomain.toLowerCase()) {
+    if (wantsHtml) return c.redirect(gateUrl, 302);
+    return c.json(
+      {
+        error: "Access denied",
+        detail: `This link is restricted to @${share.orgDomain} members.`,
+        linkAccess: "org",
+        orgDomain: share.orgDomain,
+      },
+      403
+    );
+  }
+
+  return null;
+}
+
+/**
  * GET /public/:token/* — Serve files via public share link.
  * No auth required for "public" links.
  * "org" links require auth + matching email domain.
@@ -266,40 +322,8 @@ app.get("/public/:token/*", async (c) => {
   const passwordError = validateSharePassword(c.req.raw, share.passwordHash);
   if (passwordError) return passwordError;
 
-  // Org-level access check
-  if (share.linkAccess === "org" && share.orgDomain) {
-    const userId = c.get("userId");
-    if (!userId) {
-      return c.json(
-        {
-          error: "Authentication required",
-          detail: `This link is restricted to @${share.orgDomain} members. Please sign in.`,
-          linkAccess: "org",
-          orgDomain: share.orgDomain,
-        },
-        401
-      );
-    }
-
-    const user = await db
-      .select()
-      .from(schema.users)
-      .where(eq(schema.users.id, userId))
-      .get();
-
-    const userDomain = user?.email.split("@")[1];
-    if (userDomain !== share.orgDomain) {
-      return c.json(
-        {
-          error: "Access denied",
-          detail: `This link is restricted to @${share.orgDomain} members.`,
-          linkAccess: "org",
-          orgDomain: share.orgDomain,
-        },
-        403
-      );
-    }
-  }
+  const gate = await gateOrgAccess(c, share);
+  if (gate) return gate;
 
   // Resolve file path: share.path is the base, filePath is relative within it
   // For file shares (share.path = "report.html"), filePath should be empty
@@ -342,39 +366,8 @@ app.get("/public/:token", async (c) => {
   const passwordError = validateSharePassword(c.req.raw, share.passwordHash);
   if (passwordError) return passwordError;
 
-  if (share.linkAccess === "org" && share.orgDomain) {
-    const userId = c.get("userId");
-    if (!userId) {
-      return c.json(
-        {
-          error: "Authentication required",
-          detail: `This link is restricted to @${share.orgDomain} members. Please sign in.`,
-          linkAccess: "org",
-          orgDomain: share.orgDomain,
-        },
-        401
-      );
-    }
-
-    const user = await db
-      .select()
-      .from(schema.users)
-      .where(eq(schema.users.id, userId))
-      .get();
-
-    const userDomain = user?.email.split("@")[1];
-    if (userDomain !== share.orgDomain) {
-      return c.json(
-        {
-          error: "Access denied",
-          detail: `This link is restricted to @${share.orgDomain} members.`,
-          linkAccess: "org",
-          orgDomain: share.orgDomain,
-        },
-        403
-      );
-    }
-  }
+  const gate = await gateOrgAccess(c, share);
+  if (gate) return gate;
 
   if (!share.path) {
     return c.json({ error: "No file specified in this share" }, 400);

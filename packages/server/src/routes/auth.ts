@@ -5,7 +5,7 @@ import { eq, and } from "drizzle-orm";
 import { db, schema } from "../db/index.js";
 import { config } from "../lib/config.js";
 import { generateId, generateApiToken } from "../lib/crypto.js";
-import { isProduction } from "../lib/security.js";
+import { isProduction, safeNextPath } from "../lib/security.js";
 import { requireAuth } from "../middleware/requireAuth.js";
 import { createBareRepo } from "../git/repoManager.js";
 import type { AppEnv } from "../lib/types.js";
@@ -56,6 +56,17 @@ app.get("/google", (c) => {
     maxAge: 600,
   });
 
+  const nextParam = safeNextPath(c.req.query("next"));
+  if (nextParam) {
+    setCookie(c, "oauth_next", nextParam, {
+      httpOnly: true,
+      secure: isSecure,
+      sameSite: "Lax",
+      path: "/",
+      maxAge: 600, // 10 minutes
+    });
+  }
+
   return c.redirect(url.toString());
 });
 
@@ -70,6 +81,9 @@ app.get("/google/callback", async (c) => {
   // Clear OAuth cookies immediately
   deleteCookie(c, "oauth_state", { path: "/" });
   deleteCookie(c, "oauth_code_verifier", { path: "/" });
+
+  const storedNext = getCookie(c, "oauth_next");
+  deleteCookie(c, "oauth_next", { path: "/" });
 
   // Validate state for CSRF protection
   if (!state || !storedState || state !== storedState) {
@@ -185,7 +199,8 @@ app.get("/google/callback", async (c) => {
     maxAge: 30 * 24 * 60 * 60, // 30 days in seconds
   });
 
-  return c.redirect(new URL("/app", config.APP_URL).toString());
+  const destination = safeNextPath(storedNext) ?? "/app";
+  return c.redirect(new URL(destination, config.APP_URL).toString());
 });
 
 // ---------------------------------------------------------------------------
