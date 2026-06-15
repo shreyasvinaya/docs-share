@@ -59,3 +59,17 @@ export function useInviteMember(teamId: string) {
       qc.invalidateQueries({ queryKey: ["teams", teamId, "members"] }),
   });
 }
+
+/**
+ * Remove a member from the team. Deletes only the membership; the member's
+ * account and everything they uploaded to the team stay intact.
+ */
+export function useRemoveMember(teamId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (userId: string) =>
+      api.del(`/api/teams/${teamId}/members/${userId}`),
+    onSuccess: () =>
+      qc.invalidateQueries({ queryKey: ["teams", teamId, "members"] }),
+  });
+}

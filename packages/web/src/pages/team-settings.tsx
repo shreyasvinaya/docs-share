@@ -1,7 +1,15 @@
 import { useState } from "react";
 import { useParams, useNavigate } from "react-router";
-import { useTeam, useTeamMembers, useInviteMember, useUpdateTeam } from "@/hooks/use-teams";
+import {
+  useTeam,
+  useTeamMembers,
+  useInviteMember,
+  useUpdateTeam,
+  useRemoveMember,
+} from "@/hooks/use-teams";
+import { useSession } from "@/hooks/use-auth";
 import { UserAvatar } from "@/components/common/user-avatar";
+import { canRemoveMember } from "@/lib/team-members";
 import { api } from "@/lib/api-client";
 import type { TeamRole } from "@docs-share/shared";
 
@@ -10,14 +18,21 @@ export function TeamSettingsPage() {
   const navigate = useNavigate();
   const { data: team } = useTeam(teamId);
   const { data: members } = useTeamMembers(teamId);
+  const { data: session } = useSession();
   const inviteMember = useInviteMember(teamId!);
   const updateTeam = useUpdateTeam(teamId);
+  const removeMember = useRemoveMember(teamId!);
 
   const [email, setEmail] = useState("");
   const [role, setRole] = useState<TeamRole>("member");
   const [description, setDescription] = useState<string | null>(null);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
+  const [confirmingRemoveId, setConfirmingRemoveId] = useState<string | null>(null);
+
+  const viewerUserId = session?.user.id;
+  const viewerRole = members?.find((m) => m.userId === viewerUserId)?.role;
+  const ownerCount = members?.filter((m) => m.role === "owner").length ?? 0;
 
   const currentDescription = description ?? team?.description ?? "";
 
@@ -121,9 +136,48 @@ export function TeamSettingsPage() {
                     </p>
                   </div>
                 </div>
-                <span className="rounded-full bg-muted px-2.5 py-0.5 text-xs font-medium capitalize">
-                  {member.role}
-                </span>
+                <div className="flex items-center gap-3">
+                  <span className="rounded-full bg-muted px-2.5 py-0.5 text-xs font-medium capitalize">
+                    {member.role}
+                  </span>
+                  {canRemoveMember({
+                    viewerRole,
+                    viewerUserId,
+                    member,
+                    ownerCount,
+                  }) &&
+                    (confirmingRemoveId === member.userId ? (
+                      <span className="flex items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={() =>
+                            removeMember.mutate(member.userId, {
+                              onSuccess: () => setConfirmingRemoveId(null),
+                            })
+                          }
+                          disabled={removeMember.isPending}
+                          className="rounded-md bg-destructive px-2.5 py-1 text-xs font-medium text-destructive-foreground transition-colors hover:bg-destructive/90 disabled:opacity-50"
+                        >
+                          {removeMember.isPending ? "Removing..." : "Confirm"}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setConfirmingRemoveId(null)}
+                          className="rounded-md border border-border px-2.5 py-1 text-xs transition-colors hover:bg-muted"
+                        >
+                          Cancel
+                        </button>
+                      </span>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={() => setConfirmingRemoveId(member.userId)}
+                        className="text-xs font-medium text-destructive transition-colors hover:underline"
+                      >
+                        Remove
+                      </button>
+                    ))}
+                </div>
               </div>
             ))}
           </div>
@@ -132,6 +186,17 @@ export function TeamSettingsPage() {
             No members yet.
           </p>
         )}
+
+        {removeMember.isError && (
+          <p className="mb-3 text-sm text-destructive">
+            Could not remove that member. They may be the team's last owner.
+          </p>
+        )}
+
+        <p className="mb-4 text-xs text-muted-foreground">
+          Removing a member revokes their access. Everything they uploaded to
+          the team stays with the team.
+        </p>
 
         {/* Invite form */}
         <form onSubmit={handleInvite} className="flex items-end gap-3">
