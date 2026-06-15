@@ -2,6 +2,7 @@ import { BrowserRouter, Routes, Route, Navigate } from "react-router";
 import { useSession } from "@/hooks/use-auth";
 import { AppLayout } from "@/components/layout/app-layout";
 import { LoginPage } from "@/pages/login";
+import { ShareGatePage } from "@/pages/share-gate";
 import { PublicDocsPage } from "@/pages/public-docs";
 import { PublicHomePage } from "@/pages/public-home";
 import { DashboardPage } from "@/pages/dashboard";
@@ -35,6 +36,7 @@ export function App() {
         <Route path="/docs" element={<PublicDocsPage />} />
         <Route path="/docs/:guide" element={<PublicDocsPage />} />
         <Route path="/login" element={<LoginPage />} />
+        <Route path="/share-gate" element={<ShareGatePage />} />
         <Route
           element={
             <ProtectedRoute>
