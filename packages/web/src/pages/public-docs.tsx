@@ -1,12 +1,18 @@
-import type { ReactNode } from "react";
-import { Link, Navigate, useParams } from "react-router";
+import { useMemo, useState, type ReactNode } from "react";
+import { Link, Navigate, useNavigate, useParams } from "react-router";
 import { PublicAuthAction } from "@/components/layout/public-auth-action";
 import { PublicThemeControl } from "@/components/layout/public-theme-control";
+import {
+  buildDocsSearchIndex,
+  searchDocs,
+  type DocsSearchResult,
+} from "@/lib/docs-search";
 import { useDeploymentName } from "@/hooks/use-setup";
 import deploymentDoc from "../../../../docs/deployment.md?raw";
 import selfHostingDoc from "../../../../docs/self-hosting.md?raw";
 import productGuideDoc from "../../../../docs/product-guide.md?raw";
 import agentGuideDoc from "../../../../docs/agent-guide.md?raw";
+import apiReferenceDoc from "../../../../docs/api-reference.md?raw";
 import handoffDoc from "../../../../HANDOFF.md?raw";
 import securityDoc from "../../../../SECURITY.md?raw";
 import skillsDoc from "../../../../SKILLS.md?raw";
@@ -32,6 +38,12 @@ const guides = [
     title: "Agent Guide",
     description: "CLI/API workflows, source anchors, constraints, and common failure modes.",
     content: agentGuideDoc,
+  },
+  {
+    slug: "api-reference",
+    title: "API Reference",
+    description: "Per-endpoint reference with copy-paste curl examples, params, and status codes.",
+    content: apiReferenceDoc,
   },
   {
     slug: "agent-skills",
@@ -85,7 +97,8 @@ function hrefForMarkdownLink(href: string) {
       (path.endsWith("deployment.md") && item.slug === "deployment") ||
       (path.endsWith("self-hosting.md") && item.slug === "self-hosting") ||
       (path.endsWith("product-guide.md") && item.slug === "product-guide") ||
-      (path.endsWith("agent-guide.md") && item.slug === "agent-guide")
+      (path.endsWith("agent-guide.md") && item.slug === "agent-guide") ||
+      (path.endsWith("api-reference.md") && item.slug === "api-reference")
     );
   });
 
@@ -107,7 +120,8 @@ function labelForMarkdownLink(label: string, href: string) {
       (path.endsWith("deployment.md") && item.slug === "deployment") ||
       (path.endsWith("self-hosting.md") && item.slug === "self-hosting") ||
       (path.endsWith("product-guide.md") && item.slug === "product-guide") ||
-      (path.endsWith("agent-guide.md") && item.slug === "agent-guide")
+      (path.endsWith("agent-guide.md") && item.slug === "agent-guide") ||
+      (path.endsWith("api-reference.md") && item.slug === "api-reference")
     );
   });
 
@@ -477,6 +491,82 @@ function PublicDocsLayout({ children }: { children: ReactNode }) {
   );
 }
 
+function DocsSearch() {
+  const navigate = useNavigate();
+  const [query, setQuery] = useState("");
+  const index = useMemo(
+    () =>
+      buildDocsSearchIndex(
+        guides.map((guide) => ({
+          slug: guide.slug,
+          title: guide.title,
+          content: guide.content,
+        })),
+      ),
+    [],
+  );
+  const results: DocsSearchResult[] = useMemo(
+    () => searchDocs(index, query),
+    [index, query],
+  );
+
+  const trimmed = query.trim();
+
+  return (
+    <div className="relative">
+      <input
+        type="search"
+        value={query}
+        onChange={(event) => setQuery(event.target.value)}
+        placeholder="Search the docs…"
+        aria-label="Search the docs"
+        className="w-full rounded-lg border border-border bg-background px-4 py-2.5 text-sm text-foreground placeholder:text-muted-foreground focus:border-primary focus:outline-none"
+      />
+      {trimmed.length >= 2 && (
+        <div className="absolute z-10 mt-2 w-full overflow-hidden rounded-lg border border-border bg-background shadow-lg">
+          {results.length === 0 ? (
+            <p className="px-4 py-3 text-sm text-muted-foreground">
+              No matches for “{trimmed}”.
+            </p>
+          ) : (
+            <ul className="max-h-96 overflow-y-auto">
+              {results.map((result) => {
+                const to = `/docs/${result.guideSlug}${
+                  result.anchor ? `#${result.anchor}` : ""
+                }`;
+                return (
+                  <li key={`${result.guideSlug}-${result.anchor}-${result.heading}`}>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setQuery("");
+                        navigate(to);
+                      }}
+                      className="block w-full border-b border-border px-4 py-3 text-left transition-colors last:border-b-0 hover:bg-muted"
+                    >
+                      <span className="flex items-center justify-between gap-3">
+                        <span className="text-sm font-medium text-foreground">
+                          {result.heading}
+                        </span>
+                        <span className="shrink-0 text-xs uppercase text-muted-foreground">
+                          {result.guideTitle}
+                        </span>
+                      </span>
+                      <span className="mt-1 block text-xs leading-5 text-muted-foreground">
+                        {result.snippet}
+                      </span>
+                    </button>
+                  </li>
+                );
+              })}
+            </ul>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function DocsIndexPage() {
   const deploymentName = useDeploymentName();
 
@@ -494,6 +584,9 @@ function DocsIndexPage() {
             Choose a guide. Each guide is its own page, with normal headings,
             links, and code blocks.
           </p>
+          <div className="mt-6 max-w-2xl">
+            <DocsSearch />
+          </div>
         </div>
       </section>
 
@@ -540,6 +633,7 @@ function GuidePage({ slug }: { slug: string }) {
 
       <section className="mx-auto grid max-w-6xl gap-8 px-5 py-10 lg:grid-cols-[220px_1fr]">
         <aside className="space-y-2">
+          <DocsSearch />
           {guides.map((item) => (
             <Link
               key={item.slug}

@@ -121,6 +121,46 @@ export function useDeleteFile(repoId: string | undefined) {
   });
 }
 
+export function useRestoreVersion(repoId: string | undefined) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ sha, path }: { sha: string; path?: string }) =>
+      api.post<{ commitSha: string; path: string | null }>(
+        `/api/files/${repoId}/restore`,
+        { sha, path }
+      ),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["files", repoId] });
+      qc.invalidateQueries({ queryKey: ["commits", repoId] });
+    },
+  });
+}
+
+export function useCopyFile(repoId: string | undefined) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (data: {
+      sourcePath: string;
+      targetPath: string;
+      targetRepoId?: string;
+    }) =>
+      api.post<{
+        commitSha: string;
+        sourcePath: string;
+        targetPath: string;
+        targetRepoId: string;
+        filesCopied: number;
+      }>(`/api/files/${repoId}/copy`, data),
+    onSuccess: (result) => {
+      qc.invalidateQueries({ queryKey: ["files", repoId] });
+      qc.invalidateQueries({ queryKey: ["commits", repoId] });
+      if (result.targetRepoId && result.targetRepoId !== repoId) {
+        qc.invalidateQueries({ queryKey: ["files", result.targetRepoId] });
+      }
+    },
+  });
+}
+
 export function useGitHubSync(repoId: string | undefined) {
   return useQuery({
     queryKey: ["github-sync", repoId],

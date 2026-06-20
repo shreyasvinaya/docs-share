@@ -64,6 +64,11 @@ API tokens default to `*` scope from the web UI. Draft upload and deletion
 accept tokens with `*`, `draft:*`, or `draft:write`; draft list and lookup
 accept tokens with `*`, `draft:*`, or `draft:read`.
 
+Revoking a token in **Settings -> API Tokens** is a soft-revoke: the token row
+is preserved for audit (shown with a **Revoked** badge and revocation date) but
+is immediately rejected for authentication. Revoked tokens cannot be revoked
+again and are never reactivated — create a new token instead.
+
 ## Publishing A Single Authenticated HTML Draft
 
 Draft publishing is optimized for agent output:
@@ -166,6 +171,31 @@ docs-share push ./site --to personal/plans/migration --message "Update migration
 
 If the uploaded content has not changed, the server reports that no file changes
 were detected.
+
+## Restoring A Previous Version
+
+Repositories are Git-backed, so any earlier version of a file can be brought
+back without rewriting history.
+
+- Open a file on the preview page and click **History**.
+- On any older commit, click **Restore this version**. The server checks out the
+  file content from that commit and records it as a **new** commit on top of the
+  current history. Nothing is lost — the intervening versions remain in the log.
+
+The API endpoint is `POST /api/files/:repoId/restore` with body
+`{ "sha": "<commit>", "path": "<file path>" }`. Omit `path` to restore the whole
+repository tree to the chosen revision.
+
+## Duplicating Files And Drafts
+
+- **Repository file or folder**: `POST /api/files/:repoId/copy` with body
+  `{ "sourcePath": "a.html", "targetPath": "b.html" }`. The copy is committed as
+  a new commit and indexed as an independent blob. Pass `targetRepoId` to copy
+  into another repository you can write to.
+- **Draft**: in the **Drafts** view choose **Duplicate**, or run
+  `docs-share draft-duplicate <draftId>`. This copies the stored HTML into a new
+  draft titled `"<original> (copy)"`; the copy is fully independent of the
+  original.
 
 ## Deleting Files And Folders
 

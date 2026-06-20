@@ -4,6 +4,7 @@ export * from "./types/project.js";
 export * from "./types/file.js";
 export * from "./types/draft.js";
 export * from "./types/share.js";
+export * from "./types/analytics.js";
 export * from "./types/auth.js";
 export * from "./types/api.js";
 export * from "./constants/permissions.js";
