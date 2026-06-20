@@ -746,6 +746,75 @@ describe("path-scoped share authorization on file routes", () => {
   });
 });
 
+describe("git pathspec-magic is rejected on file routes", () => {
+  test("DELETE with `:(glob)**` is rejected and deletes nothing outside the path", async () => {
+    const ownerId = await seedUser("Owner");
+    const token = await seedToken(ownerId);
+    // Two top-level areas; a pathspec-magic glob would match BOTH if it leaked
+    // through to `git ls-files`/`git rm`.
+    const { repoId, diskPath } = await seedRepoWithFiles(ownerId, {
+      "docs/page.html": "<p>docs</p>",
+      "root.html": "<p>root</p>",
+    });
+
+    for (const magic of [":(glob)**", ":(top)", ":(exclude)docs", ":/"]) {
+      const res = await routeApp.request(
+        `/api/files/${repoId}?path=${encodeURIComponent(magic)}`,
+        { method: "DELETE", headers: authHeaders(token) }
+      );
+      // normalizeRelativePath returns null -> handler 400s before any git runs.
+      expect(res.status).toBe(400);
+    }
+
+    // Nothing was deleted: BOTH files are still present at HEAD.
+    expect(await readFileAtHead(diskPath, "docs/page.html")).toBe("<p>docs</p>");
+    expect(await readFileAtHead(diskPath, "root.html")).toBe("<p>root</p>");
+
+    // The file index is untouched too.
+    const indexed = await db
+      .select()
+      .from(schema.files)
+      .where(inArray(schema.files.repoId, [repoId]))
+      .all();
+    expect(indexed.map((f) => f.path).sort()).toEqual([
+      "docs/page.html",
+      "root.html",
+    ]);
+  });
+
+  test("commits with a pathspec-magic ?path is rejected (400)", async () => {
+    const ownerId = await seedUser("Owner");
+    const token = await seedToken(ownerId);
+    const { repoId } = await seedRepoWithFiles(ownerId, {
+      "docs/page.html": "<p>docs</p>",
+      "root.html": "<p>root</p>",
+    });
+
+    const res = await routeApp.request(
+      `/api/files/${repoId}/commits?path=${encodeURIComponent(":(glob)**")}`,
+      { headers: authHeaders(token) }
+    );
+    expect(res.status).toBe(400);
+  });
+
+  test("a scoped DELETE still works for a legitimate path", async () => {
+    const ownerId = await seedUser("Owner");
+    const token = await seedToken(ownerId);
+    const { repoId, diskPath } = await seedRepoWithFiles(ownerId, {
+      "docs/page.html": "<p>docs</p>",
+      "root.html": "<p>root</p>",
+    });
+
+    const res = await routeApp.request(
+      `/api/files/${repoId}?path=docs/page.html`,
+      { method: "DELETE", headers: authHeaders(token) }
+    );
+    expect(res.status).toBe(200);
+    // Only the targeted file is gone; the sibling remains.
+    expect(await readFileAtHead(diskPath, "root.html")).toBe("<p>root</p>");
+  });
+});
+
 describe("file listing treats the path prefix literally (LIKE wildcards)", () => {
   test("a read share scoped to literal `a_b` does not list sibling `axb`", async () => {
     const ownerId = await seedUser("Owner");

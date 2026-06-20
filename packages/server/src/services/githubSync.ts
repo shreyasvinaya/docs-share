@@ -1,8 +1,9 @@
-import { cp, mkdtemp, readdir, rm, writeFile } from "fs/promises";
+import { cp, lstat, mkdtemp, readdir, realpath, rm, writeFile } from "fs/promises";
 import { tmpdir } from "os";
-import { basename, join } from "path";
+import { basename, join, relative, resolve } from "path";
 import { eq } from "drizzle-orm";
 import { db, schema } from "../db/index.js";
+import { config } from "../lib/config.js";
 import {
   extractRepoFiles,
   indexRepoFiles,
@@ -435,29 +436,51 @@ export async function syncGitHubRepo(
   }
 }
 
-async function prepareSelectedImport(
+export async function prepareSelectedImport(
   clonePath: string,
   importPath: string,
   sourcePath: string
 ): Promise<string> {
-  const source = join(clonePath, sourcePath);
-  const sourceFile = Bun.file(source);
-  const exists = await sourceFile.exists();
-  if (!exists) throw new Error("Selected GitHub path was not found");
+  // Containment: the selected source MUST stay inside the clone. A symlink in
+  // the cloned tree could otherwise point `source` at an absolute host path
+  // (the server .env, the SQLite DB, /etc/passwd, another tenant's worktree),
+  // and copying it in would later let view.ts serve that file. Resolve the real
+  // clone root, then the real source, and verify containment.
+  const realCloneRoot = await realpath(clonePath);
+  const source = join(realCloneRoot, sourcePath);
+
+  let realSource: string;
+  try {
+    realSource = await realpath(source);
+  } catch {
+    throw new Error("Selected GitHub path was not found");
+  }
+  if (!isInside(realCloneRoot, realSource)) {
+    throw new Error("Selected GitHub path escapes the repository");
+  }
 
   await mkdirp(importPath);
-  const stat = await sourceFile.stat();
+  const stat = await lstat(realSource);
+  if (stat.isSymbolicLink()) {
+    // The selected path itself is a symlink — never bring it in.
+    throw new Error("Selected GitHub path is a symlink and cannot be imported");
+  }
   if (stat.isDirectory()) {
-    const entries = await readdir(source);
+    const entries = await readdir(realSource);
     for (const entry of entries) {
       if (entry === ".git") continue;
-      await cp(join(source, entry), join(importPath, entry), {
-        recursive: true,
-        force: true,
-      });
+      await copyWithoutSymlinks(
+        join(realSource, entry),
+        join(importPath, entry),
+        realCloneRoot
+      );
     }
   } else {
-    await cp(source, join(importPath, basename(source)), { force: true });
+    await copyWithoutSymlinks(
+      realSource,
+      join(importPath, basename(realSource)),
+      realCloneRoot
+    );
   }
 
   await runGit(["-C", importPath, "init"]);
@@ -466,6 +489,46 @@ async function prepareSelectedImport(
   await runGit(["-C", importPath, "add", "."]);
   await runGit(["-C", importPath, "commit", "-m", `Import ${sourcePath}`]);
   return importPath;
+}
+
+/** True when `candidate` is `base` or lives inside it (both absolute). */
+function isInside(base: string, candidate: string): boolean {
+  const rel = relative(resolve(base), resolve(candidate));
+  return rel === "" || (!rel.startsWith("..") && !rel.startsWith("/"));
+}
+
+/**
+ * Recursively copy `src` to `dest`, SKIPPING any symlink entry so the imported
+ * (and ultimately committed) tree contains no symlinks. Regular files/dirs are
+ * copied; a symlink — at any depth — is dropped. Also re-verifies each real
+ * source stays within `cloneRoot` as a belt-and-braces containment check.
+ */
+async function copyWithoutSymlinks(
+  src: string,
+  dest: string,
+  cloneRoot: string
+): Promise<void> {
+  const info = await lstat(src);
+  if (info.isSymbolicLink()) {
+    // Drop symlinks entirely; do not materialize them in the import tree.
+    return;
+  }
+  if (info.isDirectory()) {
+    // Guard against a real directory that resolves outside the clone.
+    const realDir = await realpath(src);
+    if (!isInside(cloneRoot, realDir)) return;
+    await mkdirp(dest);
+    const entries = await readdir(src);
+    for (const entry of entries) {
+      if (entry === ".git") continue;
+      await copyWithoutSymlinks(join(src, entry), join(dest, entry), cloneRoot);
+    }
+    return;
+  }
+  if (!info.isFile()) return; // skip sockets/fifos/devices
+  const realFile = await realpath(src);
+  if (!isInside(cloneRoot, realFile)) return;
+  await cp(src, dest, { force: true });
 }
 
 async function createGitAuthEnv(
@@ -598,6 +661,9 @@ async function runGit(args: string[], env?: Record<string, string>): Promise<voi
     stdout: "pipe",
     stderr: "pipe",
     env: env ? { ...process.env, ...env } : process.env,
+    // Kill a runaway git (e.g. a clone that hangs) instead of leaking it.
+    timeout: config.GIT_PROCESS_TIMEOUT_MS,
+    killSignal: "SIGKILL",
   });
   const stderr = await new Response(proc.stderr).text();
   await proc.exited;
@@ -612,6 +678,8 @@ async function gitOutput(args: string[]): Promise<string> {
   const proc = Bun.spawn(["git", ...args], {
     stdout: "pipe",
     stderr: "pipe",
+    timeout: config.GIT_PROCESS_TIMEOUT_MS,
+    killSignal: "SIGKILL",
   });
   const stdout = await new Response(proc.stdout).text();
   const stderr = await new Response(proc.stderr).text();

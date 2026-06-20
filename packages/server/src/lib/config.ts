@@ -128,6 +128,12 @@ export const config = {
     "EXPIRED_SHARE_SWEEP_INTERVAL_MS",
     900000
   ),
+  // Maximum wall-clock time a git subprocess may run before it is killed and
+  // the operation fails cleanly. Guards clone / upload-pack / receive-pack /
+  // archive (and other git spawns) against hanging forever and pinning a
+  // connection + worker. Default: 120s.
+  GIT_PROCESS_TIMEOUT_MS: requiredPositiveInt("GIT_PROCESS_TIMEOUT_MS", 120000),
+
   // GitHub sync retry interval (ms). Default: every 10 minutes.
   GITHUB_SYNC_RETRY_INTERVAL_MS: requiredPositiveInt(
     "GITHUB_SYNC_RETRY_INTERVAL_MS",

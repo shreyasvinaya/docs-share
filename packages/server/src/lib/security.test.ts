@@ -1,11 +1,16 @@
-import { describe, expect, test } from "bun:test";
+import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { mkdtemp, mkdir, realpath, rm, symlink, writeFile } from "fs/promises";
+import { tmpdir } from "os";
+import { join } from "path";
 import {
   assertProductionSecret,
   isPrivateOrLoopbackHost,
   isProduction,
   normalizeRelativePath,
+  redactInternalPaths,
   resolveAndValidateHost,
   resolveInside,
+  resolveRealPathInside,
   safeNextPath,
   validateWebhookUrl,
 } from "./security.js";
@@ -117,6 +122,23 @@ describe("normalizeRelativePath", () => {
     );
     expect(normalizeRelativePath(".env.example")).toBe(".env.example");
   });
+
+  test("rejects git pathspec magic (segments starting with ':')", () => {
+    // These would otherwise widen a `git ls-files`/`git rm`/`git log` scope to
+    // the whole repo when GIT_LITERAL_PATHSPECS isn't set.
+    expect(normalizeRelativePath(":(glob)**")).toBeNull();
+    expect(normalizeRelativePath(":(top)")).toBeNull();
+    expect(normalizeRelativePath(":(exclude)docs")).toBeNull();
+    expect(normalizeRelativePath(":!docs")).toBeNull();
+    expect(normalizeRelativePath(":/")).toBeNull();
+    expect(normalizeRelativePath(":/etc/passwd")).toBeNull();
+    // A colon nested in a deeper segment is just as dangerous.
+    expect(normalizeRelativePath("docs/:(glob)**")).toBeNull();
+    // A bare colon as the leading char of a segment.
+    expect(normalizeRelativePath(":colon")).toBeNull();
+    // A colon NOT at the start of a segment is a normal (if unusual) filename.
+    expect(normalizeRelativePath("docs/a:b.txt")).toBe("docs/a:b.txt");
+  });
 });
 
 describe("resolveInside", () => {
@@ -129,6 +151,91 @@ describe("resolveInside", () => {
   test("rejects paths that would escape the base directory", () => {
     expect(resolveInside("/tmp/docs-share", "../secrets")).toBeNull();
     expect(resolveInside("/tmp/docs-share", "/etc/passwd")).toBeNull();
+  });
+});
+
+describe("resolveRealPathInside", () => {
+  let baseDir: string;
+  let realBase: string;
+  let outsideDir: string;
+  let secretFile: string;
+
+  beforeAll(async () => {
+    baseDir = await mkdtemp(join(tmpdir(), "ds-worktree-"));
+    realBase = await realpath(baseDir);
+    outsideDir = await mkdtemp(join(tmpdir(), "ds-outside-"));
+    secretFile = join(outsideDir, "secret.txt");
+    await writeFile(secretFile, "host-only secret");
+
+    // A legitimate in-base file.
+    await writeFile(join(baseDir, "report.html"), "<h1>ok</h1>");
+    await mkdir(join(baseDir, "docs"), { recursive: true });
+    await writeFile(join(baseDir, "docs", "index.html"), "<h1>docs</h1>");
+
+    // A symlink INSIDE the base pointing at an OUTSIDE absolute file.
+    await symlink(secretFile, join(baseDir, "escape.html"));
+    // A symlinked directory escaping the base.
+    await symlink(outsideDir, join(baseDir, "escape-dir"));
+  });
+
+  afterAll(async () => {
+    await rm(baseDir, { recursive: true, force: true }).catch(() => {});
+    await rm(outsideDir, { recursive: true, force: true }).catch(() => {});
+  });
+
+  test("resolves a real in-base file (to its realpath)", async () => {
+    const resolved = await resolveRealPathInside(baseDir, "report.html");
+    expect(resolved).toBe(join(realBase, "report.html"));
+  });
+
+  test("refuses a symlink that escapes the base directory", async () => {
+    expect(await resolveRealPathInside(baseDir, "escape.html")).toBeNull();
+  });
+
+  test("refuses a path under a symlinked directory escaping the base", async () => {
+    expect(
+      await resolveRealPathInside(baseDir, "escape-dir/secret.txt")
+    ).toBeNull();
+  });
+
+  test("returns a contained path for a non-existent leaf (callers then 404 via stat)", async () => {
+    // Non-existent but lexically/really contained: returns the projected path,
+    // never null, so directory-index resolution still works. A subsequent stat
+    // is what produces the 404.
+    expect(await resolveRealPathInside(baseDir, "nope.html")).toBe(
+      join(realBase, "nope.html")
+    );
+  });
+
+  test("still rejects lexical traversal and absolute paths", async () => {
+    expect(await resolveRealPathInside(baseDir, "../secret.txt")).toBeNull();
+    expect(await resolveRealPathInside(baseDir, "/etc/passwd")).toBeNull();
+  });
+});
+
+describe("redactInternalPaths", () => {
+  test("replaces the DATA_DIR prefix with a placeholder", () => {
+    const dataDir = "/srv/docs-share/data";
+    const msg = `fatal: could not read ${dataDir}/worktrees/repo123/x: No such file`;
+    const redacted = redactInternalPaths(msg, [dataDir]);
+    expect(redacted).not.toContain(dataDir);
+    expect(redacted).not.toContain("/worktrees/repo123");
+    expect(redacted).toContain("[path]");
+  });
+
+  test("strips temp/clone and home paths even when not in the base list", () => {
+    const msg =
+      "error: unable to write file /tmp/ds-delete-abc/repo/.git/objects/pack and /home/runner/secret";
+    const redacted = redactInternalPaths(msg, ["/srv/docs-share/data"]);
+    expect(redacted).not.toContain("/tmp/ds-delete-abc");
+    expect(redacted).not.toContain("/home/runner/secret");
+    expect(redacted).toContain("[path]");
+  });
+
+  test("leaves non-path text intact", () => {
+    expect(redactInternalPaths("nothing to commit", [])).toBe(
+      "nothing to commit"
+    );
   });
 });
 

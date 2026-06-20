@@ -7,12 +7,21 @@ import {
   canWriteRepoPath,
 } from "../middleware/shareAccess.js";
 import { config } from "../lib/config.js";
-import { normalizeRelativePath, resolveInside } from "../lib/security.js";
+import {
+  normalizeRelativePath,
+  redactInternalPaths,
+  resolveInside,
+} from "../lib/security.js";
 import {
   extractRepoFiles,
   indexRepoFiles,
 } from "../services/fileExtractor.js";
-import { commitAndPush, runGit, withClonedRepo } from "../git/gitOps.js";
+import {
+  commitAndPush,
+  runGit,
+  spawnWithTimeout,
+  withClonedRepo,
+} from "../git/gitOps.js";
 import { dirname, join } from "path";
 import { mkdir, mkdtemp, rm } from "fs/promises";
 import { tmpdir } from "os";
@@ -164,26 +173,28 @@ app.get("/:repoId/commits", async (c) => {
     String(limit),
   ];
 
-  if (filePath) {
-    args.push("--", filePath);
+  if (requestedTarget) {
+    // Use the NORMALIZED, authorized path (never the raw query input) and run
+    // under GIT_LITERAL_PATHSPECS so pathspec magic can't widen the log scope.
+    args.push("--", requestedTarget);
   }
 
   try {
-    const proc = Bun.spawn(args, {
-      stdout: "pipe",
-      stderr: "pipe",
+    const proc = await spawnWithTimeout(args, {
+      env: { ...process.env, GIT_LITERAL_PATHSPECS: "1" },
     });
 
-    const stdout = await new Response(proc.stdout).text();
-    const stderr = await new Response(proc.stderr).text();
-    await proc.exited;
+    const { stdout, stderr } = proc;
 
     if (proc.exitCode !== 0) {
       // Likely empty repo with no commits yet
       if (stderr.includes("does not have any commits yet")) {
         return c.json({ data: [] });
       }
-      return c.json({ error: "Failed to read git log", details: stderr }, 500);
+      return c.json(
+        { error: "Failed to read git log", details: redactInternalPaths(stderr) },
+        500
+      );
     }
 
     const commits = stdout
@@ -290,40 +301,18 @@ app.post("/:repoId/upload", async (c) => {
   try {
     const clonePath = join(tmpDir, "repo");
 
-    // Clone the bare repo
-    const cloneProc = Bun.spawn(["git", "clone", repo.diskPath, clonePath], {
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    await cloneProc.exited;
+    // Clone the bare repo (timeout-guarded via runGit).
+    const cloneResult = await runGit(["clone", repo.diskPath, clonePath]);
 
-    if (cloneProc.exitCode !== 0) {
+    if (cloneResult.exitCode !== 0) {
       // If clone fails because repo is empty, init a new repo and set remote
-      const initProc = Bun.spawn(["git", "init", clonePath], {
-        stdout: "pipe",
-        stderr: "pipe",
-      });
-      await initProc.exited;
-
-      const remoteProc = Bun.spawn(
-        ["git", "-C", clonePath, "remote", "add", "origin", repo.diskPath],
-        { stdout: "pipe", stderr: "pipe" }
-      );
-      await remoteProc.exited;
+      await runGit(["init", clonePath]);
+      await runGit(["-C", clonePath, "remote", "add", "origin", repo.diskPath]);
     }
 
     // Configure git user for commit
-    const configNameProc = Bun.spawn(
-      ["git", "-C", clonePath, "config", "user.name", user.displayName],
-      { stdout: "pipe", stderr: "pipe" }
-    );
-    await configNameProc.exited;
-
-    const configEmailProc = Bun.spawn(
-      ["git", "-C", clonePath, "config", "user.email", user.email],
-      { stdout: "pipe", stderr: "pipe" }
-    );
-    await configEmailProc.exited;
+    await runGit(["-C", clonePath, "config", "user.name", user.displayName]);
+    await runGit(["-C", clonePath, "config", "user.email", user.email]);
 
     // Write files to the clone
     const fileRecords: Array<{ path: string; sizeBytes: number; mimeType: string | null }> = [];
@@ -366,23 +355,19 @@ app.post("/:repoId/upload", async (c) => {
     }
 
     // Git add all
-    const addProc = Bun.spawn(["git", "-C", clonePath, "add", "-A"], {
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    await addProc.exited;
+    await runGit(["-C", clonePath, "add", "-A"]);
 
     // Git commit
-    const commitProc = Bun.spawn(
-      ["git", "-C", clonePath, "commit", "-m", commitMessage],
-      { stdout: "pipe", stderr: "pipe" }
-    );
-    const commitStdout = await new Response(commitProc.stdout).text();
-    const commitStderr = await new Response(commitProc.stderr).text();
-    await commitProc.exited;
+    const commitResult = await runGit([
+      "-C",
+      clonePath,
+      "commit",
+      "-m",
+      commitMessage,
+    ]);
 
-    if (commitProc.exitCode !== 0) {
-      const commitOutput = `${commitStdout}\n${commitStderr}`;
+    if (commitResult.exitCode !== 0) {
+      const commitOutput = `${commitResult.stdout}\n${commitResult.stderr}`;
       if (
         commitOutput.includes("nothing to commit") ||
         commitOutput.includes("no changes added to commit")
@@ -395,28 +380,24 @@ app.post("/:repoId/upload", async (c) => {
           },
         });
       }
-      return c.json({ error: "Git commit failed", details: commitOutput.trim() }, 500);
+      return c.json(
+        { error: "Git commit failed", details: redactInternalPaths(commitOutput.trim()) },
+        500
+      );
     }
 
     // Push back to bare repo
-    const pushProc = Bun.spawn(
-      ["git", "-C", clonePath, "push", "origin", "HEAD"],
-      { stdout: "pipe", stderr: "pipe" }
-    );
-    await pushProc.exited;
+    const pushResult = await runGit(["-C", clonePath, "push", "origin", "HEAD"]);
 
-    if (pushProc.exitCode !== 0) {
-      const stderr = await new Response(pushProc.stderr).text();
-      return c.json({ error: "Git push failed", details: stderr }, 500);
+    if (pushResult.exitCode !== 0) {
+      return c.json(
+        { error: "Git push failed", details: redactInternalPaths(pushResult.stderr.trim()) },
+        500
+      );
     }
 
     // Get the new HEAD sha
-    const revParseProc = Bun.spawn(
-      ["git", "-C", clonePath, "rev-parse", "HEAD"],
-      { stdout: "pipe", stderr: "pipe" }
-    );
-    const headSha = (await new Response(revParseProc.stdout).text()).trim();
-    await revParseProc.exited;
+    const headSha = (await runGit(["-C", clonePath, "rev-parse", "HEAD"])).stdout.trim();
 
     // Update repo record
     await db
@@ -529,7 +510,7 @@ app.post("/:repoId/restore", async (c) => {
           const checkout = await clone.git(["checkout", sha, "--", targetPath]);
           if (checkout.exitCode !== 0) {
             return c.json(
-              { error: "Failed to restore path", details: checkout.stderr.trim() },
+              { error: "Failed to restore path", details: redactInternalPaths(checkout.stderr.trim()) },
               500
             );
           }
@@ -538,7 +519,7 @@ app.post("/:repoId/restore", async (c) => {
           const checkout = await clone.git(["checkout", sha, "--", "."]);
           if (checkout.exitCode !== 0) {
             return c.json(
-              { error: "Failed to restore tree", details: checkout.stderr.trim() },
+              { error: "Failed to restore tree", details: redactInternalPaths(checkout.stderr.trim()) },
               500
             );
           }
@@ -554,7 +535,7 @@ app.post("/:repoId/restore", async (c) => {
         const result = await commitAndPush(clone, message);
 
         if (result.error) {
-          return c.json({ error: "Restore failed", details: result.error }, 500);
+          return c.json({ error: "Restore failed", details: redactInternalPaths(result.error) }, 500);
         }
         if (!result.headSha) {
           // Nothing changed — already at this content.
@@ -695,7 +676,7 @@ app.post("/:repoId/copy", async (c) => {
         const message = `Copy ${sourcePath} to ${targetPath}`;
         const result = await commitAndPush(clone, message);
         if (result.error) {
-          return c.json({ error: "Copy failed", details: result.error }, 500);
+          return c.json({ error: "Copy failed", details: redactInternalPaths(result.error) }, 500);
         }
         if (!result.headSha) {
           return c.json({ error: "No changes — target already matches" }, 409);
@@ -776,82 +757,66 @@ app.delete("/:repoId", async (c) => {
 
   try {
     const clonePath = join(tmpDir, "repo");
-    const cloneProc = Bun.spawn(["git", "clone", repo.diskPath, clonePath], {
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    await cloneProc.exited;
+    // runGit forces GIT_LITERAL_PATHSPECS=1 so the user-supplied `targetPath`
+    // passed to ls-files / rm below is ALWAYS treated as a literal path, never
+    // pathspec magic (e.g. `:(glob)**`), and is timeout-guarded.
+    const cloneResult = await runGit(["clone", repo.diskPath, clonePath]);
 
-    if (cloneProc.exitCode !== 0) {
+    if (cloneResult.exitCode !== 0) {
       return c.json({ error: "Repository is empty" }, 404);
     }
 
-    const lsProc = Bun.spawn(
-      ["git", "-C", clonePath, "ls-files", "--", targetPath, `${targetPath}/`],
-      { stdout: "pipe", stderr: "pipe" }
-    );
-    const trackedMatches = (await new Response(lsProc.stdout).text())
-      .trim()
-      .split("\n")
-      .filter(Boolean);
-    await lsProc.exited;
+    const lsResult = await runGit([
+      "-C",
+      clonePath,
+      "ls-files",
+      "--",
+      targetPath,
+      `${targetPath}/`,
+    ]);
+    const trackedMatches = lsResult.stdout.trim().split("\n").filter(Boolean);
 
     if (trackedMatches.length === 0) {
       return c.json({ error: "File or directory not found" }, 404);
     }
 
-    await Bun.spawn(
-      ["git", "-C", clonePath, "config", "user.name", user.displayName],
-      { stdout: "pipe", stderr: "pipe" }
-    ).exited;
-    await Bun.spawn(
-      ["git", "-C", clonePath, "config", "user.email", user.email],
-      { stdout: "pipe", stderr: "pipe" }
-    ).exited;
+    await runGit(["-C", clonePath, "config", "user.name", user.displayName]);
+    await runGit(["-C", clonePath, "config", "user.email", user.email]);
 
-    const rmProc = Bun.spawn(
-      ["git", "-C", clonePath, "rm", "-r", "--", targetPath],
-      { stdout: "pipe", stderr: "pipe" }
-    );
-    const rmStderr = await new Response(rmProc.stderr).text();
-    await rmProc.exited;
+    const rmResult = await runGit(["-C", clonePath, "rm", "-r", "--", targetPath]);
 
-    if (rmProc.exitCode !== 0) {
-      return c.json({ error: "Git rm failed", details: rmStderr }, 500);
+    if (rmResult.exitCode !== 0) {
+      return c.json(
+        { error: "Git rm failed", details: redactInternalPaths(rmResult.stderr.trim()) },
+        500
+      );
     }
 
-    const commitProc = Bun.spawn(
-      ["git", "-C", clonePath, "commit", "-m", `Delete ${targetPath}`],
-      { stdout: "pipe", stderr: "pipe" }
-    );
-    const commitStdout = await new Response(commitProc.stdout).text();
-    const commitStderr = await new Response(commitProc.stderr).text();
-    await commitProc.exited;
+    const commitResult = await runGit([
+      "-C",
+      clonePath,
+      "commit",
+      "-m",
+      `Delete ${targetPath}`,
+    ]);
 
-    if (commitProc.exitCode !== 0) {
+    if (commitResult.exitCode !== 0) {
       return c.json({
         error: "Git commit failed",
-        details: `${commitStdout}\n${commitStderr}`.trim(),
+        details: redactInternalPaths(`${commitResult.stdout}\n${commitResult.stderr}`.trim()),
       }, 500);
     }
 
-    const pushProc = Bun.spawn(
-      ["git", "-C", clonePath, "push", "origin", "HEAD"],
-      { stdout: "pipe", stderr: "pipe" }
-    );
-    const pushStderr = await new Response(pushProc.stderr).text();
-    await pushProc.exited;
+    const pushResult = await runGit(["-C", clonePath, "push", "origin", "HEAD"]);
 
-    if (pushProc.exitCode !== 0) {
-      return c.json({ error: "Git push failed", details: pushStderr }, 500);
+    if (pushResult.exitCode !== 0) {
+      return c.json(
+        { error: "Git push failed", details: redactInternalPaths(pushResult.stderr.trim()) },
+        500
+      );
     }
 
-    const revParseProc = Bun.spawn(
-      ["git", "-C", clonePath, "rev-parse", "HEAD"],
-      { stdout: "pipe", stderr: "pipe" }
-    );
-    const headSha = (await new Response(revParseProc.stdout).text()).trim();
-    await revParseProc.exited;
+    const headSha = (await runGit(["-C", clonePath, "rev-parse", "HEAD"])).stdout.trim();
 
     await db
       .update(schema.repos)
@@ -913,6 +878,9 @@ async function readTrackedFiles(
         stdout: "pipe",
         stderr: "pipe",
         env: { ...process.env, GIT_LITERAL_PATHSPECS: "1" },
+        // Hard timeout so a runaway `git show` can't hang the request.
+        timeout: config.GIT_PROCESS_TIMEOUT_MS,
+        killSignal: "SIGKILL",
       }
     );
     const data = new Uint8Array(

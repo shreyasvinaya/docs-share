@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import { and, eq, isNull } from "drizzle-orm";
 import { db, schema } from "../db/index.js";
+import { config } from "../lib/config.js";
 import { hashToken } from "../lib/crypto.js";
 import type { AppEnv } from "../lib/types.js";
 
@@ -165,6 +166,8 @@ app.get("/:ownerType/:ownerId/info/refs", async (c) => {
   const proc = Bun.spawn([service, "--stateless-rpc", "--advertise-refs", repoPath], {
     stdout: "pipe",
     stderr: "pipe",
+    timeout: config.GIT_PROCESS_TIMEOUT_MS,
+    killSignal: "SIGKILL",
   });
 
   const output = await new Response(proc.stdout).arrayBuffer();
@@ -218,6 +221,8 @@ app.post("/:ownerType/:ownerId/git-upload-pack", async (c) => {
     stdin: new Uint8Array(body),
     stdout: "pipe",
     stderr: "pipe",
+    timeout: config.GIT_PROCESS_TIMEOUT_MS,
+    killSignal: "SIGKILL",
   });
 
   return new Response(proc.stdout, {
@@ -252,6 +257,8 @@ app.post("/:ownerType/:ownerId/git-receive-pack", async (c) => {
     stdin: new Uint8Array(body),
     stdout: "pipe",
     stderr: "pipe",
+    timeout: config.GIT_PROCESS_TIMEOUT_MS,
+    killSignal: "SIGKILL",
   });
 
   return new Response(proc.stdout, {

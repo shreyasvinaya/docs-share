@@ -1,5 +1,16 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import {
+  lstat,
+  mkdir,
+  mkdtemp,
+  readdir,
+  rm,
+  symlink,
+  writeFile,
+} from "fs/promises";
+import { join } from "path";
+import { tmpdir } from "os";
+import {
   filterGitHubTree,
   listGitHubAccessibleRepos,
   listGitHubBranches,
@@ -8,6 +19,7 @@ import {
   normalizeGitHubImportPath,
   normalizeGitHubRepoUrl,
   orderGitHubBranches,
+  prepareSelectedImport,
   redactSensitiveGitOutput,
 } from "./githubSync.js";
 
@@ -386,5 +398,70 @@ describe("filterGitHubTree", () => {
       { path: "docs/assets", name: "assets", type: "directory", size: null },
       { path: "docs/index.html", name: "index.html", type: "file", size: 120 },
     ]);
+  });
+});
+
+describe("prepareSelectedImport (symlink containment)", () => {
+  const dirs: string[] = [];
+
+  afterEach(async () => {
+    await Promise.all(dirs.map((d) => rm(d, { recursive: true, force: true })));
+    dirs.length = 0;
+  });
+
+  async function scratch(prefix: string): Promise<string> {
+    const dir = await mkdtemp(join(tmpdir(), prefix));
+    dirs.push(dir);
+    return dir;
+  }
+
+  /** List committed files in an import repo (excludes .git). */
+  async function importedFiles(importPath: string): Promise<string[]> {
+    const entries = await readdir(importPath, { recursive: true });
+    return entries.filter((e) => !e.startsWith(".git"));
+  }
+
+  test("does not materialize a symlink that escapes the clone", async () => {
+    const root = await scratch("ds-sym-root-");
+    const clonePath = join(root, "source");
+    const importPath = join(root, "import");
+    const outside = await scratch("ds-sym-outside-");
+    await writeFile(join(outside, "secret.txt"), "HOST SECRET");
+
+    await mkdir(join(clonePath, "docs"), { recursive: true });
+    await writeFile(join(clonePath, "docs", "ok.html"), "<p>ok</p>");
+    // A symlink inside the selected subtree pointing at the host secret.
+    await symlink(
+      join(outside, "secret.txt"),
+      join(clonePath, "docs", "escape.txt")
+    );
+
+    await prepareSelectedImport(clonePath, importPath, "docs");
+
+    const files = await importedFiles(importPath);
+    // The normal file came across; the symlink did NOT.
+    expect(files).toContain("ok.html");
+    expect(files).not.toContain("escape.txt");
+    // And nothing in the import tree is a symlink.
+    for (const f of files) {
+      const info = await lstat(join(importPath, f));
+      expect(info.isSymbolicLink()).toBe(false);
+    }
+  });
+
+  test("rejects when the selected path itself is a symlink escaping the clone", async () => {
+    const root = await scratch("ds-sym-root2-");
+    const clonePath = join(root, "source");
+    const importPath = join(root, "import");
+    const outside = await scratch("ds-sym-outside2-");
+    await mkdir(outside, { recursive: true });
+
+    await mkdir(clonePath, { recursive: true });
+    // The selected sourcePath resolves (via symlink) outside the clone.
+    await symlink(outside, join(clonePath, "docs"));
+
+    await expect(
+      prepareSelectedImport(clonePath, importPath, "docs")
+    ).rejects.toThrow();
   });
 });
