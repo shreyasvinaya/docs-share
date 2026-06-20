@@ -7,5 +7,8 @@ export interface AdminNavItem {
 
 export function getAdminNavItems(user: User | undefined): AdminNavItem[] {
   if (user?.role !== "sysadmin") return [];
-  return [{ label: "Setup", to: "/settings?tab=setup" }];
+  return [
+    { label: "Users", to: "/admin" },
+    { label: "Setup", to: "/settings?tab=setup" },
+  ];
 }

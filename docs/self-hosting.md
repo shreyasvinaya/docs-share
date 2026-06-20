@@ -67,6 +67,66 @@ Terminate TLS at your proxy and forward all paths to the app container:
 
 Make sure large request bodies are allowed if users upload large files.
 
+Forward the originating client IP so the built-in rate limiter can key on it.
+Most proxies do this automatically; otherwise set the standard headers:
+
+```nginx
+proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+proxy_set_header X-Real-IP $remote_addr;
+```
+
+### Custom Domains
+
+Full per-tenant TLS custom-domain automation is intentionally out of scope for
+the self-hosted build. Instead, point any custom domain at your reverse proxy
+and let the proxy terminate TLS for that hostname. The app itself does not need
+to know about the domain beyond the `APP_URL` / `API_URL` / `CONTENT_ORIGIN`
+values it was started with.
+
+To serve Docs Share on `docs.example.com`:
+
+1. Add a DNS `A`/`AAAA` (or `CNAME`) record for `docs.example.com` pointing at
+   the host running your reverse proxy.
+2. Issue a certificate for the domain. Caddy does this automatically; with
+   nginx use Certbot or your platform's ACME integration.
+3. Add a virtual host that terminates TLS and proxies all paths to the app
+   container, exactly as in the example above.
+4. Set `APP_URL=https://docs.example.com`, `API_URL=https://docs.example.com`,
+   and update `GOOGLE_REDIRECT_URI` to match, then restart the app.
+
+A minimal Caddy example that handles certificates automatically:
+
+```caddy
+docs.example.com {
+    reverse_proxy app:3000
+}
+
+content.example.com {
+    reverse_proxy app:3000
+}
+```
+
+Use a separate hostname (for example `content.example.com`) for
+`CONTENT_ORIGIN` so sandboxed draft HTML is served from a different origin than
+the app shell.
+
+### Rate Limiting
+
+The app ships with an in-memory fixed-window rate limiter on the public
+share/draft/view endpoints and on the auth/token endpoints. Defaults are
+generous; tune them with environment variables:
+
+- `RATE_LIMIT_ENABLED` (default `true`) — set to `false` if your proxy already
+  enforces limits.
+- `RATE_LIMIT_WINDOW_MS` (default `60000`) — window length in milliseconds.
+- `RATE_LIMIT_PUBLIC_MAX` (default `120`) — requests per window for public
+  read endpoints.
+- `RATE_LIMIT_AUTH_MAX` (default `20`) — requests per window for auth/token
+  endpoints.
+
+The limiter is per-process. For horizontally scaled deployments, prefer a
+shared limiter at the reverse proxy and set `RATE_LIMIT_ENABLED=false`.
+
 ## Upgrades
 
 1. Back up `DATA_DIR`.

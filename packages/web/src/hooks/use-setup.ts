@@ -23,6 +23,10 @@ export interface SetupStatus {
     githubApp: SetupCheck;
     githubPatFallback: SetupCheck;
   };
+  notifications: {
+    email: SetupCheck;
+    slack: SetupCheck;
+  };
   security: {
     productionSecrets: SetupCheck;
   };

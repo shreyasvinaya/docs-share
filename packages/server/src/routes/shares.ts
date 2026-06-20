@@ -2,6 +2,7 @@ import { Hono } from "hono";
 import { eq, and, isNull, inArray } from "drizzle-orm";
 import { db, schema } from "../db/index.js";
 import { requireAuth } from "../middleware/requireAuth.js";
+import { publicRateLimiter } from "../lib/rateLimiters.js";
 import { generateId, generatePublicToken, hashToken } from "../lib/crypto.js";
 import { config } from "../lib/config.js";
 import {
@@ -593,7 +594,7 @@ app.delete("/:shareId", requireAuth, async (c) => {
 /**
  * GET /public/:token — Resolve public share link metadata. No auth required.
  */
-app.get("/public/:token", async (c) => {
+app.get("/public/:token", publicRateLimiter, async (c) => {
   const token = c.req.param("token");
 
   const share = await db

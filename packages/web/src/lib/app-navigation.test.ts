@@ -15,8 +15,9 @@ function user(role: User["role"]): User {
 }
 
 describe("getAdminNavItems", () => {
-  test("shows setup navigation for sysadmins", () => {
+  test("shows admin navigation for sysadmins", () => {
     expect(getAdminNavItems(user("sysadmin"))).toEqual([
+      { label: "Users", to: "/admin" },
       { label: "Setup", to: "/settings?tab=setup" },
     ]);
   });

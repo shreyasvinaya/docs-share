@@ -27,6 +27,10 @@ export function SetupChecklist({ status }: SetupChecklistProps) {
       ],
     },
     {
+      title: "Notifications",
+      checks: [status.notifications.email, status.notifications.slack],
+    },
+    {
       title: "Security",
       checks: [status.security.productionSecrets],
     },

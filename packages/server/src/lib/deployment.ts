@@ -25,6 +25,9 @@ export interface DeploymentEnv {
   ENABLE_DEV_LOGIN?: string;
   SYSADMIN_EMAILS?: string;
   DEPLOYMENT_NAME?: string;
+  EMAIL_FROM?: string;
+  RESEND_API_KEY?: string;
+  SLACK_WEBHOOK_URL?: string;
 }
 
 export interface SetupCheck {
@@ -48,6 +51,10 @@ export interface SetupStatus {
   integrations: {
     githubApp: SetupCheck;
     githubPatFallback: SetupCheck;
+  };
+  notifications: {
+    email: SetupCheck;
+    slack: SetupCheck;
   };
   security: {
     productionSecrets: SetupCheck;
@@ -138,6 +145,18 @@ export function buildSetupStatus(env: DeploymentEnv): SetupStatus {
         githubPatFallbackConfigured,
         "GitHub PAT fallback",
         "Set GITHUB_TOKEN_SECRET so fallback tokens can be encrypted at rest."
+      ),
+    },
+    notifications: {
+      email: check(
+        Boolean(env.RESEND_API_KEY && env.EMAIL_FROM),
+        "Email notifications",
+        "Set RESEND_API_KEY and EMAIL_FROM to deliver share emails."
+      ),
+      slack: check(
+        Boolean(env.SLACK_WEBHOOK_URL),
+        "Slack notifications",
+        "Set SLACK_WEBHOOK_URL to post share notifications to Slack."
       ),
     },
     security: {

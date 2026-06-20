@@ -22,6 +22,13 @@ export const config = {
   WEB_DIST_DIR: env("WEB_DIST_DIR", ""),
   ALLOW_INSECURE_APP_URL: env("ALLOW_INSECURE_APP_URL", "false"),
 
+  // Rate limiting (in-memory fixed window, keyed by IP / API token). Disable
+  // when a shared limiter already lives at the reverse proxy.
+  RATE_LIMIT_ENABLED: env("RATE_LIMIT_ENABLED", "true") !== "false",
+  RATE_LIMIT_WINDOW_MS: parseInt(env("RATE_LIMIT_WINDOW_MS", "60000")),
+  RATE_LIMIT_PUBLIC_MAX: parseInt(env("RATE_LIMIT_PUBLIC_MAX", "120")),
+  RATE_LIMIT_AUTH_MAX: parseInt(env("RATE_LIMIT_AUTH_MAX", "20")),
+
   GOOGLE_CLIENT_ID: env("GOOGLE_CLIENT_ID", ""),
   GOOGLE_CLIENT_SECRET: env("GOOGLE_CLIENT_SECRET", ""),
   GOOGLE_REDIRECT_URI: env(

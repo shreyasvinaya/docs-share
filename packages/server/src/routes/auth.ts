@@ -8,6 +8,7 @@ import { generateId, generateApiToken } from "../lib/crypto.js";
 import { isProduction, safeNextPath } from "../lib/security.js";
 import { deploymentRoleForEmail, parseSysadminEmails } from "../lib/deployment.js";
 import { requireAuth } from "../middleware/requireAuth.js";
+import { authRateLimiter } from "../lib/rateLimiters.js";
 import { createBareRepo } from "../git/repoManager.js";
 import type { AppEnv } from "../lib/types.js";
 
@@ -36,7 +37,7 @@ const sysadminEmails = () => parseSysadminEmails(config.SYSADMIN_EMAILS);
 // ---------------------------------------------------------------------------
 // GET /google — Redirect to Google OAuth consent screen
 // ---------------------------------------------------------------------------
-app.get("/google", (c) => {
+app.get("/google", authRateLimiter, (c) => {
   const state = generateState();
   const codeVerifier = generateCodeVerifier();
   const scopes = ["openid", "email", "profile"];
@@ -76,7 +77,7 @@ app.get("/google", (c) => {
 // ---------------------------------------------------------------------------
 // GET /google/callback — Handle Google OAuth callback
 // ---------------------------------------------------------------------------
-app.get("/google/callback", async (c) => {
+app.get("/google/callback", authRateLimiter, async (c) => {
   const { code, state } = c.req.query();
   const storedState = getCookie(c, "oauth_state");
   const storedCodeVerifier = getCookie(c, "oauth_code_verifier");
@@ -214,7 +215,7 @@ app.get("/google/callback", async (c) => {
 // ---------------------------------------------------------------------------
 // POST /dev-login — Username/password fallback for development
 // ---------------------------------------------------------------------------
-app.post("/dev-login", async (c) => {
+app.post("/dev-login", authRateLimiter, async (c) => {
   if (isProduction() || process.env.ENABLE_DEV_LOGIN !== "true") {
     return c.json({ error: "Development login is disabled in production" }, 404);
   }
@@ -379,7 +380,7 @@ app.get("/session", requireAuth, async (c) => {
 // ---------------------------------------------------------------------------
 // POST /tokens — Create a new API token (requires auth)
 // ---------------------------------------------------------------------------
-app.post("/tokens", requireAuth, async (c) => {
+app.post("/tokens", authRateLimiter, requireAuth, async (c) => {
   const userId = c.get("userId");
   const body = await c.req.json<{
     name: string;
