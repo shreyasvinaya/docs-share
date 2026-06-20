@@ -11,7 +11,7 @@ import {
   sendShareEmailNotifications,
   sendSlackNotification,
 } from "../services/notifications.js";
-import { dispatchWebhookEvent } from "../services/webhooks.js";
+import { scheduleWebhookDispatch } from "../services/webhooks.js";
 import {
   aggregateViewStats,
   recordAuditEntrySafe,
@@ -91,7 +91,8 @@ async function notifyShareCreated(params: {
   const sharerName = creator?.displayName ?? creator?.email ?? "Someone";
   const resourceLabel = params.path || "All files";
 
-  await dispatchWebhookEvent({
+  // Fire-and-forget: a slow webhook endpoint must not delay the share response.
+  scheduleWebhookDispatch({
     ownerUserId: params.createdById,
     event: "share.created",
     data: {
@@ -729,7 +730,9 @@ app.delete("/:shareId", requireAuth, async (c) => {
 
   await db.delete(schema.shares).where(eq(schema.shares.id, shareId)).run();
 
-  await dispatchWebhookEvent({
+  // Fire-and-forget after the delete has committed: do not block the response
+  // on webhook delivery.
+  scheduleWebhookDispatch({
     ownerUserId: share.createdById,
     event: "share.revoked",
     data: {

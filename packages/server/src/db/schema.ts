@@ -408,7 +408,10 @@ export const webhookDeliveries = sqliteTable(
       .notNull()
       .default(sql`(CURRENT_TIMESTAMP)`),
   },
-  (table) => [index("webhook_deliveries_webhook_idx").on(table.webhookId)]
+  (table) => [
+    index("webhook_deliveries_webhook_idx").on(table.webhookId),
+    index("webhook_deliveries_created_at_idx").on(table.createdAt),
+  ]
 );
 
 export const githubSyncs = sqliteTable(

@@ -24,4 +24,5 @@ CREATE TABLE `webhook_deliveries` (
 	FOREIGN KEY (`webhook_id`) REFERENCES `webhooks`(`id`) ON UPDATE no action ON DELETE cascade
 );
 --> statement-breakpoint
-CREATE INDEX `webhook_deliveries_webhook_idx` ON `webhook_deliveries` (`webhook_id`);
+CREATE INDEX `webhook_deliveries_webhook_idx` ON `webhook_deliveries` (`webhook_id`);--> statement-breakpoint
+CREATE INDEX `webhook_deliveries_created_at_idx` ON `webhook_deliveries` (`created_at`);

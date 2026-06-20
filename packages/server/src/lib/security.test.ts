@@ -171,15 +171,28 @@ describe("isPrivateOrLoopbackHost", () => {
     expect(isPrivateOrLoopbackHost("::1")).toBe(true);
     expect(isPrivateOrLoopbackHost("[::1]")).toBe(true);
     expect(isPrivateOrLoopbackHost("fe80::1")).toBe(true);
+    expect(isPrivateOrLoopbackHost("fc00::1")).toBe(true);
     expect(isPrivateOrLoopbackHost("fd00::1")).toBe(true);
+    expect(isPrivateOrLoopbackHost("::")).toBe(true);
     expect(isPrivateOrLoopbackHost("::ffff:127.0.0.1")).toBe(true);
     expect(isPrivateOrLoopbackHost("")).toBe(true);
+  });
+
+  test("blocks IPv4-mapped IPv6 in hex-compressed and expanded forms (SSRF bypass)", () => {
+    // The bracketed-host normalization Node/Bun apply turns "[::ffff:127.0.0.1]"
+    // into the hex-compressed "::ffff:7f00:1" — both must be blocked.
+    expect(isPrivateOrLoopbackHost("::ffff:7f00:1")).toBe(true); // 127.0.0.1
+    expect(isPrivateOrLoopbackHost("::ffff:0a00:1")).toBe(true); // 10.0.0.1
+    expect(isPrivateOrLoopbackHost("::ffff:c0a8:1")).toBe(true); // 192.168.0.1
+    expect(isPrivateOrLoopbackHost("[::ffff:7f00:1]")).toBe(true);
+    expect(isPrivateOrLoopbackHost("0:0:0:0:0:ffff:7f00:1")).toBe(true); // expanded
   });
 
   test("allows routable public hosts", () => {
     expect(isPrivateOrLoopbackHost("example.com")).toBe(false);
     expect(isPrivateOrLoopbackHost("hooks.example.com")).toBe(false);
     expect(isPrivateOrLoopbackHost("8.8.8.8")).toBe(false);
+    expect(isPrivateOrLoopbackHost("93.184.216.34")).toBe(false);
     expect(isPrivateOrLoopbackHost("172.32.0.1")).toBe(false);
     expect(isPrivateOrLoopbackHost("2606:4700:4700::1111")).toBe(false);
   });

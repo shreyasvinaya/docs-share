@@ -4,6 +4,7 @@ import {
   buildWebhookPayload,
   deliverWebhook,
   generateWebhookSecret,
+  scheduleWebhookDispatch,
   signWebhookPayload,
   verifyWebhookSignature,
 } from "./webhooks.js";
@@ -206,5 +207,34 @@ describe("deliverWebhook SSRF / DNS-rebinding guard", () => {
     expect(requestSent).toBe(false);
     expect(outcome.status).toBe("failed");
     expect(outcome.error).toContain("validation");
+  });
+});
+
+describe("scheduleWebhookDispatch (fire-and-forget)", () => {
+  test("returns synchronously and never throws into the request path", () => {
+    // No webhooks exist for this owner, so dispatch resolves with no deliveries.
+    // The contract under test: scheduling returns a promise immediately and the
+    // caller (request handler) is never forced to await delivery, and errors —
+    // if any — are swallowed rather than propagated.
+    const result = scheduleWebhookDispatch({
+      ownerUserId: `nonexistent_${Date.now()}`,
+      event: "share.created",
+      data: { shareId: "sh_test" },
+    });
+    expect(result).toBeInstanceOf(Promise);
+    // The returned promise must resolve (never reject), even on internal error.
+    return expect(result).resolves.toBeUndefined();
+  });
+
+  test("does not reject even when dispatch lookup would fail", async () => {
+    // Owner id is irrelevant; any internal failure inside dispatch must be
+    // caught and logged, leaving the returned promise resolved.
+    await expect(
+      scheduleWebhookDispatch({
+        ownerUserId: "",
+        event: "github_sync.completed",
+        data: {},
+      })
+    ).resolves.toBeUndefined();
   });
 });

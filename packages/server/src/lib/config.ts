@@ -39,6 +39,25 @@ export function requiredPositiveInt(key: string, fallback: number): number {
   return parsed;
 }
 
+/**
+ * Like {@link requiredPositiveInt} but permits an explicit `0` so a feature can
+ * be disabled by setting its value to zero. Malformed or negative input still
+ * falls back to the documented default.
+ *
+ * @param key - Environment variable name.
+ * @param fallback - Documented default for missing/malformed input. Must be a
+ *   non-negative integer.
+ */
+export function nonNegativeInt(key: string, fallback: number): number {
+  const raw = process.env[key];
+  if (raw === undefined || raw.trim() === "") return fallback;
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed) || !Number.isInteger(parsed) || parsed < 0) {
+    return fallback;
+  }
+  return parsed;
+}
+
 export const config = {
   PORT: parseInt(env("PORT", "3000")),
   HOST: env("HOST", "0.0.0.0"),
@@ -119,6 +138,26 @@ export const config = {
   // Maximum number of retry attempts before a sync is marked terminally
   // `failed` and excluded from future retry sweeps.
   GITHUB_SYNC_MAX_RETRIES: requiredPositiveInt("GITHUB_SYNC_MAX_RETRIES", 5),
+
+  // Webhook delivery-log retention. The webhook_deliveries table is append-only
+  // and otherwise grows without bound, so a scheduler job prunes it.
+  // Cleanup interval (ms). Default: every 24 hours. Set to 0 to disable the job.
+  WEBHOOK_CLEANUP_INTERVAL_MS: nonNegativeInt(
+    "WEBHOOK_CLEANUP_INTERVAL_MS",
+    86400000
+  ),
+  // Delete delivery rows older than this many days. Default: 30. Set to 0 to
+  // disable age-based pruning (the per-hook cap still applies).
+  WEBHOOK_DELIVERY_RETENTION_DAYS: nonNegativeInt(
+    "WEBHOOK_DELIVERY_RETENTION_DAYS",
+    30
+  ),
+  // Additionally keep at most this many delivery rows per webhook, even within
+  // the retention window. Default: 1000. Set to 0 to disable the per-hook cap.
+  WEBHOOK_DELIVERY_MAX_PER_HOOK: nonNegativeInt(
+    "WEBHOOK_DELIVERY_MAX_PER_HOOK",
+    1000
+  ),
 };
 
 assertProductionSecret("SESSION_SECRET", config.SESSION_SECRET);

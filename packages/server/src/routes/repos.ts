@@ -15,7 +15,7 @@ import {
   syncGitHubRepo,
 } from "../services/githubSync.js";
 import { getUserGitHubCredential, getUserGitHubToken } from "./users.js";
-import { dispatchWebhookEvent } from "../services/webhooks.js";
+import { scheduleWebhookDispatch } from "../services/webhooks.js";
 import type { AppEnv } from "../lib/types.js";
 
 const app = new Hono<AppEnv>();
@@ -208,7 +208,9 @@ app.post("/:repoId/github-sync", checkAccess("write"), async (c) => {
       .where(eq(schema.githubSyncs.repoId, repoId))
       .get();
 
-    await dispatchWebhookEvent({
+    // Fire-and-forget after the sync row has committed: webhook delivery must
+    // not delay the sync response.
+    scheduleWebhookDispatch({
       ownerUserId: userId,
       event: "github_sync.completed",
       data: {

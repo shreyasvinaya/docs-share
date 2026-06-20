@@ -1,6 +1,6 @@
 import { createHmac, randomBytes, timingSafeEqual } from "crypto";
-import { request as httpsRequest } from "https";
-import { request as httpRequest, type IncomingMessage } from "http";
+import { Agent as HttpsAgent, request as httpsRequest } from "https";
+import { Agent as HttpAgent, request as httpRequest, type IncomingMessage } from "http";
 import type { LookupFunction } from "net";
 import { eq } from "drizzle-orm";
 import { db, schema } from "../db/index.js";
@@ -114,12 +114,40 @@ const defaultSendPinnedRequest: PinnedRequestSender = (req) => {
       );
     };
 
+    // A PER-REQUEST agent with keepAlive:false and the pinned lookup. We must
+    // NOT use the global/default agent: with keep-alive it can hand back a
+    // pooled socket that was opened by an earlier request, bypassing our pinned
+    // lookup entirely and defeating the anti-rebinding pin. A fresh, non-pooled
+    // agent guarantees the lookup runs and the socket connects to the pinned IP.
+    const agent = isHttps
+      ? new HttpsAgent({ keepAlive: false, lookup: pinnedLookup })
+      : new HttpAgent({ keepAlive: false, lookup: pinnedLookup });
+
+    let settled = false;
+    const cleanup = () => {
+      // Tear down the agent (and any sockets it owns) once we're done so we
+      // never leak connections; keepAlive:false means there is nothing to pool.
+      agent.destroy();
+    };
+    const finish = (value: PinnedResponse) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      resolvePromise(value);
+    };
+    const fail = (error: Error) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      reject(error);
+    };
+
     const options = {
       method: "POST",
       headers: req.headers,
-      // Preserve cert validation against the real hostname for TLS.
+      // Preserve cert validation against the real hostname for TLS (SNI).
       servername: isHttps ? req.url.hostname : undefined,
-      lookup: pinnedLookup,
+      agent,
       timeout: REQUEST_TIMEOUT_MS,
     };
 
@@ -128,13 +156,13 @@ const defaultSendPinnedRequest: PinnedRequestSender = (req) => {
       const code = res.statusCode ?? 0;
       if (code >= 300 && code < 400) {
         res.resume();
-        reject(new Error(`Webhook redirect not allowed (status ${code})`));
+        fail(new Error(`Webhook redirect not allowed (status ${code})`));
         return;
       }
       // Drain and discard the body; we only care about the status code.
       res.resume();
-      res.on("end", () => resolvePromise({ statusCode: code }));
-      res.on("error", reject);
+      res.on("end", () => finish({ statusCode: code }));
+      res.on("error", fail);
     };
 
     const clientReq = isHttps
@@ -144,7 +172,7 @@ const defaultSendPinnedRequest: PinnedRequestSender = (req) => {
     clientReq.on("timeout", () => {
       clientReq.destroy(new Error("Webhook request timed out"));
     });
-    clientReq.on("error", reject);
+    clientReq.on("error", fail);
     clientReq.write(req.body);
     clientReq.end();
   });
@@ -334,4 +362,43 @@ export async function dispatchWebhookEvent(params: {
       }
     })
   );
+}
+
+/**
+ * Fire-and-forget wrapper around {@link dispatchWebhookEvent}. Schedules
+ * delivery WITHOUT awaiting it so the request handler can return immediately:
+ * a slow or hanging webhook endpoint (up to MAX_ATTEMPTS x REQUEST_TIMEOUT_MS)
+ * must never delay the user-facing response.
+ *
+ * Call this AFTER the originating DB mutation has committed. All errors —
+ * including any thrown synchronously while scheduling — are caught and logged
+ * internally so nothing ever propagates into the request path.
+ *
+ * Returns the in-flight delivery promise so tests can optionally await
+ * completion; production callers ignore it.
+ */
+export function scheduleWebhookDispatch(params: {
+  ownerUserId: string;
+  event: WebhookEvent;
+  data: Record<string, unknown>;
+}): Promise<void> {
+  let pending: Promise<void>;
+  try {
+    pending = dispatchWebhookEvent(params);
+  } catch (error) {
+    // dispatchWebhookEvent is async and should not throw synchronously, but
+    // guard anyway so a programming error can never reach the request path.
+    console.warn(
+      "Webhook dispatch scheduling failed",
+      error instanceof Error ? error.message : String(error)
+    );
+    return Promise.resolve();
+  }
+
+  return pending.catch((error) => {
+    console.warn(
+      "Webhook dispatch failed",
+      error instanceof Error ? error.message : String(error)
+    );
+  });
 }

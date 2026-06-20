@@ -1,5 +1,6 @@
 import { isAbsolute, relative, resolve } from "path";
 import { lookup as dnsLookup } from "dns/promises";
+import ipaddr from "ipaddr.js";
 
 const INSECURE_SECRET_VALUES = new Set([
   "dev-secret-change-in-production",
@@ -73,20 +74,110 @@ export function resolveInside(baseDir: string, relativePath: string): string | n
   return null;
 }
 
+/** Strip surrounding IPv6 brackets, e.g. "[::1]" -> "::1". */
+function stripBrackets(host: string): string {
+  if (host.startsWith("[") && host.endsWith("]")) {
+    return host.slice(1, -1);
+  }
+  return host;
+}
+
+// IPv4 ranges that must never be reached by an outbound webhook. ipaddr.js'
+// `range()` classifies an IPv4 address into exactly one of these named ranges.
+const BLOCKED_IPV4_RANGES = new Set([
+  "unspecified", // 0.0.0.0/8
+  "broadcast", // 255.255.255.255
+  "private", // 10/8, 172.16/12, 192.168/16
+  "carrierGradeNat", // 100.64/10
+  "loopback", // 127/8
+  "linkLocal", // 169.254/16
+  "multicast", // 224/4
+  "reserved", // 240/4 and other reserved blocks
+  "benchmarking", // 198.18/15
+  "as112", // 192.175.48/24
+]);
+
+// IPv6 ranges that must never be reached. Note: an IPv4-mapped/translated IPv6
+// (ipv4Mapped, rfc6145, rfc6052, 6to4, teredo) is decoded to its embedded IPv4
+// and re-checked against BLOCKED_IPV4_RANGES rather than being judged here, so
+// "::ffff:7f00:1" (== ::ffff:127.0.0.1) is correctly blocked.
+const BLOCKED_IPV6_RANGES = new Set([
+  "unspecified", // ::
+  "linkLocal", // fe80::/10
+  "multicast", // ff00::/8
+  "loopback", // ::1
+  "uniqueLocal", // fc00::/7 (fc.. / fd..)
+  "reserved", // various reserved
+  "benchmarking", // 2001:2::/48
+  "as112v6", // 2001:4:112::/48
+  "orchid2", // 2001:20::/28
+]);
+
 /**
- * Returns true when `hostname` resolves to a loopback, link-local, private, or
- * otherwise non-routable address. Used to block SSRF against internal services
- * for user-controlled outbound webhook URLs. Handles IPv4, IPv6 (including
- * IPv4-mapped forms), and obvious internal hostnames.
+ * Returns true when `ip` is a parsed IP literal pointing at a loopback,
+ * link-local, private, unique-local, CGNAT, multicast, reserved, or otherwise
+ * non-routable address. IPv4-mapped / translated IPv6 forms are decoded to the
+ * embedded IPv4 and re-checked, so both the dotted (`::ffff:127.0.0.1`) and the
+ * hex-compressed (`::ffff:7f00:1`) IPv4-mapped representations are caught.
+ */
+function isBlockedIpAddress(ip: ipaddr.IPv4 | ipaddr.IPv6): boolean {
+  if (ip.kind() === "ipv4") {
+    return BLOCKED_IPV4_RANGES.has(ip.range());
+  }
+
+  const ipv6 = ip as ipaddr.IPv6;
+  const range = ipv6.range();
+
+  // IPv4-mapped (::ffff:a.b.c.d / ::ffff:7f00:1). Decode and re-check as IPv4.
+  if (ipv6.isIPv4MappedAddress()) {
+    return BLOCKED_IPV4_RANGES.has(ipv6.toIPv4Address().range());
+  }
+
+  // Other IPv6-embedded-IPv4 transition mechanisms — decode the embedded v4 and
+  // block if it is non-routable.
+  if (range === "rfc6145" || range === "rfc6052" || range === "6to4" || range === "teredo") {
+    try {
+      return BLOCKED_IPV4_RANGES.has(ipv6.toIPv4Address().range());
+    } catch {
+      // Some of these ranges are not always convertible; fall back to blocking
+      // the transition range outright to stay safe.
+      return true;
+    }
+  }
+
+  return BLOCKED_IPV6_RANGES.has(range);
+}
+
+/**
+ * Parse `host` as an IP literal (IPv4 or IPv6, brackets already stripped) and
+ * return the parsed address, or null when it is not an IP literal (i.e. it is a
+ * DNS hostname). Uses ipaddr.js so every representation — dotted, hex,
+ * compressed, expanded, and IPv4-mapped — is handled uniformly.
+ */
+function parseIpLiteral(host: string): ipaddr.IPv4 | ipaddr.IPv6 | null {
+  if (!ipaddr.isValid(host)) return null;
+  try {
+    return ipaddr.parse(host);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Returns true when `hostname` is a loopback, link-local, private, unique-local,
+ * CGNAT, multicast, reserved, or otherwise non-routable address. Used to block
+ * SSRF against internal services for user-controlled outbound webhook URLs.
+ *
+ * IP literals are parsed with ipaddr.js and classified by range, covering IPv4,
+ * IPv6, expanded/compressed forms, and IPv4-mapped IPv6 in BOTH dotted
+ * (`::ffff:127.0.0.1`) and hex-compressed (`::ffff:7f00:1`) representations —
+ * the latter is what Node/Bun normalize a bracketed IPv6 host into, so it must
+ * be blocked too. Obvious internal hostnames are matched by suffix.
  */
 export function isPrivateOrLoopbackHost(hostname: string): boolean {
   if (!hostname) return true;
 
-  let host = hostname.trim().toLowerCase();
-  // Strip IPv6 brackets, e.g. "[::1]"
-  if (host.startsWith("[") && host.endsWith("]")) {
-    host = host.slice(1, -1);
-  }
+  const host = stripBrackets(hostname.trim().toLowerCase());
 
   if (
     host === "localhost" ||
@@ -97,49 +188,12 @@ export function isPrivateOrLoopbackHost(hostname: string): boolean {
     return true;
   }
 
-  const ipv4 = parseIpv4(host);
-  if (ipv4) return isPrivateIpv4(ipv4);
+  const ip = parseIpLiteral(host);
+  if (ip) return isBlockedIpAddress(ip);
 
-  if (host.includes(":")) {
-    // IPv6. Handle IPv4-mapped addresses like ::ffff:127.0.0.1.
-    const lastSegment = host.split(":").pop() ?? "";
-    const mappedIpv4 = parseIpv4(lastSegment);
-    if (mappedIpv4) return isPrivateIpv4(mappedIpv4);
-
-    if (host === "::1" || host === "::") return true; // loopback / unspecified
-    if (host.startsWith("fe80")) return true; // link-local
-    if (host.startsWith("fc") || host.startsWith("fd")) return true; // unique local
-    return false;
-  }
-
-  // Unresolved hostname (not an IP literal): allow — runtime fetch still goes
-  // through the network and we cannot resolve here without a DNS dependency.
-  return false;
-}
-
-function parseIpv4(value: string): [number, number, number, number] | null {
-  const parts = value.split(".");
-  if (parts.length !== 4) return null;
-  const octets: number[] = [];
-  for (const part of parts) {
-    if (!/^\d{1,3}$/.test(part)) return null;
-    const num = Number(part);
-    if (num > 255) return null;
-    octets.push(num);
-  }
-  return octets as [number, number, number, number];
-}
-
-function isPrivateIpv4(octets: [number, number, number, number]): boolean {
-  const [a, b] = octets;
-  if (a === 0) return true; // 0.0.0.0/8 (this host)
-  if (a === 10) return true; // 10.0.0.0/8
-  if (a === 127) return true; // loopback
-  if (a === 169 && b === 254) return true; // link-local
-  if (a === 172 && b >= 16 && b <= 31) return true; // 172.16.0.0/12
-  if (a === 192 && b === 168) return true; // 192.168.0.0/16
-  if (a === 100 && b >= 64 && b <= 127) return true; // 100.64.0.0/10 (CGNAT)
-  if (a >= 224) return true; // multicast + reserved
+  // Unresolved hostname (not an IP literal): allow here — the DNS-resolution
+  // step (resolveAndValidateHost) is responsible for validating every address
+  // the name actually resolves to.
   return false;
 }
 
@@ -199,20 +253,16 @@ export async function resolveAndValidateHost(
   hostname: string,
   lookupAll: DnsLookupAll = defaultDnsLookupAll
 ): Promise<ResolvedAddress[]> {
-  let host = hostname.trim();
-  if (host.startsWith("[") && host.endsWith("]")) {
-    host = host.slice(1, -1);
-  }
+  const host = stripBrackets(hostname.trim());
 
   // IP literals skip DNS but are still validated directly.
   if (isPrivateOrLoopbackHost(host)) {
     throw new Error(`Host resolves to a non-routable address: ${hostname}`);
   }
 
-  const ipv4 = parseIpv4(host);
-  const isIpLiteral = ipv4 !== null || host.includes(":");
-  if (isIpLiteral) {
-    return [{ address: host, family: host.includes(":") ? 6 : 4 }];
+  const ip = parseIpLiteral(host);
+  if (ip) {
+    return [{ address: host, family: ip.kind() === "ipv6" ? 6 : 4 }];
   }
 
   const addresses = await lookupAll(host);
