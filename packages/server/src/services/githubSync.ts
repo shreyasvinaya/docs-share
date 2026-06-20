@@ -42,6 +42,13 @@ export interface GitHubOrganizationOption {
   avatarUrl: string | null;
 }
 
+export type GitHubCredentialType = "pat" | "github_app";
+
+export interface GitHubCredential {
+  token: string;
+  type: GitHubCredentialType;
+}
+
 const RECOMMENDED_BRANCH_ORDER = [
   "main",
   "master",
@@ -167,13 +174,18 @@ export function filterGitHubTree(
 }
 
 export async function listGitHubAccessibleRepos(
-  token: string,
+  credential: GitHubCredential | string,
   ownerLogin = ""
 ): Promise<GitHubRepositoryOption[]> {
+  const { token, type } = normalizeCredential(credential);
   if (!token.trim()) return [];
   const normalizedOwnerLogin = normalizeGitHubOwnerLogin(ownerLogin);
   if (normalizedOwnerLogin === null) {
     throw new Error("Invalid GitHub organization name");
+  }
+
+  if (type === "github_app") {
+    return listGitHubInstallationRepos(token, normalizedOwnerLogin);
   }
 
   const repos: GitHubRepositoryOption[] = [];
@@ -229,9 +241,15 @@ export async function listGitHubAccessibleRepos(
 }
 
 export async function listGitHubOrganizations(
-  token: string
+  credential: GitHubCredential | string
 ): Promise<GitHubOrganizationOption[]> {
+  const { token, type } = normalizeCredential(credential);
   if (!token.trim()) return [];
+
+  if (type === "github_app") {
+    const accessibleRepos = await listGitHubAccessibleRepos({ token, type });
+    return organizationsFromRepos(accessibleRepos);
+  }
 
   const organizations = new Map<string, GitHubOrganizationOption>();
   try {
@@ -264,15 +282,11 @@ export async function listGitHubOrganizations(
     // for what the connected token can actually import.
   }
 
-  const accessibleRepos = await listGitHubAccessibleRepos(token);
-  for (const repo of accessibleRepos) {
-    const key = repo.ownerLogin.toLowerCase();
+  const accessibleRepos = await listGitHubAccessibleRepos({ token, type });
+  for (const organization of organizationsFromRepos(accessibleRepos)) {
+    const key = organization.login.toLowerCase();
     if (!key || organizations.has(key)) continue;
-    organizations.set(key, {
-      login: repo.ownerLogin,
-      description: null,
-      avatarUrl: null,
-    });
+    organizations.set(key, organization);
   }
 
   return [...organizations.values()].sort((a, b) => a.login.localeCompare(b.login));
@@ -481,6 +495,79 @@ async function createGitAuthEnv(
 
 async function mkdirp(path: string): Promise<void> {
   await Bun.$`mkdir -p ${path}`.quiet();
+}
+
+async function listGitHubInstallationRepos(
+  token: string,
+  ownerLogin: string
+): Promise<GitHubRepositoryOption[]> {
+  const repos: GitHubRepositoryOption[] = [];
+  for (let page = 1; page <= MAX_GITHUB_PAGES; page += 1) {
+    const url = new URL("https://api.github.com/installation/repositories");
+    url.searchParams.set("per_page", "100");
+    url.searchParams.set("page", String(page));
+
+    const res = await fetch(url, { headers: githubApiHeaders(token) });
+    if (!res.ok) {
+      throw new Error(`GitHub repository lookup failed: ${res.status} ${res.statusText}`);
+    }
+
+    const body = (await res.json()) as {
+      repositories?: {
+        full_name?: string;
+        clone_url?: string;
+        default_branch?: string;
+        private?: boolean;
+        pushed_at?: string | null;
+        updated_at?: string | null;
+        owner?: { login?: string };
+      }[];
+    };
+    const pageRepos = body.repositories ?? [];
+    for (const repo of pageRepos) {
+      if (!repo.full_name || !repo.clone_url || !repo.default_branch) continue;
+      const normalizedUrl = normalizeGitHubRepoUrl(repo.clone_url);
+      const repoOwnerLogin = repo.owner?.login ?? repo.full_name.split("/")[0] ?? "";
+      if (!normalizedUrl) continue;
+      if (ownerLogin && repoOwnerLogin.toLowerCase() !== ownerLogin.toLowerCase()) {
+        continue;
+      }
+      repos.push({
+        fullName: repo.full_name,
+        repoUrl: normalizedUrl,
+        defaultBranch: repo.default_branch,
+        private: Boolean(repo.private),
+        pushedAt: repo.pushed_at ?? null,
+        updatedAt: repo.updated_at ?? null,
+        ownerLogin: repoOwnerLogin,
+      });
+    }
+
+    if (pageRepos.length < 100) break;
+  }
+
+  return repos;
+}
+
+function organizationsFromRepos(
+  repos: GitHubRepositoryOption[]
+): GitHubOrganizationOption[] {
+  const organizations = new Map<string, GitHubOrganizationOption>();
+  for (const repo of repos) {
+    const key = repo.ownerLogin.toLowerCase();
+    if (!key || organizations.has(key)) continue;
+    organizations.set(key, {
+      login: repo.ownerLogin,
+      description: null,
+      avatarUrl: null,
+    });
+  }
+  return [...organizations.values()].sort((a, b) => a.login.localeCompare(b.login));
+}
+
+function normalizeCredential(credential: GitHubCredential | string): GitHubCredential {
+  if (typeof credential === "string") return { token: credential, type: "pat" };
+  return credential;
 }
 
 function parseGitHubRepo(normalizedUrl: string): { owner: string; repo: string } {

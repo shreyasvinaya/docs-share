@@ -14,6 +14,7 @@ import draftRoutes, { renderDraftPage, serveDraftContent } from "./routes/drafts
 import shareRoutes from "./routes/shares.js";
 import internalRoutes from "./routes/internal.js";
 import viewRoutes from "./routes/view.js";
+import setupRoutes from "./routes/setup.js";
 import gitRoutes from "./git/smartHttp.js";
 import { ensureRepoDir } from "./git/repoManager.js";
 import { openApiSpec } from "./docs/openapi.js";
@@ -40,6 +41,7 @@ app.route("/api/repos", repoRoutes);
 app.route("/api/files", fileRoutes);
 app.route("/api/drafts", draftRoutes);
 app.route("/api/shares", shareRoutes);
+app.route("/api/setup", setupRoutes);
 
 app.route("/git", gitRoutes);
 app.route("/internal", internalRoutes);

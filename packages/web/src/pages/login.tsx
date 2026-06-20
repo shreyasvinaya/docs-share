@@ -1,8 +1,10 @@
 import { useState } from "react";
 import { useNavigate, useSearchParams } from "react-router";
 import { buildGoogleAuthHref, safeClientNext } from "@/lib/next-url";
+import { useDeploymentName } from "@/hooks/use-setup";
 
 export function LoginPage() {
+  const deploymentName = useDeploymentName();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
@@ -60,7 +62,7 @@ export function LoginPage() {
                 />
               </svg>
             </div>
-            <h1 className="text-xl font-bold">docs-share</h1>
+            <h1 className="text-xl font-bold">{deploymentName}</h1>
             <p className="mt-1 text-sm text-muted-foreground">
               Share and preview HTML docs with your team
             </p>

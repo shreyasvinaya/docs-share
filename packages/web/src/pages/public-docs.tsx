@@ -7,6 +7,7 @@ import {
   searchDocs,
   type DocsSearchResult,
 } from "@/lib/docs-search";
+import { useDeploymentName } from "@/hooks/use-setup";
 import deploymentDoc from "../../../../docs/deployment.md?raw";
 import selfHostingDoc from "../../../../docs/self-hosting.md?raw";
 import productGuideDoc from "../../../../docs/product-guide.md?raw";
@@ -464,12 +465,14 @@ function MarkdownDoc({ markdown }: { markdown: string }) {
 }
 
 function PublicDocsLayout({ children }: { children: ReactNode }) {
+  const deploymentName = useDeploymentName();
+
   return (
     <main className="min-h-screen bg-background text-foreground">
       <header className="border-b border-border">
         <div className="mx-auto flex max-w-6xl items-center justify-between px-5 py-4">
           <Link to="/" className="font-semibold">
-            docs-share
+            {deploymentName}
           </Link>
           <nav className="flex items-center gap-2 text-sm">
             <Link
@@ -565,6 +568,8 @@ function DocsSearch() {
 }
 
 function DocsIndexPage() {
+  const deploymentName = useDeploymentName();
+
   return (
     <PublicDocsLayout>
       <section className="border-b border-border">
@@ -573,7 +578,7 @@ function DocsIndexPage() {
             Product docs
           </p>
           <h1 className="max-w-3xl text-4xl font-semibold leading-tight">
-            Run, use, and extend docs-share.
+            Run, use, and extend {deploymentName}.
           </h1>
           <p className="mt-4 max-w-3xl text-base leading-7 text-muted-foreground">
             Choose a guide. Each guide is its own page, with normal headings,
