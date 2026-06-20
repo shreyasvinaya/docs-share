@@ -6,6 +6,7 @@ export const userSchema = z.object({
   displayName: z.string(),
   designation: z.string().nullable().optional(),
   avatarUrl: z.string().url().nullable(),
+  role: z.enum(["user", "sysadmin"]).default("user"),
   createdAt: z.string(),
 });
 

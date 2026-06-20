@@ -193,6 +193,50 @@ describe("listGitHubAccessibleRepos", () => {
       },
     ]);
   });
+
+  test("uses installation repositories for GitHub App credentials", async () => {
+    const requestedUrls: string[] = [];
+    globalThis.fetch = (async (input, init) => {
+      requestedUrls.push(String(input));
+      expect((init?.headers as Record<string, string>).Authorization).toBe(
+        "Bearer installation-token"
+      );
+      return new Response(
+        JSON.stringify({
+          repositories: [
+            {
+              full_name: "acme/app-private-docs",
+              clone_url: "https://github.com/acme/app-private-docs.git",
+              default_branch: "main",
+              private: true,
+              pushed_at: "2026-06-12T10:00:00Z",
+              updated_at: "2026-06-12T12:00:00Z",
+              owner: { login: "acme" },
+            },
+          ],
+        }),
+        { status: 200 }
+      );
+    }) as typeof fetch;
+
+    await expect(
+      listGitHubAccessibleRepos({
+        token: "installation-token",
+        type: "github_app",
+      })
+    ).resolves.toEqual([
+      {
+        fullName: "acme/app-private-docs",
+        repoUrl: "https://github.com/acme/app-private-docs.git",
+        defaultBranch: "main",
+        private: true,
+        pushedAt: "2026-06-12T10:00:00Z",
+        updatedAt: "2026-06-12T12:00:00Z",
+        ownerLogin: "acme",
+      },
+    ]);
+    expect(requestedUrls[0]).toContain("/installation/repositories?");
+  });
 });
 
 describe("listGitHubOrganizations", () => {

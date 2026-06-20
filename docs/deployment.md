@@ -41,6 +41,8 @@ HOST=0.0.0.0
 APP_URL=https://docs.example.com
 API_URL=https://docs.example.com
 CONTENT_ORIGIN=https://content.docs.example.com
+DEPLOYMENT_NAME="Example Docs"
+SYSADMIN_EMAILS=admin@example.com
 GOOGLE_REDIRECT_URI=https://docs.example.com/api/auth/google/callback
 
 DATA_DIR=/data
@@ -57,6 +59,9 @@ GOOGLE_CLIENT_SECRET=replace-me
 
 # Optional integrations.
 GITHUB_TOKEN_SECRET=replace-with-32-plus-random-characters
+GITHUB_APP_ID=
+GITHUB_APP_SLUG=
+GITHUB_APP_PRIVATE_KEY=
 EMAIL_FROM="docs-share <notifications@docs.example.com>"
 RESEND_API_KEY=
 SLACK_WEBHOOK_URL=

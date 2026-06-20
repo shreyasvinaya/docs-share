@@ -20,5 +20,5 @@ export function getGitHubPrivateRepoNotice(params: {
   const scope = params.ownerFilter
     ? ` for ${params.ownerFilter}`
     : "";
-  return `GitHub is only returning public repositories${scope}. If you expected private repositories, update the PAT with private repository access and authorize organization access or SSO.`;
+  return `GitHub is only returning public repositories${scope}. If you expected private repositories, update the GitHub App repository access and confirm organization approval or SSO.`;
 }
