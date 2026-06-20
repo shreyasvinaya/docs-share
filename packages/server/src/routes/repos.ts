@@ -13,8 +13,10 @@ import {
   normalizeGitBranch,
   normalizeGitHubImportPath,
   normalizeGitHubRepoUrl,
+  redactSensitiveGitOutput,
   syncGitHubRepo,
 } from "../services/githubSync.js";
+import { redactInternalPaths } from "../lib/security.js";
 import { getUserGitHubCredential, getUserGitHubToken } from "./users.js";
 import { scheduleWebhookDispatch } from "../services/webhooks.js";
 import type { AppEnv } from "../lib/types.js";
@@ -289,7 +291,16 @@ app.post("/:repoId/github-sync", requireRepoWideWrite, async (c) => {
 
     return c.json({ data: sync }, 201);
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
+    const rawMessage = error instanceof Error ? error.message : String(error);
+    // Strip embedded credentials AND server-internal filesystem paths before
+    // this message is persisted to the github_syncs row and returned to the
+    // client. (Most git failures are already sanitized at the source, but other
+    // errors — and the fallback `git <args> failed` text — can still embed the
+    // temp clone path or repo.diskPath.) Full detail is kept server-side.
+    if (error instanceof Error) {
+      console.error("GitHub sync failed:", error);
+    }
+    const message = redactInternalPaths(redactSensitiveGitOutput(rawMessage));
     const failedAt = new Date().toISOString();
     await db
       .update(schema.githubSyncs)

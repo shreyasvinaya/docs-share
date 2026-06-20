@@ -6,7 +6,11 @@ import { canReadRepoPath } from "../middleware/shareAccess.js";
 import { publicRateLimiter } from "../lib/rateLimiters.js";
 import { config } from "../lib/config.js";
 import { hashToken } from "../lib/crypto.js";
-import { normalizeRelativePath, resolveInside } from "../lib/security.js";
+import {
+  normalizeRelativePath,
+  resolveInside,
+  resolveRealPathInside,
+} from "../lib/security.js";
 import {
   isHtmlContentType,
   recordViewFromRequest,
@@ -102,10 +106,23 @@ async function serveFile(
   relativePath: string,
   requestPath?: string
 ) {
-  const resolvedPath = resolveInside(worktreeBase, relativePath);
-  if (!resolvedPath) {
+  // Lexical containment first (cheap, rejects `..`/absolute/pathspec-magic),
+  // then symlink-aware containment: a symlink materialized inside the worktree
+  // passes lexical containment but realpath-resolves to an absolute HOST path
+  // (the server .env, the SQLite DB, /etc/passwd, another tenant's worktree).
+  // `resolveRealPathInside` denies that, so we 404 instead of streaming it.
+  const lexical = resolveInside(worktreeBase, relativePath);
+  if (!lexical) {
     return new Response(JSON.stringify({ error: "Invalid path" }), {
       status: 400,
+      headers: { "Content-Type": "application/json" },
+    });
+  }
+
+  const resolvedPath = await resolveRealPathInside(worktreeBase, relativePath);
+  if (!resolvedPath) {
+    return new Response(JSON.stringify({ error: "File not found" }), {
+      status: 404,
       headers: { "Content-Type": "application/json" },
     });
   }
@@ -117,14 +134,14 @@ async function serveFile(
         return Response.redirect(`${requestPath}/`, 308);
       }
 
-      const indexPath = resolveInside(
+      const indexPath = await resolveRealPathInside(
         worktreeBase,
         relativePath ? `${relativePath}/index.html` : "index.html"
       );
 
       if (!indexPath) {
-        return new Response(JSON.stringify({ error: "Invalid path" }), {
-          status: 400,
+        return new Response(JSON.stringify({ error: "Directory index not found" }), {
+          status: 404,
           headers: { "Content-Type": "application/json" },
         });
       }

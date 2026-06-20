@@ -1,6 +1,7 @@
 import { and, eq, lt } from "drizzle-orm";
 import { db, schema } from "../db/index.js";
 import { config } from "../lib/config.js";
+import { redactInternalPaths } from "../lib/security.js";
 import { getUserGitHubToken } from "../routes/users.js";
 import {
   redactSensitiveGitOutput,
@@ -42,7 +43,8 @@ export interface SyncRetryResult {
  *   - otherwise it stays in `error` for the next sweep.
  *
  * Any error text persisted on the row is passed through
- * {@link redactSensitiveGitOutput} first so embedded tokens never land in the
+ * {@link redactSensitiveGitOutput} AND {@link redactInternalPaths} first so
+ * neither embedded tokens nor server-internal filesystem paths land in the
  * database. Rows whose repo no longer exists are skipped (their sync row is
  * removed by the repo cascade anyway).
  *
@@ -114,8 +116,10 @@ export async function retryFailedGitHubSyncs(
       succeeded += 1;
     } catch (error) {
       const rawMessage = error instanceof Error ? error.message : String(error);
-      // Redact any embedded credentials before the message is persisted.
-      const message = redactSensitiveGitOutput(rawMessage);
+      // Redact embedded credentials AND server-internal filesystem paths
+      // (temp clone dirs, repo.diskPath) before the message is persisted and
+      // later surfaced to the client.
+      const message = redactInternalPaths(redactSensitiveGitOutput(rawMessage));
       const nextRetryCount = sync.retryCount + 1;
       // Once the attempt budget is exhausted, move to the terminal `failed`
       // status so the sweep no longer selects this row.

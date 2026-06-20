@@ -746,6 +746,83 @@ describe("path-scoped share authorization on file routes", () => {
   });
 });
 
+describe("git pathspec-magic is neutralized (treated literally) on file routes", () => {
+  test("DELETE with `:(glob)**` matches nothing and deletes nothing outside the path", async () => {
+    const ownerId = await seedUser("Owner");
+    const token = await seedToken(ownerId);
+    // Two top-level areas; a pathspec-magic glob would match BOTH if git
+    // interpreted it. GIT_LITERAL_PATHSPECS=1 forces it to be a literal
+    // (non-existent) filename, so it matches NOTHING.
+    const { repoId, diskPath } = await seedRepoWithFiles(ownerId, {
+      "docs/page.html": "<p>docs</p>",
+      "root.html": "<p>root</p>",
+    });
+
+    // FIX 5: `:`-leading paths are now accepted by the normalizer (they are
+    // legitimate filenames). The pathspec is disarmed at the git layer instead,
+    // so the literal name doesn't exist -> 404, and NOTHING is deleted.
+    for (const magic of [":(glob)**", ":(top)", ":(exclude)docs", ":/"]) {
+      const res = await routeApp.request(
+        `/api/files/${repoId}?path=${encodeURIComponent(magic)}`,
+        { method: "DELETE", headers: authHeaders(token) }
+      );
+      expect(res.status).toBe(404);
+    }
+
+    // Nothing was deleted: BOTH files are still present at HEAD.
+    expect(await readFileAtHead(diskPath, "docs/page.html")).toBe("<p>docs</p>");
+    expect(await readFileAtHead(diskPath, "root.html")).toBe("<p>root</p>");
+
+    // The file index is untouched too.
+    const indexed = await db
+      .select()
+      .from(schema.files)
+      .where(inArray(schema.files.repoId, [repoId]))
+      .all();
+    expect(indexed.map((f) => f.path).sort()).toEqual([
+      "docs/page.html",
+      "root.html",
+    ]);
+  });
+
+  test("commits with a pathspec-magic ?path matches nothing (literal), returning no commits", async () => {
+    const ownerId = await seedUser("Owner");
+    const token = await seedToken(ownerId);
+    const { repoId } = await seedRepoWithFiles(ownerId, {
+      "docs/page.html": "<p>docs</p>",
+      "root.html": "<p>root</p>",
+    });
+
+    const res = await routeApp.request(
+      `/api/files/${repoId}/commits?path=${encodeURIComponent(":(glob)**")}`,
+      { headers: authHeaders(token) }
+    );
+    // The path is now accepted by the normalizer but, treated literally by git
+    // (GIT_LITERAL_PATHSPECS=1), matches no tracked file, so the log is empty —
+    // it never widens to the whole repo.
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { data: unknown[] };
+    expect(body.data).toEqual([]);
+  });
+
+  test("a scoped DELETE still works for a legitimate path", async () => {
+    const ownerId = await seedUser("Owner");
+    const token = await seedToken(ownerId);
+    const { repoId, diskPath } = await seedRepoWithFiles(ownerId, {
+      "docs/page.html": "<p>docs</p>",
+      "root.html": "<p>root</p>",
+    });
+
+    const res = await routeApp.request(
+      `/api/files/${repoId}?path=docs/page.html`,
+      { method: "DELETE", headers: authHeaders(token) }
+    );
+    expect(res.status).toBe(200);
+    // Only the targeted file is gone; the sibling remains.
+    expect(await readFileAtHead(diskPath, "root.html")).toBe("<p>root</p>");
+  });
+});
+
 describe("file listing treats the path prefix literally (LIKE wildcards)", () => {
   test("a read share scoped to literal `a_b` does not list sibling `axb`", async () => {
     const ownerId = await seedUser("Owner");

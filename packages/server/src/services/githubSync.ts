@@ -1,8 +1,10 @@
-import { cp, mkdtemp, readdir, rm, writeFile } from "fs/promises";
+import { cp, lstat, mkdtemp, readdir, realpath, rm, writeFile } from "fs/promises";
 import { tmpdir } from "os";
-import { basename, join } from "path";
+import { basename, join, relative, resolve, sep } from "path";
 import { eq } from "drizzle-orm";
 import { db, schema } from "../db/index.js";
+import { redactInternalPaths } from "../lib/security.js";
+import { spawnWithTimeout } from "../git/gitOps.js";
 import {
   extractRepoFiles,
   indexRepoFiles,
@@ -435,29 +437,63 @@ export async function syncGitHubRepo(
   }
 }
 
-async function prepareSelectedImport(
+export async function prepareSelectedImport(
   clonePath: string,
   importPath: string,
   sourcePath: string
 ): Promise<string> {
-  const source = join(clonePath, sourcePath);
-  const sourceFile = Bun.file(source);
-  const exists = await sourceFile.exists();
-  if (!exists) throw new Error("Selected GitHub path was not found");
+  // Containment + symlink rejection. A symlink anywhere on the selected path
+  // (the leaf OR any intermediate directory component) could redirect the copy
+  // at an in-repo OR host file (the server .env, the SQLite DB, /etc/passwd,
+  // another tenant's worktree). We therefore `lstat` the ORIGINAL selected path
+  // and every component leading to it BEFORE resolving any realpath, and reject
+  // the moment a symlink is seen. Only after the original path is proven
+  // symlink-free do we realpath it to confirm containment.
+  const realCloneRoot = await realpath(clonePath);
+  const source = join(realCloneRoot, sourcePath);
+
+  // lstat the literal selected path (no symlink following). Reject a missing
+  // path or a symlinked leaf.
+  let stat: Awaited<ReturnType<typeof lstat>>;
+  try {
+    stat = await lstat(source);
+  } catch {
+    throw new Error("Selected GitHub path was not found");
+  }
+  if (stat.isSymbolicLink()) {
+    throw new Error("Selected GitHub path is a symlink and cannot be imported");
+  }
+
+  // Walk every intermediate directory component from the clone root down to the
+  // selected path; if ANY is a symlink, reject (it could redirect the copy).
+  await assertNoSymlinkComponents(realCloneRoot, source);
+
+  // Now that the literal path is symlink-free, realpath is a no-op redirect and
+  // serves purely to re-confirm lexical+real containment.
+  const realSource = await realpath(source);
+  if (!isInside(realCloneRoot, realSource)) {
+    throw new Error("Selected GitHub path escapes the repository");
+  }
 
   await mkdirp(importPath);
-  const stat = await sourceFile.stat();
   if (stat.isDirectory()) {
     const entries = await readdir(source);
     for (const entry of entries) {
       if (entry === ".git") continue;
-      await cp(join(source, entry), join(importPath, entry), {
-        recursive: true,
-        force: true,
-      });
+      await copyWithoutSymlinks(
+        join(source, entry),
+        join(importPath, entry),
+        realCloneRoot
+      );
     }
+  } else if (stat.isFile()) {
+    await copyWithoutSymlinks(
+      source,
+      join(importPath, basename(source)),
+      realCloneRoot
+    );
   } else {
-    await cp(source, join(importPath, basename(source)), { force: true });
+    throw new Error("Selected GitHub path is not a regular file or directory");
   }
 
   await runGit(["-C", importPath, "init"]);
@@ -466,6 +502,72 @@ async function prepareSelectedImport(
   await runGit(["-C", importPath, "add", "."]);
   await runGit(["-C", importPath, "commit", "-m", `Import ${sourcePath}`]);
   return importPath;
+}
+
+/**
+ * Reject if any path component between `base` (exclusive) and `target`
+ * (inclusive of intermediate directories, exclusive of the already-checked
+ * leaf) is a symlink. `lstat`s each component literally so a symlinked
+ * directory in the middle of the selected path cannot redirect the traversal.
+ */
+async function assertNoSymlinkComponents(
+  base: string,
+  target: string
+): Promise<void> {
+  const rel = relative(base, target);
+  if (!rel || rel.startsWith("..")) return;
+  const segments = rel.split(sep).filter(Boolean);
+  // Check every intermediate component (the leaf itself is checked by callers).
+  let current = base;
+  for (let i = 0; i < segments.length - 1; i++) {
+    current = join(current, segments[i]);
+    const info = await lstat(current);
+    if (info.isSymbolicLink()) {
+      throw new Error("Selected GitHub path traverses a symlink and cannot be imported");
+    }
+  }
+}
+
+/** True when `candidate` is `base` or lives inside it (both absolute). */
+function isInside(base: string, candidate: string): boolean {
+  const rel = relative(resolve(base), resolve(candidate));
+  return rel === "" || (!rel.startsWith("..") && !rel.startsWith("/"));
+}
+
+/**
+ * Recursively copy `src` to `dest`, REJECTING any symlink entry so the imported
+ * (and ultimately committed) tree contains no symlinks. Regular files/dirs are
+ * copied; a symlink — at the leaf OR any directory component, pointing inside OR
+ * outside the clone — is skipped. Each entry is `lstat`'d (never followed)
+ * before recursing, and real sources are re-verified to stay within `cloneRoot`.
+ */
+async function copyWithoutSymlinks(
+  src: string,
+  dest: string,
+  cloneRoot: string
+): Promise<void> {
+  const info = await lstat(src);
+  if (info.isSymbolicLink()) {
+    // Drop symlinks entirely; never materialize them in the import tree —
+    // regardless of whether the target is inside or outside the clone.
+    return;
+  }
+  if (info.isDirectory()) {
+    // Guard against a real directory that resolves outside the clone.
+    const realDir = await realpath(src);
+    if (!isInside(cloneRoot, realDir)) return;
+    await mkdirp(dest);
+    const entries = await readdir(src);
+    for (const entry of entries) {
+      if (entry === ".git") continue;
+      await copyWithoutSymlinks(join(src, entry), join(dest, entry), cloneRoot);
+    }
+    return;
+  }
+  if (!info.isFile()) return; // skip sockets/fifos/devices
+  const realFile = await realpath(src);
+  if (!isInside(cloneRoot, realFile)) return;
+  await cp(src, dest, { force: true });
 }
 
 async function createGitAuthEnv(
@@ -593,33 +695,41 @@ function githubApiHeaders(token?: string): Record<string, string> {
   return headers;
 }
 
+/**
+ * Sanitize a git failure message before it leaves the server (it is thrown,
+ * persisted to the github_syncs row, and returned to the client). Strips
+ * embedded credentials AND server-internal filesystem paths — the fallback
+ * `git <args> failed` text embeds full temp-clone paths and `repo.diskPath`,
+ * which would otherwise leak the host's directory layout. Server-side console
+ * logging may still keep the full detail.
+ */
+export function sanitizeGitError(message: string): string {
+  return redactInternalPaths(redactSensitiveGitOutput(message));
+}
+
 async function runGit(args: string[], env?: Record<string, string>): Promise<void> {
-  const proc = Bun.spawn(["git", ...args], {
-    stdout: "pipe",
-    stderr: "pipe",
-    env: env ? { ...process.env, ...env } : process.env,
+  // Run via the shared process-group timeout helper so a runaway git AND its
+  // children (git-remote-https, helpers) are killed as a unit, not orphaned.
+  // GIT_LITERAL_PATHSPECS is forced so user-controlled paths/branches passed to
+  // git can never be reinterpreted as pathspec magic.
+  const result = await spawnWithTimeout(["git", ...args], {
+    env: { ...process.env, ...(env ?? {}), GIT_LITERAL_PATHSPECS: "1" },
   });
-  const stderr = await new Response(proc.stderr).text();
-  await proc.exited;
-  if (proc.exitCode !== 0) {
+  if (result.exitCode !== 0) {
     throw new Error(
-      redactSensitiveGitOutput(stderr.trim() || `git ${args.join(" ")} failed`)
+      sanitizeGitError(result.stderr.trim() || `git ${args.join(" ")} failed`)
     );
   }
 }
 
 async function gitOutput(args: string[]): Promise<string> {
-  const proc = Bun.spawn(["git", ...args], {
-    stdout: "pipe",
-    stderr: "pipe",
+  const result = await spawnWithTimeout(["git", ...args], {
+    env: { ...process.env, GIT_LITERAL_PATHSPECS: "1" },
   });
-  const stdout = await new Response(proc.stdout).text();
-  const stderr = await new Response(proc.stderr).text();
-  await proc.exited;
-  if (proc.exitCode !== 0) {
+  if (result.exitCode !== 0) {
     throw new Error(
-      redactSensitiveGitOutput(stderr.trim() || `git ${args.join(" ")} failed`)
+      sanitizeGitError(result.stderr.trim() || `git ${args.join(" ")} failed`)
     );
   }
-  return stdout.trim();
+  return result.stdout.trim();
 }

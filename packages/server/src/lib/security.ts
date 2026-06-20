@@ -1,5 +1,7 @@
 import { isAbsolute, relative, resolve } from "path";
 import { lookup as dnsLookup } from "dns/promises";
+import { realpath } from "fs/promises";
+import { homedir, tmpdir } from "os";
 import ipaddr from "ipaddr.js";
 
 const INSECURE_SECRET_VALUES = new Set([
@@ -56,6 +58,12 @@ export function normalizeRelativePath(input: string | null | undefined): string 
     return null;
   }
 
+  // NB: A leading `:` segment (which git would otherwise read as pathspec
+  // "magic" like `:(glob)**` / `:(top)` / `:!`) is intentionally NOT rejected
+  // here — `:notes.md` and `docs/:draft.md` are legitimate filenames. Pathspec
+  // interpretation is neutralized at the git call sites instead, where every
+  // user-path invocation forces `GIT_LITERAL_PATHSPECS=1` so a colon is always
+  // treated as a literal character, never magic.
   return segments.join("/");
 }
 
@@ -72,6 +80,75 @@ export function resolveInside(baseDir: string, relativePath: string): string | n
   }
 
   return null;
+}
+
+/**
+ * Returns true when `candidate` is lexically inside `base` (or equal to it).
+ * Both are expected to be absolute, already-resolved paths.
+ */
+function isPathInside(base: string, candidate: string): boolean {
+  const rel = relative(base, candidate);
+  return rel === "" || (!rel.startsWith("..") && !isAbsolute(rel));
+}
+
+/**
+ * Lexical containment (via {@link resolveInside}) PLUS symlink-aware
+ * containment: after computing the in-base candidate path, the REAL path is
+ * resolved with `fs.realpath` and verified to still live inside `baseDir`.
+ *
+ * This is the defense that {@link resolveInside} alone cannot provide: a symlink
+ * materialized inside the worktree passes lexical containment yet points at an
+ * absolute host path (e.g. `/etc/passwd`, the server `.env`, the SQLite DB, or
+ * another tenant's worktree). Resolving the real path and re-checking closes
+ * that escape.
+ *
+ * Non-existent leaf paths are handled gracefully: when the candidate itself does
+ * not exist, the nearest existing ancestor is realpath-resolved instead, so a
+ * legitimate 404 still reaches the caller (rather than being misclassified) and
+ * a symlinked *ancestor* directory is still caught.
+ *
+ * Returns the real, contained absolute path, or null when the input is invalid
+ * or the real path escapes the base directory.
+ */
+export async function resolveRealPathInside(
+  baseDir: string,
+  relativePath: string
+): Promise<string | null> {
+  const candidate = resolveInside(baseDir, relativePath);
+  if (candidate === null) return null;
+
+  // Resolve the base through symlinks too, so the containment comparison is
+  // apples-to-apples (e.g. on macOS /var is itself a symlink to /private/var).
+  const realBase = await realpath(resolve(baseDir)).catch(() => resolve(baseDir));
+
+  // Walk up to the nearest existing path component so a not-yet-created leaf
+  // doesn't defeat the check, while a symlinked ancestor is still resolved.
+  let existing = candidate;
+  // eslint-disable-next-line no-constant-condition
+  while (true) {
+    try {
+      const real = await realpath(existing);
+      if (!isPathInside(realBase, real)) return null;
+      if (existing === candidate) {
+        // Leaf itself exists: return its real (symlink-resolved) path.
+        return real;
+      }
+      // An ancestor existed and is contained; project the remaining
+      // (non-existent) suffix onto the ancestor's real path and re-check. A
+      // non-existent leaf stays non-null (callers stat() it and 404), while an
+      // escape via a symlinked ancestor is rejected.
+      const suffix = relative(existing, candidate);
+      const projected = resolve(real, suffix);
+      return isPathInside(realBase, projected) ? projected : null;
+    } catch {
+      const parent = resolve(existing, "..");
+      if (parent === existing) {
+        // Reached the filesystem root without finding an existing path.
+        return null;
+      }
+      existing = parent;
+    }
+  }
 }
 
 /** Strip surrounding IPv6 brackets, e.g. "[::1]" -> "::1". */
@@ -296,4 +373,61 @@ export function safeNextPath(next: string | null | undefined): string | null {
     if (code < 32 || code === 127 || code === 92) return null; // control char, DEL, or backslash
   }
   return next;
+}
+
+/** Escape a string for safe inclusion in a RegExp. */
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+/**
+ * Strip absolute filesystem paths from a string that is about to be returned to
+ * a client. Raw git/process stderr routinely embeds server-internal paths (the
+ * configured DATA_DIR, the OS temp dir where clones land, the home dir), which
+ * leak the host's directory layout. This replaces those prefixes — and any
+ * remaining bare absolute paths — with a `[path]` placeholder.
+ *
+ * Server-side logging should keep the full detail; only client-facing strings
+ * should pass through this. The base directories default to the runtime
+ * DATA_DIR (via env), the OS temp dir, and the home dir, but are injectable for
+ * tests.
+ */
+export function redactInternalPaths(
+  output: string,
+  baseDirs: string[] = [
+    resolve(process.env.DATA_DIR ?? "./data"),
+    tmpdir(),
+    homedir(),
+  ]
+): string {
+  let result = output;
+
+  // Replace known internal base dirs (longest first so nested matches win).
+  // Each match also greedily consumes any trailing path component, so a full
+  // path like `${DATA_DIR}/worktrees/repo123/x` collapses to a single `[path]`
+  // (not `[path]/worktrees/repo123/x`).
+  const dirs = [...new Set(baseDirs.filter(Boolean).map((d) => resolve(d)))].sort(
+    (a, b) => b.length - a.length
+  );
+  for (const dir of dirs) {
+    result = result.replace(
+      new RegExp(`${escapeRegExp(dir)}(?:/[\\w.@%+-]+)*`, "g"),
+      "[path]"
+    );
+  }
+
+  // Catch any remaining absolute-looking POSIX paths (e.g. a stray /var/... or
+  // /private/tmp/... not covered above). The leading slash MUST sit at a
+  // boundary — start-of-string, whitespace, a quote, `=`, `(`, or the `]` that
+  // closes a `[path]` placeholder — so the path component of a URL (e.g.
+  // `https://github.com/a/b`) is NOT eaten: there the slash is preceded by `:`
+  // (from `://`) or another path char, never a boundary. Matches at least one
+  // path segment containing a slash, so ordinary text like "/" or sentences are
+  // left alone.
+  result = result.replace(
+    /(^|[\s'"=`(\]])(\/(?:[\w.@%+-]+\/)+[\w.@%+-]*)/g,
+    (_match, boundary: string) => `${boundary}[path]`
+  );
+
+  return result;
 }
