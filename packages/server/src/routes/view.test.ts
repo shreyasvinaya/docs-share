@@ -4,12 +4,27 @@ import { eq, inArray } from "drizzle-orm";
 import { mkdir, rm, writeFile } from "fs/promises";
 import { db, schema } from "../db/index.js";
 import { config } from "../lib/config.js";
+import { viewAwareSecureHeaders } from "../middleware/securityHeaders.js";
 import type { AppEnv } from "../lib/types.js";
 import viewRoutes from "./view.js";
 
 // No session middleware → simulates an unauthenticated visitor.
 const anonApp = new Hono<AppEnv>();
 anonApp.route("/view", viewRoutes);
+
+/**
+ * App built the way `index.ts` builds it: the SAME global security-headers
+ * middleware (`viewAwareSecureHeaders`) runs ahead of the mounted `/view`
+ * routes. This is the only stack that exercises the interaction between the
+ * global `secureHeaders()` (which rewrites every header AFTER the handler
+ * returns and would otherwise clobber CORP back to `same-origin`) and the
+ * `/view` routes, so the CORP regression (sandboxed opaque-origin docs must
+ * still be able to load their own sibling assets) is only catchable here, not
+ * in a route-only app.
+ */
+const fullStackApp = new Hono<AppEnv>();
+fullStackApp.use("*", viewAwareSecureHeaders());
+fullStackApp.route("/view", viewRoutes);
 
 const cleanup = {
   shareIds: [] as string[],
@@ -146,6 +161,74 @@ async function seedPublicShareWithFiles(): Promise<{
 }
 
 /**
+ * Seed a public share over a directory worktree that contains a multi-file
+ * bundle: an HTML page that links a sibling .css/.js, plus a standalone .svg.
+ * Lets us assert both the sandbox CSP on active documents and that inert
+ * sibling assets still resolve.
+ */
+async function seedPublicShareBundle(): Promise<{
+  token: string;
+  shareId: string;
+}> {
+  const userId = testId("user");
+  const repoId = testId("repo");
+  const shareId = testId("share");
+  const token = testId("tok");
+
+  await db.insert(schema.users).values({
+    id: userId,
+    email: `${userId}@example.com`,
+    displayName: "Owner",
+    googleId: `g_${userId}`,
+  });
+  await db.insert(schema.repos).values({
+    id: repoId,
+    ownerType: "user",
+    ownerUserId: userId,
+    diskPath: `/tmp/${repoId}.git`,
+  });
+  await db.insert(schema.shares).values({
+    id: shareId,
+    repoId,
+    path: null,
+    createdById: userId,
+    shareType: "public_link",
+    publicToken: token,
+    linkAccess: "public",
+  });
+
+  const worktreeBase = `${config.DATA_DIR}/worktrees/${repoId}`;
+  await mkdir(worktreeBase, { recursive: true });
+  await writeFile(
+    `${worktreeBase}/index.html`,
+    `<!doctype html><html><head><link rel="stylesheet" href="app.css"><script src="app.js"></script></head><body>hi</body></html>`
+  );
+  await writeFile(`${worktreeBase}/app.css`, "body { color: red; }");
+  await writeFile(`${worktreeBase}/app.js`, "console.log('hi');");
+  await writeFile(
+    `${worktreeBase}/logo.svg`,
+    `<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script></svg>`
+  );
+  await writeFile(
+    `${worktreeBase}/page.xhtml`,
+    `<?xml version="1.0"?><html xmlns="http://www.w3.org/1999/xhtml"><body>hi</body></html>`
+  );
+  // A directory whose only index is an .xhtml document (directory-index path).
+  await mkdir(`${worktreeBase}/sub`, { recursive: true });
+  await writeFile(
+    `${worktreeBase}/sub/index.xhtml`,
+    `<?xml version="1.0"?><html xmlns="http://www.w3.org/1999/xhtml"><body>sub</body></html>`
+  );
+
+  cleanup.userIds.push(userId);
+  cleanup.repoIds.push(repoId);
+  cleanup.shareIds.push(shareId);
+  cleanup.viewTargets.push(shareId);
+  cleanup.worktreeDirs.push(worktreeBase);
+  return { token, shareId };
+}
+
+/**
  * Seed a repo whose worktree has docs/page.html and root.html, and grant
  * `recipientEmail`'s user a READ share scoped to `sharePath` (null = whole repo).
  * Returns the repoId and the recipient userId.
@@ -198,6 +281,10 @@ async function seedRepoWithScopedReadShare(sharePath: string | null): Promise<{
   await mkdir(`${worktreeBase}/docs`, { recursive: true });
   await writeFile(`${worktreeBase}/docs/page.html`, "<html>docs</html>");
   await writeFile(`${worktreeBase}/root.html`, "<html>root</html>");
+  await writeFile(
+    `${worktreeBase}/page.xhtml`,
+    `<?xml version="1.0"?><html xmlns="http://www.w3.org/1999/xhtml"><body>root</body></html>`
+  );
 
   cleanup.userIds.push(ownerId, recipientId);
   cleanup.repoIds.push(repoId);
@@ -350,5 +437,157 @@ describe("org-restricted public link gate", () => {
     expect(location).toContain("/share-gate");
     expect(location).toContain(`next=${encodeURIComponent(`/view/public/${token}`)}`);
     expect(location).toContain("domain=acme.com");
+  });
+});
+
+describe("served-document sandbox isolation (XSS containment)", () => {
+  test("HTML responses are served into an opaque origin via sandbox CSP", async () => {
+    const { token } = await seedPublicShareBundle();
+    const res = await anonApp.request(`/view/public/${token}/index.html`);
+
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toContain("text/html");
+
+    const csp = res.headers.get("content-security-policy") ?? "";
+    // Opaque-origin sandbox is the critical control: scripts may run, but the
+    // document can never act with the host's same-origin privileges.
+    expect(csp).toContain("sandbox allow-scripts");
+    expect(csp).not.toContain("allow-same-origin");
+    // The document cannot make ANY network request, so it cannot reach the API
+    // origin (no credentialed fetch('/api/...'), no exfiltration).
+    expect(csp).toContain("connect-src 'none'");
+    // nosniff is retained.
+    expect(res.headers.get("x-content-type-options")).toBe("nosniff");
+  });
+
+  test("SVG responses are sandboxed too (SVG can carry inline script)", async () => {
+    const { token } = await seedPublicShareBundle();
+    const res = await anonApp.request(`/view/public/${token}/logo.svg`);
+
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toContain("image/svg+xml");
+
+    const csp = res.headers.get("content-security-policy") ?? "";
+    expect(csp).toContain("sandbox allow-scripts");
+    expect(csp).not.toContain("allow-same-origin");
+    expect(csp).toContain("connect-src 'none'");
+    expect(res.headers.get("x-content-type-options")).toBe("nosniff");
+  });
+
+  test("inert sibling assets in a bundle still resolve and are NOT sandboxed", async () => {
+    const { token } = await seedPublicShareBundle();
+
+    // A linked stylesheet sibling still loads under the sandbox (the browser,
+    // not privileged script, fetches it).
+    const css = await anonApp.request(`/view/public/${token}/app.css`);
+    expect(css.status).toBe(200);
+    expect(css.headers.get("content-type")).toContain("text/css");
+    expect(css.headers.get("content-security-policy") ?? "").not.toContain(
+      "sandbox"
+    );
+
+    // A linked script sibling still loads as well.
+    const js = await anonApp.request(`/view/public/${token}/app.js`);
+    expect(js.status).toBe(200);
+    expect(js.headers.get("content-type")).toContain("application/javascript");
+    expect(js.headers.get("content-security-policy") ?? "").not.toContain(
+      "sandbox"
+    );
+  });
+
+  test("authenticated repo HTML views are sandboxed too", async () => {
+    const { repoId, recipientId } = await seedRepoWithScopedReadShare(null);
+    const res = await authedAppAs(recipientId).request(
+      `/view/${repoId}/root.html`
+    );
+
+    expect(res.status).toBe(200);
+    const csp = res.headers.get("content-security-policy") ?? "";
+    expect(csp).toContain("sandbox allow-scripts");
+    expect(csp).not.toContain("allow-same-origin");
+    expect(csp).toContain("connect-src 'none'");
+  });
+});
+
+describe("xhtml documents are treated as active documents (sandboxed)", () => {
+  test("public .xhtml is served as application/xhtml+xml and sandboxed", async () => {
+    const { token } = await seedPublicShareBundle();
+    const res = await anonApp.request(`/view/public/${token}/page.xhtml`);
+
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toContain("application/xhtml+xml");
+
+    const csp = res.headers.get("content-security-policy") ?? "";
+    expect(csp).toContain("sandbox allow-scripts");
+    expect(csp).not.toContain("allow-same-origin");
+    expect(csp).toContain("connect-src 'none'");
+    expect(res.headers.get("x-content-type-options")).toBe("nosniff");
+  });
+
+  test("authenticated repo .xhtml is sandboxed", async () => {
+    const { repoId, recipientId } = await seedRepoWithScopedReadShare(null);
+    const res = await authedAppAs(recipientId).request(
+      `/view/${repoId}/page.xhtml`
+    );
+
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toContain("application/xhtml+xml");
+
+    const csp = res.headers.get("content-security-policy") ?? "";
+    expect(csp).toContain("sandbox allow-scripts");
+    expect(csp).not.toContain("allow-same-origin");
+    expect(csp).toContain("connect-src 'none'");
+  });
+
+  test("directory-index .xhtml (index.xhtml) is served and sandboxed", async () => {
+    const { token } = await seedPublicShareBundle();
+    // Request the directory; serveFile resolves its index.xhtml.
+    const res = await anonApp.request(`/view/public/${token}/sub/`);
+
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toContain("application/xhtml+xml");
+
+    const csp = res.headers.get("content-security-policy") ?? "";
+    expect(csp).toContain("sandbox allow-scripts");
+    expect(csp).not.toContain("allow-same-origin");
+    expect(csp).toContain("connect-src 'none'");
+  });
+});
+
+describe("full middleware stack: CORP lets opaque-origin bundles load siblings", () => {
+  test("served .html is sandboxed AND carries CORP cross-origin (overriding global same-origin)", async () => {
+    const { token } = await seedPublicShareBundle();
+    const res = await fullStackApp.request(`/view/public/${token}/index.html`);
+
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toContain("text/html");
+
+    // Sandbox containment still holds through the real middleware stack.
+    const csp = res.headers.get("content-security-policy") ?? "";
+    expect(csp).toContain("sandbox allow-scripts");
+    expect(csp).not.toContain("allow-same-origin");
+
+    // The document is an opaque origin, so its OWN siblings are cross-origin
+    // relative to it. CORP must be `cross-origin` (NOT the global
+    // `same-origin`) or the browser blocks the bundle's assets in production.
+    expect(res.headers.get("cross-origin-resource-policy")).toBe("cross-origin");
+  });
+
+  test("sibling .js is served with CORP cross-origin so the opaque-origin doc can load it", async () => {
+    const { token } = await seedPublicShareBundle();
+    const res = await fullStackApp.request(`/view/public/${token}/app.js`);
+
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toContain("application/javascript");
+    expect(res.headers.get("cross-origin-resource-policy")).toBe("cross-origin");
+  });
+
+  test("sibling .css is served with CORP cross-origin so the opaque-origin doc can load it", async () => {
+    const { token } = await seedPublicShareBundle();
+    const res = await fullStackApp.request(`/view/public/${token}/app.css`);
+
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toContain("text/css");
+    expect(res.headers.get("cross-origin-resource-policy")).toBe("cross-origin");
   });
 });
