@@ -109,6 +109,48 @@ file tree, history, or share dialog.
 Open **Drafts** in the authenticated web app to search owner drafts, open a
 draft URL, copy its URL, or delete the draft record and stored HTML.
 
+## Collecting Form Responses From Hosted Pages
+
+Hosted drafts (and user-owned repos) can collect form submissions back into
+docs-share. Collection is **opt-in per collection name** — a draft only accepts
+submissions to a collection its owner has explicitly enabled.
+
+Workflow:
+
+1. Open **Drafts → Forms** for a draft in the authenticated web app.
+2. Enable a collection name (a safe slug such as `contact` or `rsvp`).
+3. Have the hosted page POST JSON to the public ingestion endpoint:
+
+   ```js
+   await fetch(
+     "https://docs.example.com/api/sites/draft:<draftId>/data/contact",
+     {
+       method: "POST",
+       headers: { "Content-Type": "application/json" },
+       body: JSON.stringify({ name: "Ada", email: "ada@example.com" }),
+     }
+   );
+   ```
+
+4. View, filter by collection, and soft-delete submissions on the same page.
+
+The ingestion endpoint is intentionally public (no auth) so a sandboxed hosted
+page can call it, but it is hardened:
+
+- The target (`draft:<id>` or `repo:<id>`) must exist and the named collection
+  must be enabled by its owner, otherwise the request is rejected with `404`.
+- Submissions must be a flat JSON object of scalar fields (string/number/
+  boolean/null). Nested objects, arrays, empty bodies, oversized fields, and
+  oversized payloads are rejected with `400`.
+- Per-visitor and global fixed-window rate limits return `429` on abuse.
+- Only a hashed visitor identifier (HMAC of IP + user agent) is stored — never
+  a raw IP or any PII beyond the fields the form itself submits.
+
+The draft viewer's sandbox CSP is tightened to permit `connect-src` only to the
+docs-share API origin (plus `'self'`), so an opted-in form can POST back to
+docs-share but a compromised page cannot exfiltrate to an arbitrary server. The
+iframe sandbox stays `allow-scripts` only (never `allow-same-origin`).
+
 ## Uploading Static HTML Bundles
 
 Use the web app or CLI when the draft has linked files.

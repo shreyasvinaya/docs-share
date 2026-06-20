@@ -197,6 +197,64 @@ export const drafts = sqliteTable(
   ]
 );
 
+export const siteDataCollections = sqliteTable(
+  "site_data_collections",
+  {
+    id: text("id").primaryKey(),
+    ownerUserId: text("owner_user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    targetType: text("target_type", { enum: ["draft", "repo"] }).notNull(),
+    targetId: text("target_id").notNull(),
+    collection: text("collection").notNull(),
+    enabled: integer("enabled", { mode: "boolean" }).notNull().default(true),
+    createdAt: text("created_at")
+      .notNull()
+      .default(sql`(CURRENT_TIMESTAMP)`),
+    updatedAt: text("updated_at")
+      .notNull()
+      .default(sql`(CURRENT_TIMESTAMP)`),
+  },
+  (table) => [
+    uniqueIndex("site_data_collections_target_name_idx").on(
+      table.targetType,
+      table.targetId,
+      table.collection
+    ),
+    index("site_data_collections_owner_idx").on(table.ownerUserId),
+  ]
+);
+
+export const siteDataRecords = sqliteTable(
+  "site_data_records",
+  {
+    id: text("id").primaryKey(),
+    ownerUserId: text("owner_user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    targetType: text("target_type", { enum: ["draft", "repo"] }).notNull(),
+    targetId: text("target_id").notNull(),
+    collection: text("collection").notNull(),
+    fields: text("fields", { mode: "json" })
+      .notNull()
+      .$type<Record<string, string | number | boolean | null>>(),
+    visitorHash: text("visitor_hash"),
+    createdAt: text("created_at")
+      .notNull()
+      .default(sql`(CURRENT_TIMESTAMP)`),
+    deletedAt: text("deleted_at"),
+  },
+  (table) => [
+    index("site_data_owner_idx").on(table.ownerUserId),
+    index("site_data_target_idx").on(table.targetType, table.targetId),
+    index("site_data_collection_idx").on(
+      table.targetType,
+      table.targetId,
+      table.collection
+    ),
+  ]
+);
+
 export const shares = sqliteTable(
   "shares",
   {

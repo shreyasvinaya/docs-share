@@ -12,6 +12,7 @@ import repoRoutes from "./routes/repos.js";
 import fileRoutes from "./routes/files.js";
 import draftRoutes, { renderDraftPage, serveDraftContent } from "./routes/drafts.js";
 import shareRoutes from "./routes/shares.js";
+import siteDataRoutes from "./routes/siteData.js";
 import internalRoutes from "./routes/internal.js";
 import viewRoutes from "./routes/view.js";
 import gitRoutes from "./git/smartHttp.js";
@@ -24,10 +25,25 @@ const app = new Hono<AppEnv>();
 
 app.use("*", logger());
 app.use("*", secureHeaders());
-app.use(
-  "/api/*",
-  cors({ origin: config.APP_URL, credentials: true })
-);
+// Public, opt-in form ingestion is callable from sandboxed hosted pages whose
+// iframe origin is opaque ("null"). Allow cross-origin POSTs WITHOUT
+// credentials for this single endpoint only; it stores no cookies/session and
+// is hardened by validation, rate limiting, and per-collection opt-in. The
+// general /api CORS (credentialed, APP_URL-only) is skipped for this path so
+// the two policies never collide.
+const ingestionCors = cors({
+  origin: "*",
+  allowMethods: ["POST", "OPTIONS"],
+  allowHeaders: ["Content-Type"],
+  credentials: false,
+});
+const ingestionPathRe = /^\/api\/sites\/[^/]+\/data\/[^/]+$/;
+const apiCors = cors({ origin: config.APP_URL, credentials: true });
+
+app.use("/api/*", (c, next) => {
+  if (ingestionPathRe.test(c.req.path)) return ingestionCors(c, next);
+  return apiCors(c, next);
+});
 app.use("*", sessionMiddleware);
 
 app.route("/api/auth", authRoutes);
@@ -38,6 +54,7 @@ app.route("/api/repos", repoRoutes);
 app.route("/api/files", fileRoutes);
 app.route("/api/drafts", draftRoutes);
 app.route("/api/shares", shareRoutes);
+app.route("/api/sites", siteDataRoutes);
 
 app.route("/git", gitRoutes);
 app.route("/internal", internalRoutes);

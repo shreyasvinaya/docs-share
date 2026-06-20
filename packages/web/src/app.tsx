@@ -7,6 +7,7 @@ import { PublicDocsPage } from "@/pages/public-docs";
 import { PublicHomePage } from "@/pages/public-home";
 import { DashboardPage } from "@/pages/dashboard";
 import { DraftsPage } from "@/pages/drafts";
+import { DraftFormsPage } from "@/pages/draft-forms";
 import { PersonalFilesPage } from "@/pages/personal-files";
 import { SharedWithMePage } from "@/pages/shared-with-me";
 import { FilePreviewPage } from "@/pages/file-preview";
@@ -47,6 +48,7 @@ export function App() {
           <Route path="app" element={<DashboardPage />} />
           {/* Keep legacy app URLs stable while the public site owns `/`. */}
           <Route path="drafts" element={<DraftsPage />} />
+          <Route path="drafts/:draftId/forms" element={<DraftFormsPage />} />
           <Route path="files/*" element={<PersonalFilesPage />} />
           <Route path="shared" element={<SharedWithMePage />} />
           <Route path="preview/:repoId/*" element={<FilePreviewPage />} />

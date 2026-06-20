@@ -270,7 +270,7 @@ export async function serveDraftContent(
   try {
     const html = await readFile(absolutePath);
     return new Response(html, {
-      headers: draftContentSecurityHeaders(),
+      headers: draftContentSecurityHeaders(config.API_URL),
     });
   } catch {
     return new Response("Draft content not found", { status: 404 });
