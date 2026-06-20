@@ -113,6 +113,13 @@
       "when": 1781372000000,
       "tag": "0016_webhook_delivery_index",
       "breakpoints": true
+    },
+    {
+      "idx": 16,
+      "version": "6",
+      "when": 1781373000000,
+      "tag": "0017_github_sync_configured_by",
+      "breakpoints": true
     }
   ]
 }

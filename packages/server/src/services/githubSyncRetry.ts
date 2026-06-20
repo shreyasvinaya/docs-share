@@ -57,7 +57,8 @@ export interface SyncRetryResult {
 export async function retryFailedGitHubSyncs(
   batch = 5,
   runner: SyncRunner = syncGitHubRepo,
-  maxRetries = config.GITHUB_SYNC_MAX_RETRIES
+  maxRetries = config.GITHUB_SYNC_MAX_RETRIES,
+  tokenResolver: (userId: string) => Promise<string> = getUserGitHubToken
 ): Promise<SyncRetryResult> {
   const failed = await db
     .select()
@@ -90,8 +91,34 @@ export async function retryFailedGitHubSyncs(
       .where(eq(schema.githubSyncs.id, sync.id))
       .run();
 
-    const ownerUserId = repo.ownerUserId;
-    const token = ownerUserId ? await getUserGitHubToken(ownerUserId) : "";
+    // Use the credential of the user who CONFIGURED the sync — NEVER the repo
+    // owner's. Otherwise a non-owner holding a whole-repo write share could
+    // configure a sync pointing at the owner's private GitHub repo and have the
+    // background retry clone it with the owner's token (cross-tenant
+    // exfiltration). Fail closed when the configurer is unknown (legacy rows) or
+    // has no GitHub credential, marking the sync terminally failed.
+    let token = "";
+    if (sync.configuredByUserId) {
+      try {
+        token = await tokenResolver(sync.configuredByUserId);
+      } catch {
+        token = "";
+      }
+    }
+    if (!token) {
+      await db
+        .update(schema.githubSyncs)
+        .set({
+          status: "failed",
+          error:
+            "Sync cannot be retried: the user who configured it has no GitHub credential.",
+          retryCount: maxRetries,
+          updatedAt: new Date().toISOString(),
+        })
+        .where(eq(schema.githubSyncs.id, sync.id))
+        .run();
+      continue;
+    }
 
     try {
       const result = await runner(
