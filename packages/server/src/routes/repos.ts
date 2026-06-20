@@ -14,7 +14,7 @@ import {
   normalizeGitHubRepoUrl,
   syncGitHubRepo,
 } from "../services/githubSync.js";
-import { getUserGitHubToken } from "./users.js";
+import { getUserGitHubCredential, getUserGitHubToken } from "./users.js";
 import type { AppEnv } from "../lib/types.js";
 
 const app = new Hono<AppEnv>();
@@ -38,7 +38,7 @@ app.get("/:repoId/github-sync/repositories", checkAccess("read"), async (c) => {
 
   try {
     const repositories = await listGitHubAccessibleRepos(
-      await getUserGitHubToken(userId),
+      await getUserGitHubCredential(userId),
       ownerLogin
     );
     return c.json({ data: repositories });
@@ -52,7 +52,9 @@ app.get("/:repoId/github-sync/organizations", checkAccess("read"), async (c) => 
   const userId = c.get("userId");
 
   try {
-    const organizations = await listGitHubOrganizations(await getUserGitHubToken(userId));
+    const organizations = await listGitHubOrganizations(
+      await getUserGitHubCredential(userId)
+    );
     return c.json({ data: organizations });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);

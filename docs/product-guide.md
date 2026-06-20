@@ -345,10 +345,13 @@ Production settings to review:
 - Set `SESSION_SECRET`, `DRAFT_CONTENT_SECRET`, and `HOOK_SECRET` to separate
   32+ character random values.
 - Set `APP_URL`, `API_URL`, and `CONTENT_ORIGIN` to public HTTPS URLs.
+- Set `DEPLOYMENT_NAME` to the company-facing name shown in the web UI.
+- Set `SYSADMIN_EMAILS` to deployment admins who can see setup status in
+  Settings.
 - Put TLS in front of the app.
 - Allow large upload request bodies at the proxy/platform layer.
 - Keep `ENABLE_DEV_LOGIN=false`.
-- Set `GITHUB_TOKEN_SECRET` so per-user GitHub tokens can be encrypted at rest.
+- Set `GITHUB_APP_ID`, `GITHUB_APP_SLUG`, and `GITHUB_APP_PRIVATE_KEY` to enable selected-repository GitHub imports. Keep `GITHUB_TOKEN_SECRET` for the personal access token fallback.
 - Set `EMAIL_FROM` plus `RESEND_API_KEY` for share notification emails.
 - Set `SLACK_WEBHOOK_URL` for Slack share/activity notifications.
 - Use `/health` for platform health checks.

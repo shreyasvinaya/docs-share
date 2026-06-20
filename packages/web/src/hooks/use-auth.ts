@@ -4,7 +4,12 @@ import type { User, ApiToken, CreateToken, UpdateUser } from "@docs-share/shared
 
 export interface GitHubTokenStatus {
   connected: boolean;
+  connectionType: "github_app" | "pat" | null;
+  configured: boolean;
   updatedAt: string | null;
+  installationId: string | null;
+  accountLogin: string | null;
+  accountType: string | null;
 }
 
 export function useSession() {
@@ -102,4 +107,8 @@ export function useDeleteGitHubToken() {
     mutationFn: () => api.del<GitHubTokenStatus>("/api/users/me/github-token"),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["github-token"] }),
   });
+}
+
+export function connectGitHubApp() {
+  window.location.href = "/api/users/me/github-app/install";
 }

@@ -7,7 +7,9 @@ import {
   useRevokeShare,
 } from "@/hooks/use-sharing";
 import { useTeams } from "@/hooks/use-teams";
+import { useShareAnalytics } from "@/hooks/use-analytics";
 import { cn } from "@/lib/utils";
+import { formatLastOpened, formatViewSummary } from "@/lib/view-analytics";
 import type { SharePermission, LinkAccess } from "@docs-share/shared";
 
 interface ShareDialogProps {
@@ -44,6 +46,11 @@ export function ShareDialog({
 
   const existingPublicLink = existingShares?.find(
     (s) => s.shareType === "public_link"
+  );
+
+  const { data: analytics } = useShareAnalytics(
+    existingPublicLink?.id,
+    open && tab === "link" && !!existingPublicLink
   );
 
   useEffect(() => {
@@ -460,6 +467,34 @@ export function ShareDialog({
                     {revokeShare.isPending ? "Removing..." : "Remove link"}
                   </button>
                 </div>
+
+                {analytics && (
+                  <div className="rounded-lg border border-border p-3">
+                    <p className="text-sm font-medium">
+                      {formatViewSummary(analytics)}
+                    </p>
+                    <p className="mt-1 text-xs text-muted-foreground">
+                      Last opened: {formatLastOpened(analytics.lastViewedAt)}
+                    </p>
+                    {analytics.recentReferrers.length > 0 && (
+                      <div className="mt-2">
+                        <p className="text-xs font-medium text-muted-foreground">
+                          Recent referrers
+                        </p>
+                        <ul className="mt-1 space-y-0.5">
+                          {analytics.recentReferrers.map((ref) => (
+                            <li
+                              key={ref}
+                              className="truncate text-xs text-muted-foreground"
+                            >
+                              {ref}
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
             ) : (
               <button

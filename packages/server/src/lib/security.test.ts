@@ -28,9 +28,33 @@ describe("assertProductionSecret", () => {
     ).toThrow("HOOK_SECRET must be set");
   });
 
+  test("rejects the draft and github token dev defaults in production", () => {
+    expect(() =>
+      assertProductionSecret(
+        "DRAFT_CONTENT_SECRET",
+        "dev-draft-content-secret-change-in-production",
+        { NODE_ENV: "production" }
+      )
+    ).toThrow("DRAFT_CONTENT_SECRET must be set");
+
+    expect(() =>
+      assertProductionSecret(
+        "GITHUB_TOKEN_SECRET",
+        "dev-github-token-secret-change-in-production",
+        { NODE_ENV: "production" }
+      )
+    ).toThrow("GITHUB_TOKEN_SECRET must be set");
+  });
+
   test("allows strong production secrets and dev defaults outside production", () => {
     expect(() =>
       assertProductionSecret("SESSION_SECRET", "x".repeat(32), {
+        NODE_ENV: "production",
+      })
+    ).not.toThrow();
+
+    expect(() =>
+      assertProductionSecret("GITHUB_TOKEN_SECRET", "a".repeat(40), {
         NODE_ENV: "production",
       })
     ).not.toThrow();
