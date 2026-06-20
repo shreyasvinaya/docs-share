@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="docs/assets/patra-banner.svg" alt="Patra — publish & share docs as shareable links, self-hosted" width="820">
+</p>
+
 # Patra
 
 Self-hostable, Git-backed publishing and sharing of documents, static sites, and
@@ -5,7 +9,8 @@ HTML drafts as shareable links — with an agent-friendly CLI for non-interactiv
 publishing.
 
 > **Patra** (ಪತ್ರ / पत्र) is Sanskrit/Kannada for "page," "leaf," or "letter" —
-> a fitting name for a place to keep and share your documents.
+> a fitting name for a place to keep and share your documents. The logo is a leaf
+> whose veins read as lines of text.
 
 ## What It Is
 
