@@ -19,6 +19,77 @@ export function isGitHubAppConfigured(): boolean {
   );
 }
 
+export function isGitHubAppOAuthConfigured(): boolean {
+  return Boolean(config.GITHUB_APP_CLIENT_ID && config.GITHUB_APP_CLIENT_SECRET);
+}
+
+export async function exchangeGitHubUserCode(code: string): Promise<string> {
+  const res = await fetch("https://github.com/login/oauth/access_token", {
+    method: "POST",
+    headers: {
+      Accept: "application/json",
+      "Content-Type": "application/json",
+      "User-Agent": "docs-share",
+    },
+    body: JSON.stringify({
+      client_id: config.GITHUB_APP_CLIENT_ID,
+      client_secret: config.GITHUB_APP_CLIENT_SECRET,
+      code,
+    }),
+  });
+
+  if (!res.ok) {
+    throw new Error(`GitHub user code exchange failed: ${res.status} ${res.statusText}`);
+  }
+
+  const body = (await res.json()) as { access_token?: string; error?: string };
+  if (body.error || !body.access_token) {
+    throw new Error("GitHub user code exchange did not return an access token");
+  }
+
+  return body.access_token;
+}
+
+export async function userCanAccessInstallation(
+  userToken: string,
+  installationId: string
+): Promise<boolean> {
+  const targetId = Number(installationId);
+
+  for (let page = 1; page <= 5; page++) {
+    const res = await fetch(
+      `https://api.github.com/user/installations?per_page=100&page=${page}`,
+      {
+        headers: {
+          Accept: "application/vnd.github+json",
+          Authorization: `Bearer ${userToken}`,
+          "User-Agent": "docs-share",
+          "X-GitHub-Api-Version": "2022-11-28",
+        },
+      }
+    );
+
+    if (!res.ok) {
+      throw new Error(
+        `GitHub user installations lookup failed: ${res.status} ${res.statusText}`
+      );
+    }
+
+    const body = (await res.json()) as {
+      total_count: number;
+      installations: { id: number }[];
+    };
+
+    if (body.installations.some((installation) => installation.id === targetId)) {
+      return true;
+    }
+
+    if (body.installations.length < 100) break;
+  }
+
+  return false;
+}
+
 export function createGitHubAppInstallUrl(state: string): string {
   if (!config.GITHUB_APP_SLUG) {
     throw new Error("GitHub App slug is not configured");

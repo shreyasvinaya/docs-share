@@ -22,6 +22,7 @@ const isSecure = config.APP_URL.startsWith("https");
 interface GoogleUserInfo {
   sub: string;
   email: string;
+  email_verified?: boolean;
   name: string;
   picture?: string;
   title?: string;
@@ -117,6 +118,9 @@ app.get("/google/callback", async (c) => {
   }
 
   const userInfo: GoogleUserInfo = await userInfoRes.json();
+  if (userInfo.email_verified !== true) {
+    return c.json({ error: "Your Google account email is not verified." }, 403);
+  }
   const googleDesignation =
     userInfo.title ?? userInfo.job_title ?? userInfo.position ?? null;
 

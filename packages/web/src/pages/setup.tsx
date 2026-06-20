@@ -1,12 +1,32 @@
-import { Link } from "react-router";
+import { Link, Navigate } from "react-router";
 import { SetupChecklist } from "@/components/setup/setup-checklist";
 import { PublicAuthAction } from "@/components/layout/public-auth-action";
 import { PublicThemeControl } from "@/components/layout/public-theme-control";
-import { useSetupStatus } from "@/hooks/use-setup";
+import { useOptionalSession } from "@/hooks/use-auth";
+import { useSetupStatus, useDeploymentName } from "@/hooks/use-setup";
 
 export function SetupPage() {
+  const { data: session, isLoading: sessionLoading } = useOptionalSession();
+  const deploymentName = useDeploymentName();
   const { data: status, isLoading, isError } = useSetupStatus();
-  const deploymentName = status?.deploymentName ?? "Docs Share";
+
+  if (sessionLoading) {
+    return (
+      <main className="min-h-screen bg-background text-foreground">
+        <section className="mx-auto max-w-5xl px-5 py-10">
+          <p className="text-sm text-muted-foreground">Loading setup status...</p>
+        </section>
+      </main>
+    );
+  }
+
+  if (!session) {
+    return <Navigate to="/login?next=/setup" replace />;
+  }
+
+  if (session.user.role !== "sysadmin") {
+    return <Navigate to="/app" replace />;
+  }
 
   return (
     <main className="min-h-screen bg-background text-foreground">

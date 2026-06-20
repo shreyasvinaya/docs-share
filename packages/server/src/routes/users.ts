@@ -8,8 +8,11 @@ import { decryptSecret, encryptSecret, generatePublicToken } from "../lib/crypto
 import {
   createGitHubAppInstallUrl,
   createGitHubInstallationToken,
+  exchangeGitHubUserCode,
   getGitHubInstallationAccount,
   isGitHubAppConfigured,
+  isGitHubAppOAuthConfigured,
+  userCanAccessInstallation,
 } from "../services/githubApp.js";
 import type { GitHubCredential } from "../services/githubSync.js";
 import type { AppEnv } from "../lib/types.js";
@@ -171,7 +174,7 @@ app.get("/me/github-app/install", async (c) => {
 
 app.get("/me/github-app/callback", async (c) => {
   const userId = c.get("userId");
-  const { installation_id: installationId, state } = c.req.query();
+  const { installation_id: installationId, state, code } = c.req.query();
   const storedState = getCookie(c, GITHUB_APP_STATE_COOKIE);
   deleteCookie(c, GITHUB_APP_STATE_COOKIE, {
     path: "/api/users/me/github-app",
@@ -183,6 +186,44 @@ app.get("/me/github-app/callback", async (c) => {
 
   if (!installationId || !/^\d+$/.test(installationId)) {
     return c.json({ error: "Missing GitHub App installation" }, 400);
+  }
+
+  if (!isGitHubAppOAuthConfigured()) {
+    return c.json(
+      {
+        error:
+          "GitHub App connection is unavailable: set GITHUB_APP_CLIENT_ID and GITHUB_APP_CLIENT_SECRET to verify installation ownership.",
+      },
+      503
+    );
+  }
+
+  if (!code) {
+    return c.json(
+      {
+        error:
+          "Missing GitHub authorization code. Enable 'Request user authorization (OAuth) during installation' on the GitHub App.",
+      },
+      400
+    );
+  }
+
+  let userToken: string;
+  try {
+    userToken = await exchangeGitHubUserCode(code);
+  } catch {
+    return c.json({ error: "Failed to verify GitHub authorization." }, 502);
+  }
+
+  let authorized = false;
+  try {
+    authorized = await userCanAccessInstallation(userToken, installationId);
+  } catch {
+    return c.json({ error: "GitHub installation verification failed." }, 502);
+  }
+
+  if (!authorized) {
+    return c.json({ error: "You are not authorized for this GitHub App installation." }, 403);
   }
 
   let account = { login: null as string | null, type: null as string | null };

@@ -36,6 +36,10 @@ export function useSetupStatus() {
 }
 
 export function useDeploymentName() {
-  const { data } = useSetupStatus();
+  const { data } = useQuery({
+    queryKey: ["deployment-branding"],
+    queryFn: () => api.get<{ deploymentName: string }>("/api/setup/branding"),
+    staleTime: 5 * 60 * 1000,
+  });
   return data?.deploymentName ?? "Docs Share";
 }
