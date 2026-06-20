@@ -201,7 +201,7 @@ describe("acceptPendingInvitationsForUser", () => {
     const { email, teamId } = await seedTeamAndInvite("member");
     const userId = await seedUser(email);
 
-    const results = await acceptPendingInvitationsForUser({ userId, email });
+    const results = await acceptPendingInvitationsForUser({ userId });
     expect(results.length).toBe(1);
     cleanup.memberIds.push(results[0].membershipId);
 
@@ -219,11 +219,8 @@ describe("acceptPendingInvitationsForUser", () => {
   });
 
   test("is a no-op when there are no pending invitations", async () => {
-    const userId = await seedUser(`${testId("u")}@example.com`);
-    const results = await acceptPendingInvitationsForUser({
-      userId,
-      email: `${testId("nobody")}@example.com`,
-    });
+    const userId = await seedUser(`${testId("nobody")}@example.com`);
+    const results = await acceptPendingInvitationsForUser({ userId });
     expect(results).toEqual([]);
   });
 
@@ -231,11 +228,33 @@ describe("acceptPendingInvitationsForUser", () => {
     const { email } = await seedTeamAndInvite("member");
     const userId = await seedUser(email);
 
-    const first = await acceptPendingInvitationsForUser({ userId, email });
+    const first = await acceptPendingInvitationsForUser({ userId });
     cleanup.memberIds.push(first[0].membershipId);
-    const second = await acceptPendingInvitationsForUser({ userId, email });
+    const second = await acceptPendingInvitationsForUser({ userId });
 
     expect(first.length).toBe(1);
     expect(second.length).toBe(0);
+  });
+
+  test("matches the user's verified email case-insensitively", async () => {
+    const { email, teamId } = await seedTeamAndInvite("member");
+    // The user row stores the email in a different case than the invitation.
+    const userId = await seedUser(email.toUpperCase());
+
+    const results = await acceptPendingInvitationsForUser({ userId });
+    expect(results.length).toBe(1);
+    cleanup.memberIds.push(results[0].membershipId);
+
+    const membership = await db
+      .select()
+      .from(schema.teamMembers)
+      .where(
+        and(
+          eq(schema.teamMembers.teamId, teamId),
+          eq(schema.teamMembers.userId, userId)
+        )
+      )
+      .get();
+    expect(membership).toBeTruthy();
   });
 });

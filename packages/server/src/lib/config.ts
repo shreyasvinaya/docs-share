@@ -68,6 +68,9 @@ export const config = {
   ),
   // Maximum number of failed syncs to retry per sweep.
   GITHUB_SYNC_RETRY_BATCH: parseInt(env("GITHUB_SYNC_RETRY_BATCH", "5")),
+  // Maximum number of retry attempts before a sync is marked terminally
+  // `failed` and excluded from future retry sweeps.
+  GITHUB_SYNC_MAX_RETRIES: parseInt(env("GITHUB_SYNC_MAX_RETRIES", "5")),
 };
 
 assertProductionSecret("SESSION_SECRET", config.SESSION_SECRET);

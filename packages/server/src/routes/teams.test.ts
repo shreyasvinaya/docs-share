@@ -272,7 +272,7 @@ describe("POST /api/teams/invitations/:token/accept", () => {
     expect(res.status).toBe(404);
   });
 
-  test("rejects with 403 when the accepting user's email does not match the invite", async () => {
+  test("returns a generic 404 (not 403) on email mismatch and leaves the invite unconsumed", async () => {
     const { ownerId, teamId } = await seedTeamWithMember();
     const email = `${testId("intended")}@example.com`;
 
@@ -298,7 +298,10 @@ describe("POST /api/teams/invitations/:token/accept", () => {
       `/api/teams/invitations/${inviteBody.data.token}/accept`,
       { method: "POST" }
     );
-    expect(acceptRes.status).toBe(403);
+    // Mismatch is indistinguishable from an unknown token: same generic 404.
+    expect(acceptRes.status).toBe(404);
+    const body = (await acceptRes.json()) as { error: string };
+    expect(body.error).toBe("Invitation not found");
 
     // No teamMembers row was created for the intruder.
     const membership = await db
@@ -312,6 +315,14 @@ describe("POST /api/teams/invitations/:token/accept", () => {
       )
       .get();
     expect(membership).toBeUndefined();
+
+    // The invitation was NOT consumed (acceptedAt remains null).
+    const invite = await db
+      .select()
+      .from(schema.invitations)
+      .where(eq(schema.invitations.id, inviteBody.data.id))
+      .get();
+    expect(invite?.acceptedAt).toBeNull();
   });
 
   test("rejects an unauthenticated accept with 401", async () => {

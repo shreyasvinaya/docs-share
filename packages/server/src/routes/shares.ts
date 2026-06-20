@@ -1,5 +1,5 @@
 import { Hono } from "hono";
-import { eq, and, isNull, inArray } from "drizzle-orm";
+import { eq, and, isNull, inArray, or } from "drizzle-orm";
 import { db, schema } from "../db/index.js";
 import { requireAuth } from "../middleware/requireAuth.js";
 import { generateId, generatePublicToken, hashToken } from "../lib/crypto.js";
@@ -631,13 +631,20 @@ app.post("/:shareId/accept", requireAuth, async (c) => {
     return c.json({ error: "User not found" }, 404);
   }
 
+  // Only match a recipient row that is either unclaimed or already claimed by
+  // this same user. A row claimed by a different user (userId set to someone
+  // else) must not be matched, so it can't be re-updated/hijacked.
   const recipient = await db
     .select()
     .from(schema.shareRecipients)
     .where(
       and(
         eq(schema.shareRecipients.shareId, shareId),
-        eq(schema.shareRecipients.email, user.email)
+        eq(schema.shareRecipients.email, user.email),
+        or(
+          isNull(schema.shareRecipients.userId),
+          eq(schema.shareRecipients.userId, userId)
+        )
       )
     )
     .get();
@@ -647,10 +654,20 @@ app.post("/:shareId/accept", requireAuth, async (c) => {
   }
 
   if (!recipient.acceptedAt) {
+    // Re-assert the unclaimed/own-claim guard at write time so a concurrent
+    // accept can't clobber a row another user just claimed.
     await db
       .update(schema.shareRecipients)
       .set({ acceptedAt: new Date().toISOString(), userId })
-      .where(eq(schema.shareRecipients.id, recipient.id))
+      .where(
+        and(
+          eq(schema.shareRecipients.id, recipient.id),
+          or(
+            isNull(schema.shareRecipients.userId),
+            eq(schema.shareRecipients.userId, userId)
+          )
+        )
+      )
       .run();
   }
 

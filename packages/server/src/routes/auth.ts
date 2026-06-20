@@ -189,8 +189,9 @@ app.get("/google/callback", async (c) => {
     });
   }
 
-  // Materialise any invitations addressed to this email into memberships.
-  await acceptPendingInvitationsForUser({ userId: user.id, email: user.email });
+  // Materialise any invitations addressed to this user's verified email into
+  // memberships. The email is re-read from the DB inside, never trusted here.
+  await acceptPendingInvitationsForUser({ userId: user.id });
 
   // Create session (30-day expiry)
   const sessionId = generateId();
@@ -301,8 +302,9 @@ app.post("/dev-login", async (c) => {
     return c.json({ error: "Failed to create user" }, 500);
   }
 
-  // Materialise any invitations addressed to this email into memberships.
-  await acceptPendingInvitationsForUser({ userId: user.id, email: user.email });
+  // Materialise any invitations addressed to this user's verified email into
+  // memberships. The email is re-read from the DB inside, never trusted here.
+  await acceptPendingInvitationsForUser({ userId: user.id });
 
   const sessionId = generateId();
   const expiresAt = new Date(

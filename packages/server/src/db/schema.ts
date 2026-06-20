@@ -325,10 +325,13 @@ export const githubSyncs = sqliteTable(
     sourcePath: text("source_path").default(""),
     lastCommitSha: text("last_commit_sha"),
     lastSyncedAt: text("last_synced_at"),
-    status: text("status", { enum: ["idle", "syncing", "success", "error"] })
+    status: text("status", {
+      enum: ["idle", "syncing", "success", "error", "failed"],
+    })
       .notNull()
       .default("idle"),
     error: text("error"),
+    retryCount: integer("retry_count").notNull().default(0),
     createdAt: text("created_at")
       .notNull()
       .default(sql`(CURRENT_TIMESTAMP)`),

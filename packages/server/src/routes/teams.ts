@@ -440,9 +440,12 @@ app.post("/:teamId/members", async (c) => {
  * Auth: protected by the router-wide `requireAuth` middleware, so `userId` is
  * always present here. The invitation is additionally bound to the invited
  * email — the authenticated user's email must match the invitation's email,
- * otherwise the request is rejected with 403 and the invite is left untouched.
- * This prevents an IDOR where any authenticated holder of a token could join a
- * team they were never invited to.
+ * otherwise the invite is left untouched.
+ *
+ * To avoid a token-enumeration oracle, an unknown token and an email mismatch
+ * return the SAME generic `404 { error: "Invitation not found" }`. A caller
+ * therefore cannot use the response to tell whether a token exists. In both
+ * cases the invitation is NOT consumed.
  *
  * Idempotent: accepting an already-accepted invitation by its rightful owner
  * returns the existing membership.
@@ -452,11 +455,11 @@ app.post("/invitations/:token/accept", async (c) => {
   const token = c.req.param("token");
 
   const outcome = await acceptInvitationByToken(token, userId);
-  if (outcome.status === "not_found") {
+  // Collapse "not found" and "forbidden" into one indistinguishable response so
+  // the endpoint can't be used to enumerate valid tokens. Neither case consumes
+  // the invitation.
+  if (outcome.status === "not_found" || outcome.status === "forbidden") {
     return c.json({ error: "Invitation not found" }, 404);
-  }
-  if (outcome.status === "forbidden") {
-    return c.json({ error: "This invitation was issued to a different email" }, 403);
   }
 
   return c.json({ data: outcome.result });

@@ -36,27 +36,52 @@ export function buildScheduledJobs(): ScheduledJob[] {
   return jobs;
 }
 
+// Names of jobs whose previous run has not yet finished. Used to skip a tick
+// rather than launching a second concurrent run of the same job.
+const inFlight = new Set<string>();
+
 /**
  * Run a single job, swallowing and logging any error so one failing pass never
- * tears down the interval.
+ * tears down the interval. A per-job in-flight guard prevents a job from
+ * starting again while its previous run is still executing: if a tick fires
+ * while the job is still in flight, that tick is skipped.
  */
 async function runJobSafely(job: ScheduledJob): Promise<void> {
+  if (inFlight.has(job.name)) {
+    // Previous run still executing — skip this tick to avoid overlap.
+    return;
+  }
+  inFlight.add(job.name);
   try {
     await job.run();
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     console.error(`[scheduler] job "${job.name}" failed: ${message}`);
+  } finally {
+    inFlight.delete(job.name);
   }
 }
 
 /**
- * Start the background scheduler. No-op when `SCHEDULER_ENABLED` is false (e.g.
- * during tests or CLI imports). Returns a stop function that clears all timers.
+ * Start the background scheduler. Returns a stop function that clears all
+ * timers.
+ *
+ * No-op (returning an inert stop function) when any of the following hold, so
+ * the scheduler never runs by accident in tests or when explicitly disabled:
+ *
+ *   - `process.env.NODE_ENV === "test"`;
+ *   - the `SCHEDULER_ENABLED` config is false (env `SCHEDULER_ENABLED=false`).
  *
  * @param jobs - Jobs to schedule; defaults to {@link buildScheduledJobs}.
+ * @param force - Bypass the test/disabled guards. Intended for unit tests that
+ *   need to exercise the scheduling logic directly; production callers leave
+ *   this false.
  */
-export function startScheduler(jobs: ScheduledJob[] = buildScheduledJobs()): () => void {
-  if (!config.SCHEDULER_ENABLED) {
+export function startScheduler(
+  jobs: ScheduledJob[] = buildScheduledJobs(),
+  force = false
+): () => void {
+  if (!force && (process.env.NODE_ENV === "test" || !config.SCHEDULER_ENABLED)) {
     return () => {};
   }
 
@@ -78,4 +103,5 @@ export function startScheduler(jobs: ScheduledJob[] = buildScheduledJobs()): () 
 export function stopScheduler(): void {
   for (const timer of timers) clearInterval(timer);
   timers = [];
+  inFlight.clear();
 }

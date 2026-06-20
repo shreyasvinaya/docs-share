@@ -128,4 +128,60 @@ describe("retryFailedGitHubSyncs", () => {
     expect(calls).toBe(2);
     expect(result.attempted).toBe(2);
   });
+
+  test("redacts credentials from the persisted error message", async () => {
+    const failed = await seedSync("error");
+
+    await retryFailedGitHubSyncs(10, async () => {
+      throw new Error(
+        "fatal: Authentication failed for https://x-access-token:ghp_supersecret@github.com/acme/private.git"
+      );
+    });
+
+    const row = await db
+      .select()
+      .from(schema.githubSyncs)
+      .where(eq(schema.githubSyncs.id, failed.syncId))
+      .get();
+    expect(row?.error).not.toContain("ghp_supersecret");
+    expect(row?.error).toContain("[redacted]");
+  });
+
+  test("stops retrying and marks the sync failed once max retries is reached", async () => {
+    const failed = await seedSync("error");
+    const maxRetries = 3;
+
+    // Each pass throws, so the row accrues one retry per pass until the budget
+    // is exhausted, after which it must be excluded from selection.
+    for (let i = 0; i < maxRetries; i += 1) {
+      await retryFailedGitHubSyncs(
+        10,
+        async () => {
+          throw new Error("still broken");
+        },
+        maxRetries
+      );
+    }
+
+    const row = await db
+      .select()
+      .from(schema.githubSyncs)
+      .where(eq(schema.githubSyncs.id, failed.syncId))
+      .get();
+    expect(row?.status).toBe("failed");
+    expect(row?.retryCount).toBe(maxRetries);
+
+    // A further sweep must NOT pick up the terminal row.
+    let calledAgain = false;
+    const after = await retryFailedGitHubSyncs(
+      10,
+      async () => {
+        calledAgain = true;
+        throw new Error("should not run");
+      },
+      maxRetries
+    );
+    expect(calledAgain).toBe(false);
+    expect(after.attempted).toBe(0);
+  });
 });

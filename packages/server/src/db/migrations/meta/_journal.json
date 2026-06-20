@@ -85,6 +85,13 @@
       "when": 1781368000000,
       "tag": "0012_invitations",
       "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "6",
+      "when": 1781369000000,
+      "tag": "0013_github_sync_retry",
+      "breakpoints": true
     }
   ]
 }

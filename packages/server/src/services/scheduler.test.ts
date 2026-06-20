@@ -28,6 +28,27 @@ describe("buildScheduledJobs", () => {
 });
 
 describe("startScheduler", () => {
+  test("is a no-op under NODE_ENV=test unless forced", async () => {
+    // bun test runs with NODE_ENV=test, so the unforced scheduler must not run.
+    expect(process.env.NODE_ENV).toBe("test");
+
+    let calls = 0;
+    const jobs: ScheduledJob[] = [
+      {
+        name: "should-not-run",
+        intervalMs: 5,
+        run: async () => {
+          calls += 1;
+        },
+      },
+    ];
+
+    const stop = startScheduler(jobs);
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    stop();
+    expect(calls).toBe(0);
+  });
+
   test("invokes each job on its interval and stop clears the timers", async () => {
     let calls = 0;
     const jobs: ScheduledJob[] = [
@@ -40,7 +61,7 @@ describe("startScheduler", () => {
       },
     ];
 
-    const stop = startScheduler(jobs);
+    const stop = startScheduler(jobs, true);
     await new Promise((resolve) => setTimeout(resolve, 30));
     stop();
     const afterStop = calls;
@@ -70,9 +91,41 @@ describe("startScheduler", () => {
       },
     ];
 
-    startScheduler(jobs);
+    startScheduler(jobs, true);
     await new Promise((resolve) => setTimeout(resolve, 30));
     stopScheduler();
     expect(healthyCalls).toBeGreaterThan(0);
+  });
+
+  test("skips a tick while the previous run of the same job is still in flight", async () => {
+    let started = 0;
+    const release = { fn: undefined as (() => void) | undefined };
+    const jobs: ScheduledJob[] = [
+      {
+        name: "slow-job",
+        // Fire frequently so several ticks elapse during one slow run.
+        intervalMs: 5,
+        run: async () => {
+          started += 1;
+          // Block this run until we explicitly release it. Subsequent ticks
+          // must be skipped while this run is outstanding.
+          await new Promise<void>((resolve) => {
+            release.fn = resolve;
+          });
+        },
+      },
+    ];
+
+    startScheduler(jobs, true);
+    // Let many ticks fire while the first (and only) run is blocked.
+    await new Promise((resolve) => setTimeout(resolve, 40));
+    // Despite many ticks, the in-flight guard allowed only one concurrent run.
+    expect(started).toBe(1);
+
+    // Release the run and confirm a later tick can start a fresh run.
+    release.fn?.();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    stopScheduler();
+    expect(started).toBeGreaterThan(1);
   });
 });

@@ -1,4 +1,4 @@
-import { and, eq } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import { db, schema } from "../db/index.js";
 import { generateId } from "../lib/crypto.js";
 
@@ -131,22 +131,37 @@ export async function acceptInvitationByToken(
 }
 
 /**
- * Accept every outstanding (not yet accepted) invitation addressed to `email`.
+ * Accept every outstanding (not yet accepted) invitation addressed to the
+ * signing-in user's verified email.
  *
  * Called when a user signs in so that invitations created before they had an
  * account are materialised into memberships automatically. Safe to call on
  * every sign-in: invitations already accepted are skipped.
  *
- * @returns The acceptance results for each invitation processed.
+ * Security: the email used to match invitations is read from the user's CURRENT
+ * database row (lowercased), never from a caller-supplied value. This prevents a
+ * stale or spoofable email from being used to redeem invitations the user does
+ * not actually own. Matching is case-insensitive.
+ *
+ * @param params.userId - The id of the freshly-authenticated user.
+ * @returns The acceptance results for each invitation processed. Resolves to an
+ *   empty array when the user no longer exists or has no pending invitations.
  */
 export async function acceptPendingInvitationsForUser(params: {
   userId: string;
-  email: string;
 }): Promise<AcceptInvitationResult[]> {
+  const user = await db
+    .select()
+    .from(schema.users)
+    .where(eq(schema.users.id, params.userId))
+    .get();
+  if (!user) return [];
+
+  const email = user.email.toLowerCase();
   const pending = await db
     .select()
     .from(schema.invitations)
-    .where(eq(schema.invitations.email, params.email))
+    .where(sql`lower(${schema.invitations.email}) = ${email}`)
     .all();
 
   const results: AcceptInvitationResult[] = [];
