@@ -53,3 +53,10 @@ export class FileNotFoundError extends CliError {
     this.name = "FileNotFoundError";
   }
 }
+
+export class ValidationError extends CliError {
+  constructor(message = "Invalid input.") {
+    super(message, EXIT_CODES.VALIDATION_ERROR);
+    this.name = "ValidationError";
+  }
+}

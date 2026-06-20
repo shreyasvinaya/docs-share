@@ -16,6 +16,8 @@ import apiReferenceDoc from "../../../../docs/api-reference.md?raw";
 import handoffDoc from "../../../../HANDOFF.md?raw";
 import securityDoc from "../../../../SECURITY.md?raw";
 import skillsDoc from "../../../../SKILLS.md?raw";
+import secureSharingImage from "../../../../docs/assets/patra-secure-sharing.png?url";
+import workflowImage from "../../../../docs/assets/patra-workflow.png?url";
 
 type MarkdownPart =
   | { type: "heading"; depth: number; text: string }
@@ -76,6 +78,44 @@ const guides = [
     content: securityDoc,
   },
 ] as const;
+
+const guideMeta: Record<
+  (typeof guides)[number]["slug"],
+  { kicker: string; audience: string }
+> = {
+  "product-guide": {
+    kicker: "Product",
+    audience: "For teams and reviewers",
+  },
+  "agent-guide": {
+    kicker: "Agents",
+    audience: "For coding agents and automation",
+  },
+  "api-reference": {
+    kicker: "API",
+    audience: "For integrations",
+  },
+  "agent-skills": {
+    kicker: "Repo",
+    audience: "For future maintainers",
+  },
+  deployment: {
+    kicker: "Ops",
+    audience: "For production operators",
+  },
+  "self-hosting": {
+    kicker: "Hosting",
+    audience: "For self-hosted installs",
+  },
+  handoff: {
+    kicker: "Engineering",
+    audience: "For implementation context",
+  },
+  security: {
+    kicker: "Security",
+    audience: "For deployment review",
+  },
+};
 
 function slugify(value: string) {
   return value
@@ -469,9 +509,10 @@ function PublicDocsLayout({ children }: { children: ReactNode }) {
 
   return (
     <main className="min-h-screen bg-background text-foreground">
-      <header className="border-b border-border">
+      <header className="border-b border-border bg-background/90 backdrop-blur">
         <div className="mx-auto flex max-w-6xl items-center justify-between px-5 py-4">
-          <Link to="/" className="font-semibold">
+          <Link to="/" className="flex items-center gap-2 font-semibold">
+            <span className="h-2.5 w-2.5 rounded-full bg-[#0f766e]" />
             {deploymentName}
           </Link>
           <nav className="flex items-center gap-2 text-sm">
@@ -572,20 +613,29 @@ function DocsIndexPage() {
 
   return (
     <PublicDocsLayout>
-      <section className="border-b border-border">
-        <div className="mx-auto max-w-6xl px-5 py-12">
-          <p className="mb-3 text-sm font-medium uppercase text-muted-foreground">
-            Product docs
-          </p>
-          <h1 className="max-w-3xl text-4xl font-semibold leading-tight">
-            Run, use, and extend {deploymentName}.
-          </h1>
-          <p className="mt-4 max-w-3xl text-base leading-7 text-muted-foreground">
-            Choose a guide. Each guide is its own page, with normal headings,
-            links, and code blocks.
-          </p>
-          <div className="mt-6 max-w-2xl">
-            <DocsSearch />
+      <section className="overflow-hidden border-b border-border bg-[radial-gradient(circle_at_top_right,rgba(20,184,166,0.14),transparent_34%)]">
+        <div className="mx-auto grid max-w-6xl gap-8 px-5 py-12 lg:grid-cols-[0.9fr_1.1fr] lg:items-center">
+          <div>
+            <p className="mb-3 text-sm font-semibold uppercase tracking-[0.18em] text-[#0f766e] dark:text-[#5eead4]">
+              Product docs
+            </p>
+            <h1 className="max-w-3xl text-4xl font-semibold leading-tight">
+              Run, use, and extend {deploymentName} without hunting through the repo.
+            </h1>
+            <p className="mt-4 max-w-3xl text-base leading-7 text-muted-foreground">
+              Start with the workflow you need: product usage, agent publishing,
+              API calls, security review, or production deployment.
+            </p>
+            <div className="mt-6 max-w-2xl">
+              <DocsSearch />
+            </div>
+          </div>
+          <div className="rounded-lg border border-border bg-background/75 p-2 shadow-xl shadow-teal-950/10">
+            <img
+              src={workflowImage}
+              alt="Illustration of Patra's agent-to-preview publishing workflow"
+              className="aspect-[16/9] w-full rounded-md object-cover"
+            />
           </div>
         </div>
       </section>
@@ -595,11 +645,17 @@ function DocsIndexPage() {
           <Link
             key={guide.slug}
             to={`/docs/${guide.slug}`}
-            className="rounded-lg border border-border p-5 transition-colors hover:bg-muted/50"
+            className="group rounded-lg border border-border bg-background p-5 transition-colors hover:border-[#0f766e]/50 hover:bg-muted/45"
           >
-            <h2 className="text-lg font-semibold">{guide.title}</h2>
+            <span className="text-xs font-semibold uppercase tracking-[0.16em] text-[#0f766e] dark:text-[#5eead4]">
+              {guideMeta[guide.slug].kicker}
+            </span>
+            <h2 className="mt-3 text-lg font-semibold">{guide.title}</h2>
             <p className="mt-3 text-sm leading-6 text-muted-foreground">
               {guide.description}
+            </p>
+            <p className="mt-4 text-xs font-medium text-muted-foreground transition-colors group-hover:text-foreground">
+              {guideMeta[guide.slug].audience}
             </p>
           </Link>
         ))}
@@ -614,25 +670,35 @@ function GuidePage({ slug }: { slug: string }) {
 
   return (
     <PublicDocsLayout>
-      <section className="border-b border-border">
-        <div className="mx-auto max-w-6xl px-5 py-10">
-          <Link
-            to="/docs"
-            className="text-sm text-muted-foreground transition-colors hover:text-foreground"
-          >
-            Docs
-          </Link>
-          <h1 className="mt-4 max-w-3xl text-4xl font-semibold leading-tight">
-            {guide.title}
-          </h1>
-          <p className="mt-4 max-w-3xl text-base leading-7 text-muted-foreground">
-            {guide.description}
-          </p>
+      <section className="border-b border-border bg-muted/25">
+        <div className="mx-auto grid max-w-6xl gap-8 px-5 py-10 lg:grid-cols-[1fr_360px] lg:items-center">
+          <div>
+            <Link
+              to="/docs"
+              className="text-sm text-muted-foreground transition-colors hover:text-foreground"
+            >
+              Docs
+            </Link>
+            <p className="mt-5 text-xs font-semibold uppercase tracking-[0.16em] text-[#0f766e] dark:text-[#5eead4]">
+              {guideMeta[guide.slug].kicker}
+            </p>
+            <h1 className="mt-3 max-w-3xl text-4xl font-semibold leading-tight">
+              {guide.title}
+            </h1>
+            <p className="mt-4 max-w-3xl text-base leading-7 text-muted-foreground">
+              {guide.description}
+            </p>
+          </div>
+          <img
+            src={secureSharingImage}
+            alt="Illustration of secure document sharing and access controls"
+            className="hidden aspect-[16/9] w-full rounded-lg border border-border object-cover lg:block"
+          />
         </div>
       </section>
 
       <section className="mx-auto grid max-w-6xl gap-8 px-5 py-10 lg:grid-cols-[220px_1fr]">
-        <aside className="space-y-2">
+        <aside className="space-y-2 lg:sticky lg:top-4 lg:self-start">
           <DocsSearch />
           {guides.map((item) => (
             <Link
@@ -640,7 +706,7 @@ function GuidePage({ slug }: { slug: string }) {
               to={`/docs/${item.slug}`}
               className={`block rounded-lg border px-3 py-2 text-sm transition-colors ${
                 item.slug === guide.slug
-                  ? "border-primary bg-primary text-primary-foreground"
+                  ? "border-[#0f766e] bg-[#0f766e] text-white"
                   : "border-border text-muted-foreground hover:bg-muted hover:text-foreground"
               }`}
             >
@@ -648,7 +714,7 @@ function GuidePage({ slug }: { slug: string }) {
             </Link>
           ))}
         </aside>
-        <article className="min-w-0 rounded-lg border border-border p-6">
+        <article className="min-w-0 rounded-lg border border-border bg-background p-6 shadow-sm">
           <MarkdownDoc markdown={guide.content} />
         </article>
       </section>

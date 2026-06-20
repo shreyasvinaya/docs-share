@@ -1,29 +1,115 @@
 import { Command } from "commander";
-import { loadConfig, saveConfig, getApiUrl } from "../lib/config.js";
+import { loadConfig, saveConfig, getApiUrl, readEnv } from "../lib/config.js";
 import { ApiClient } from "../lib/api-client.js";
-import { output, success, error } from "../lib/output.js";
+import { output, success, error, warn } from "../lib/output.js";
 import { CliError, EXIT_CODES } from "../lib/errors.js";
 import type { AuthResponse } from "@patra/shared";
 
 export const loginCommand = new Command("login")
   .description("Authenticate with the Patra server")
-  .option("--token <token>", "API token for authentication")
+  .option("--token <token>", "API token (visible in process list / shell history)")
+  .option("--token-stdin", "Read the API token from stdin (recommended)")
   .option("--status", "Check current authentication status")
-  .action(async (opts: { token?: string; status?: boolean }) => {
-    if (opts.status) {
-      await checkStatus();
-      return;
-    }
+  .action(
+    async (opts: {
+      token?: string;
+      tokenStdin?: boolean;
+      status?: boolean;
+    }) => {
+      if (opts.status) {
+        await checkStatus();
+        return;
+      }
 
-    if (!opts.token) {
+      const token = await resolveLoginToken(opts);
+
+      if (!token) {
+        throw new CliError(
+          "Token is required. Provide it via --token-stdin (recommended), " +
+            "the PATRA_TOKEN env var, or --token <TOKEN>.",
+          EXIT_CODES.VALIDATION_ERROR
+        );
+      }
+
+      await authenticate(token);
+    }
+  );
+
+/**
+ * Resolve the login token using the documented precedence:
+ *   explicit flag/stdin > env var > (nothing — caller errors).
+ *
+ * --token-stdin and the PATRA_TOKEN/DOCS_SHARE_TOKEN env vars keep the secret
+ * out of the process list and shell history; --token is supported for
+ * convenience but warns that it is visible.
+ */
+async function resolveLoginToken(opts: {
+  token?: string;
+  tokenStdin?: boolean;
+}): Promise<string | undefined> {
+  if (opts.tokenStdin && opts.token) {
+    throw new CliError(
+      "Use either --token or --token-stdin, not both.",
+      EXIT_CODES.VALIDATION_ERROR
+    );
+  }
+
+  if (opts.tokenStdin) {
+    const token = (await readStdin()).trim();
+    if (!token) {
       throw new CliError(
-        "Token is required. Usage: patra login --token <TOKEN>",
+        "--token-stdin was set but no token was read from stdin.",
         EXIT_CODES.VALIDATION_ERROR
       );
     }
+    return token;
+  }
 
-    await authenticate(opts.token);
+  if (opts.token) {
+    warn(
+      "The --token value is visible in your process list and shell history. " +
+        "Prefer --token-stdin or the PATRA_TOKEN env var."
+    );
+    return opts.token;
+  }
+
+  const envToken = readEnv("TOKEN");
+  if (envToken) return envToken;
+
+  return undefined;
+}
+
+/**
+ * Read all of stdin as a UTF-8 string. Listeners are attached once and removed
+ * on settle (success or error) so they don't leak across the process lifetime,
+ * and stdin is paused again afterwards so we never leave it resumed.
+ */
+async function readStdin(): Promise<string> {
+  const chunks: Buffer[] = [];
+  const stdin = process.stdin;
+  return new Promise<string>((resolve, reject) => {
+    const onData = (chunk: Buffer) => chunks.push(chunk);
+    const onEnd = () => {
+      cleanup();
+      resolve(Buffer.concat(chunks).toString("utf-8"));
+    };
+    const onError = (err: Error) => {
+      cleanup();
+      reject(err);
+    };
+    function cleanup(): void {
+      stdin.off("data", onData);
+      stdin.off("end", onEnd);
+      stdin.off("error", onError);
+      // Don't leave stdin flowing for the rest of the process.
+      stdin.pause();
+    }
+
+    stdin.on("data", onData);
+    stdin.on("end", onEnd);
+    stdin.on("error", onError);
   });
+}
 
 async function authenticate(token: string): Promise<void> {
   const config = loadConfig();
@@ -51,7 +137,7 @@ async function checkStatus(): Promise<void> {
   const config = loadConfig();
 
   if (!config.auth?.token) {
-    error("Not authenticated. Run `patra login --token <TOKEN>` to log in.");
+    error("Not authenticated. Run `patra login --token-stdin` to log in.");
     output({ authenticated: false });
     process.exitCode = EXIT_CODES.AUTH_ERROR;
     return;
@@ -72,7 +158,9 @@ async function checkStatus(): Promise<void> {
       apiUrl,
     });
   } catch {
-    error("Token is invalid or expired. Run `patra login --token <TOKEN>` to re-authenticate.");
+    error(
+      "Token is invalid or expired. Run `patra login --token-stdin` to re-authenticate."
+    );
     output({ authenticated: false });
     process.exitCode = EXIT_CODES.AUTH_ERROR;
   }

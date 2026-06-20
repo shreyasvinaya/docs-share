@@ -1,5 +1,5 @@
 import { ApiClient } from "./api-client.js";
-import { NotFoundError } from "./errors.js";
+import { NotFoundError, ValidationError } from "./errors.js";
 import type { Team } from "@patra/shared";
 
 export interface ResolvedTarget {
@@ -8,6 +8,49 @@ export interface ResolvedTarget {
   ownerType: "user" | "team";
   /** Display label: "personal" or the team slug */
   label: string;
+}
+
+/**
+ * Defense-in-depth client-side validation for a slash-separated relative path
+ * (a target subfolder or an upload's relative name). Rejects path segments that
+ * could escape the intended directory or smuggle control characters past the
+ * server: `..` traversal, absolute paths, empty segments, NUL/control chars, and
+ * backslashes (which some servers treat as separators). The server is the real
+ * authority, but a bad path should never leave the client.
+ */
+export function validatePathSegments(value: string, label = "path"): void {
+  if (value === "") return;
+
+  if (value.startsWith("/")) {
+    throw new ValidationError(
+      `Invalid ${label} "${value}": absolute paths are not allowed.`
+    );
+  }
+
+  const segments = value.split("/");
+  for (const seg of segments) {
+    if (seg === "" || seg === ".") {
+      throw new ValidationError(
+        `Invalid ${label} "${value}": contains an empty or "." segment.`
+      );
+    }
+    if (seg === "..") {
+      throw new ValidationError(
+        `Invalid ${label} "${value}": ".." path traversal is not allowed.`
+      );
+    }
+    if (seg.includes("\\")) {
+      throw new ValidationError(
+        `Invalid ${label} "${value}": backslashes are not allowed.`
+      );
+    }
+    // Reject NUL and other C0/C1 control characters.
+    if (/[\u0000-\u001f\u007f-\u009f]/.test(seg)) {
+      throw new ValidationError(
+        `Invalid ${label} "${value}": contains control characters.`
+      );
+    }
+  }
 }
 
 /**
@@ -26,6 +69,10 @@ export async function resolveTarget(
   const parts = target.split("/");
   const owner = parts[0];
   const subfolder = parts.slice(1).join("/");
+
+  // Defense in depth: reject a traversal/control-char subfolder before it ever
+  // reaches the API.
+  validatePathSegments(subfolder, "subfolder");
 
   if (owner === "personal") {
     const me = await client.get<{
