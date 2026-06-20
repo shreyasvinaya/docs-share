@@ -371,6 +371,49 @@ export const sessions = sqliteTable(
   ]
 );
 
+export const webhooks = sqliteTable(
+  "webhooks",
+  {
+    id: text("id").primaryKey(),
+    ownerUserId: text("owner_user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    url: text("url").notNull(),
+    secret: text("secret").notNull(),
+    events: text("events").notNull().default("[]"),
+    active: integer("active", { mode: "boolean" }).notNull().default(true),
+    createdAt: text("created_at")
+      .notNull()
+      .default(sql`(CURRENT_TIMESTAMP)`),
+    updatedAt: text("updated_at")
+      .notNull()
+      .default(sql`(CURRENT_TIMESTAMP)`),
+  },
+  (table) => [index("webhooks_owner_idx").on(table.ownerUserId)]
+);
+
+export const webhookDeliveries = sqliteTable(
+  "webhook_deliveries",
+  {
+    id: text("id").primaryKey(),
+    webhookId: text("webhook_id")
+      .notNull()
+      .references(() => webhooks.id, { onDelete: "cascade" }),
+    event: text("event").notNull(),
+    status: text("status", { enum: ["success", "failed"] }).notNull(),
+    responseCode: integer("response_code"),
+    attempts: integer("attempts").notNull().default(0),
+    error: text("error"),
+    createdAt: text("created_at")
+      .notNull()
+      .default(sql`(CURRENT_TIMESTAMP)`),
+  },
+  (table) => [
+    index("webhook_deliveries_webhook_idx").on(table.webhookId),
+    index("webhook_deliveries_created_at_idx").on(table.createdAt),
+  ]
+);
+
 export const githubSyncs = sqliteTable(
   "github_syncs",
   {

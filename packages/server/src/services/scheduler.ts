@@ -1,6 +1,7 @@
 import { config } from "../lib/config.js";
 import { sweepExpiredShares } from "./expiredShares.js";
 import { retryFailedGitHubSyncs } from "./githubSyncRetry.js";
+import { cleanupWebhookDeliveries } from "./webhookCleanup.js";
 
 export interface ScheduledJob {
   name: string;
@@ -30,6 +31,18 @@ export function buildScheduledJobs(): ScheduledJob[] {
       name: "github-sync-retry",
       intervalMs: config.GITHUB_SYNC_RETRY_INTERVAL_MS,
       run: () => retryFailedGitHubSyncs(config.GITHUB_SYNC_RETRY_BATCH),
+    });
+  }
+
+  if (config.WEBHOOK_CLEANUP_INTERVAL_MS > 0) {
+    jobs.push({
+      name: "webhook-delivery-cleanup",
+      intervalMs: config.WEBHOOK_CLEANUP_INTERVAL_MS,
+      run: () =>
+        cleanupWebhookDeliveries({
+          retentionDays: config.WEBHOOK_DELIVERY_RETENTION_DAYS,
+          maxPerWebhook: config.WEBHOOK_DELIVERY_MAX_PER_HOOK,
+        }),
     });
   }
 

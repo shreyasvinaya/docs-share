@@ -29,3 +29,17 @@
   `/user/repos?visibility=private` response before changing filters. If GitHub
   returns zero private repos for the stored PAT, show a permission/access notice
   instead of silently presenting a public-only picker.
+- SSRF host guards must parse IP literals with a real library (ipaddr.js), not
+  hand-rolled string checks. Node/Bun normalize bracketed IPv6 hosts to the
+  hex-compressed IPv4-mapped form (`[::ffff:127.0.0.1]` -> `::ffff:7f00:1`), so
+  any guard that only matched the dotted `::ffff:a.b.c.d` form was bypassable.
+  Decode IPv4-mapped/translated IPv6 to the embedded IPv4 and re-check ranges.
+- Outbound request pinning (custom `lookup`) is defeated by keep-alive: a pooled
+  socket from an earlier request skips the pinned lookup entirely. Use a
+  per-request `http(s).Agent({ keepAlive: false, lookup })` and destroy it after.
+- Webhook/event dispatch must be fire-and-forget in request handlers. Schedule
+  it AFTER the DB mutation commits, never await it, and wrap so delivery errors
+  are caught/logged internally and never propagate into the response.
+- Append-only log tables (e.g. webhook_deliveries) need a retention job: index
+  `created_at`, prune by age and a per-row cap, and wire it as a disable-able
+  scheduler job.

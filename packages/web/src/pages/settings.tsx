@@ -14,9 +14,10 @@ import { UserAvatar } from "@/components/common/user-avatar";
 import { cn } from "@/lib/utils";
 import { getGitHubIntegrationView } from "@/lib/github-integration-status";
 import { SetupChecklist } from "@/components/setup/setup-checklist";
+import { WebhooksPanel } from "@/components/settings/webhooks-panel";
 import { useSetupStatus } from "@/hooks/use-setup";
 
-type Tab = "profile" | "tokens" | "integrations" | "setup";
+type Tab = "profile" | "tokens" | "integrations" | "webhooks" | "setup";
 
 export function SettingsPage() {
   const { data: session } = useSession();
@@ -25,6 +26,7 @@ export function SettingsPage() {
   const [tab, setTab] = useState<Tab>(
     initialTab === "integrations" ||
       initialTab === "tokens" ||
+      initialTab === "webhooks" ||
       initialTab === "setup"
       ? initialTab
       : "profile"
@@ -72,6 +74,18 @@ export function SettingsPage() {
         >
           Integrations
         </button>
+        <button
+          type="button"
+          onClick={() => setTab("webhooks")}
+          className={cn(
+            "border-b-2 px-4 py-2 text-sm font-medium transition-colors",
+            activeTab === "webhooks"
+              ? "border-primary text-foreground"
+              : "border-transparent text-muted-foreground hover:text-foreground",
+          )}
+        >
+          Webhooks
+        </button>
         {isSysadmin && (
           <button
             type="button"
@@ -91,6 +105,7 @@ export function SettingsPage() {
       {activeTab === "profile" && <ProfileTab />}
       {activeTab === "tokens" && <TokensTab />}
       {activeTab === "integrations" && <IntegrationsTab />}
+      {activeTab === "webhooks" && <WebhooksPanel />}
       {activeTab === "setup" && isSysadmin && <SetupTab />}
     </div>
   );

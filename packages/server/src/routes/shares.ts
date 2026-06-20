@@ -11,6 +11,7 @@ import {
   sendShareEmailNotifications,
   sendSlackNotification,
 } from "../services/notifications.js";
+import { scheduleWebhookDispatch } from "../services/webhooks.js";
 import {
   aggregateViewStats,
   recordAuditEntrySafe,
@@ -75,6 +76,8 @@ async function checkRepoAccess(
 
 async function notifyShareCreated(params: {
   createdById: string;
+  shareId: string;
+  repoId: string;
   shareType: "email" | "team" | "public_link";
   permission: "read" | "write";
   path: string | null;
@@ -87,6 +90,19 @@ async function notifyShareCreated(params: {
     .get();
   const sharerName = creator?.displayName ?? creator?.email ?? "Someone";
   const resourceLabel = params.path || "All files";
+
+  // Fire-and-forget: a slow webhook endpoint must not delay the share response.
+  scheduleWebhookDispatch({
+    ownerUserId: params.createdById,
+    event: "share.created",
+    data: {
+      shareId: params.shareId,
+      repoId: params.repoId,
+      path: params.path,
+      shareType: params.shareType,
+      permission: params.permission,
+    },
+  });
 
   try {
     if (params.shareType === "email" && params.recipientEmails?.length) {
@@ -239,6 +255,8 @@ app.post("/", requireAuth, async (c) => {
 
     await notifyShareCreated({
       createdById: userId,
+      shareId,
+      repoId,
       shareType: "email",
       permission: sharePermission,
       path: path || null,
@@ -337,6 +355,8 @@ app.post("/", requireAuth, async (c) => {
 
       await notifyShareCreated({
         createdById: userId,
+        shareId: existingShare.id,
+        repoId,
         shareType: "public_link",
         permission: "read",
         path: path || null,
@@ -396,6 +416,8 @@ app.post("/", requireAuth, async (c) => {
 
     await notifyShareCreated({
       createdById: userId,
+      shareId,
+      repoId,
       shareType: "public_link",
       permission: "read",
       path: path || null,
@@ -483,6 +505,8 @@ app.post("/", requireAuth, async (c) => {
 
       await notifyShareCreated({
         createdById: userId,
+        shareId: existingShare.id,
+        repoId,
         shareType: "team",
         permission: sharePermission,
         path: path || null,
@@ -522,6 +546,8 @@ app.post("/", requireAuth, async (c) => {
 
     await notifyShareCreated({
       createdById: userId,
+      shareId,
+      repoId,
       shareType: "team",
       permission: sharePermission,
       path: path || null,
@@ -703,6 +729,19 @@ app.delete("/:shareId", requireAuth, async (c) => {
   }
 
   await db.delete(schema.shares).where(eq(schema.shares.id, shareId)).run();
+
+  // Fire-and-forget after the delete has committed: do not block the response
+  // on webhook delivery.
+  scheduleWebhookDispatch({
+    ownerUserId: share.createdById,
+    event: "share.revoked",
+    data: {
+      shareId: share.id,
+      repoId: share.repoId,
+      path: share.path,
+      shareType: share.shareType,
+    },
+  });
 
   recordAuditEntrySafe({
     actorUserId: userId,
