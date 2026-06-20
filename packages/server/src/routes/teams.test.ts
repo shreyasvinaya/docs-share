@@ -7,6 +7,8 @@ import teamRoutes from "./teams.js";
 
 const cleanup = {
   shareIds: [] as string[],
+  inviteIds: [] as string[],
+  memberIds: [] as string[],
   repoIds: [] as string[],
   teamIds: [] as string[],
   userIds: [] as string[],
@@ -15,6 +17,10 @@ const cleanup = {
 afterEach(async () => {
   if (cleanup.shareIds.length)
     await db.delete(schema.shares).where(inArray(schema.shares.id, cleanup.shareIds)).run();
+  if (cleanup.inviteIds.length)
+    await db.delete(schema.invitations).where(inArray(schema.invitations.id, cleanup.inviteIds)).run();
+  if (cleanup.memberIds.length)
+    await db.delete(schema.teamMembers).where(inArray(schema.teamMembers.id, cleanup.memberIds)).run();
   if (cleanup.repoIds.length)
     await db.delete(schema.repos).where(inArray(schema.repos.id, cleanup.repoIds)).run();
   if (cleanup.teamIds.length)
@@ -22,6 +28,8 @@ afterEach(async () => {
   if (cleanup.userIds.length)
     await db.delete(schema.users).where(inArray(schema.users.id, cleanup.userIds)).run();
   cleanup.shareIds = [];
+  cleanup.inviteIds = [];
+  cleanup.memberIds = [];
   cleanup.repoIds = [];
   cleanup.teamIds = [];
   cleanup.userIds = [];
@@ -146,5 +154,187 @@ describe("DELETE /api/teams/:teamId/members/:userId", () => {
       { method: "DELETE" }
     );
     expect(res.status).toBe(400);
+  });
+});
+
+describe("POST /api/teams/:teamId/members (invitations)", () => {
+  test("creates an invitation row when the invitee has no account yet", async () => {
+    const { ownerId, teamId } = await seedTeamWithMember();
+    const email = `${testId("invitee")}@example.com`;
+
+    const res = await appAs(ownerId).request(
+      `/api/teams/${teamId}/members`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email, role: "admin" }),
+      }
+    );
+    expect(res.status).toBe(201);
+    const body = (await res.json()) as { data: { id: string; pending: boolean; token: string } };
+    expect(body.data.pending).toBe(true);
+    expect(body.data.token).toBeTruthy();
+    cleanup.inviteIds.push(body.data.id);
+
+    const invite = await db
+      .select()
+      .from(schema.invitations)
+      .where(eq(schema.invitations.id, body.data.id))
+      .get();
+    expect(invite?.email).toBe(email);
+    expect(invite?.role).toBe("admin");
+    expect(invite?.teamId).toBe(teamId);
+    expect(invite?.acceptedAt).toBeNull();
+
+    // No placeholder teamMembers row was created.
+    const members = await db
+      .select()
+      .from(schema.teamMembers)
+      .where(eq(schema.teamMembers.teamId, teamId))
+      .all();
+    expect(members.every((m) => !m.userId.startsWith("pending:"))).toBe(true);
+  });
+
+  test("rejects a duplicate pending invite to the same email", async () => {
+    const { ownerId, teamId } = await seedTeamWithMember();
+    const email = `${testId("dup")}@example.com`;
+
+    const first = await appAs(ownerId).request(`/api/teams/${teamId}/members`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email }),
+    });
+    const firstBody = (await first.json()) as { data: { id: string } };
+    cleanup.inviteIds.push(firstBody.data.id);
+
+    const second = await appAs(ownerId).request(`/api/teams/${teamId}/members`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email }),
+    });
+    expect(second.status).toBe(409);
+  });
+});
+
+describe("POST /api/teams/invitations/:token/accept", () => {
+  test("converts an invitation into a membership for the accepting user", async () => {
+    const { ownerId, teamId } = await seedTeamWithMember();
+    const email = `${testId("accept")}@example.com`;
+
+    const inviteRes = await appAs(ownerId).request(`/api/teams/${teamId}/members`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email, role: "member" }),
+    });
+    const inviteBody = (await inviteRes.json()) as { data: { id: string; token: string } };
+    cleanup.inviteIds.push(inviteBody.data.id);
+
+    // The invited person signs up later.
+    const inviteeId = testId("invitee");
+    await db.insert(schema.users).values({
+      id: inviteeId,
+      email,
+      displayName: "Invitee",
+      googleId: `g_${inviteeId}`,
+    });
+    cleanup.userIds.push(inviteeId);
+
+    const acceptRes = await appAs(inviteeId).request(
+      `/api/teams/invitations/${inviteBody.data.token}/accept`,
+      { method: "POST" }
+    );
+    expect(acceptRes.status).toBe(200);
+    const acceptBody = (await acceptRes.json()) as {
+      data: { membershipId: string; alreadyMember: boolean };
+    };
+    expect(acceptBody.data.alreadyMember).toBe(false);
+    cleanup.memberIds.push(acceptBody.data.membershipId);
+
+    const membership = await db
+      .select()
+      .from(schema.teamMembers)
+      .where(
+        and(
+          eq(schema.teamMembers.teamId, teamId),
+          eq(schema.teamMembers.userId, inviteeId)
+        )
+      )
+      .get();
+    expect(membership?.role).toBe("member");
+  });
+
+  test("returns 404 for an unknown token", async () => {
+    const { ownerId } = await seedTeamWithMember();
+    const res = await appAs(ownerId).request(
+      `/api/teams/invitations/${testId("nope")}/accept`,
+      { method: "POST" }
+    );
+    expect(res.status).toBe(404);
+  });
+
+  test("returns a generic 404 (not 403) on email mismatch and leaves the invite unconsumed", async () => {
+    const { ownerId, teamId } = await seedTeamWithMember();
+    const email = `${testId("intended")}@example.com`;
+
+    const inviteRes = await appAs(ownerId).request(`/api/teams/${teamId}/members`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email, role: "member" }),
+    });
+    const inviteBody = (await inviteRes.json()) as { data: { id: string; token: string } };
+    cleanup.inviteIds.push(inviteBody.data.id);
+
+    // A different, authenticated user (wrong email) tries to redeem the token.
+    const intruderId = testId("intruder");
+    await db.insert(schema.users).values({
+      id: intruderId,
+      email: `${testId("intruder")}@example.com`,
+      displayName: "Intruder",
+      googleId: `g_${intruderId}`,
+    });
+    cleanup.userIds.push(intruderId);
+
+    const acceptRes = await appAs(intruderId).request(
+      `/api/teams/invitations/${inviteBody.data.token}/accept`,
+      { method: "POST" }
+    );
+    // Mismatch is indistinguishable from an unknown token: same generic 404.
+    expect(acceptRes.status).toBe(404);
+    const body = (await acceptRes.json()) as { error: string };
+    expect(body.error).toBe("Invitation not found");
+
+    // No teamMembers row was created for the intruder.
+    const membership = await db
+      .select()
+      .from(schema.teamMembers)
+      .where(
+        and(
+          eq(schema.teamMembers.teamId, teamId),
+          eq(schema.teamMembers.userId, intruderId)
+        )
+      )
+      .get();
+    expect(membership).toBeUndefined();
+
+    // The invitation was NOT consumed (acceptedAt remains null).
+    const invite = await db
+      .select()
+      .from(schema.invitations)
+      .where(eq(schema.invitations.id, inviteBody.data.id))
+      .get();
+    expect(invite?.acceptedAt).toBeNull();
+  });
+
+  test("rejects an unauthenticated accept with 401", async () => {
+    // Mount the routes without pre-setting userId so the router's own
+    // requireAuth middleware runs.
+    const app = new Hono<AppEnv>();
+    app.route("/api/teams", teamRoutes);
+
+    const res = await app.request(
+      `/api/teams/invitations/${testId("tok")}/accept`,
+      { method: "POST" }
+    );
+    expect(res.status).toBe(401);
   });
 });

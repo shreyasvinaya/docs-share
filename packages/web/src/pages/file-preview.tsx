@@ -1,5 +1,9 @@
 import { useParams, useNavigate } from "react-router";
-import { useCommits, useFiles } from "@/hooks/use-files";
+import {
+  useCommits,
+  useFiles,
+  useRestoreVersion,
+} from "@/hooks/use-files";
 import { useEffect, useState } from "react";
 import { ShareDialog } from "@/components/sharing/share-dialog";
 import { FileTree } from "@/components/files/file-tree";
@@ -12,10 +16,36 @@ export function FilePreviewPage() {
   const [showShare, setShowShare] = useState(false);
 
   const { data: commits } = useCommits(repoId, filePath);
+  const restoreVersion = useRestoreVersion(repoId);
+  const [restoringSha, setRestoringSha] = useState<string | null>(null);
   const { data: rootFiles, isLoading: rootFilesLoading } = useFiles(
     repoId,
     filePath ? undefined : ""
   );
+
+  const handleRestore = (sha: string) => {
+    if (!filePath) return;
+    if (
+      !window.confirm(
+        "Restore this version? A new commit will be created with the selected content.",
+      )
+    ) {
+      return;
+    }
+    setRestoringSha(sha);
+    restoreVersion.mutate(
+      { sha, path: filePath },
+      {
+        onSettled: () => setRestoringSha(null),
+        onSuccess: () => {
+          // Reload the iframe to reflect restored content.
+          if (repoId) {
+            navigate(`/preview/${repoId}/${filePath}`, { replace: true });
+          }
+        },
+      },
+    );
+  };
 
   useEffect(() => {
     if (!repoId || filePath || !rootFiles) return;
@@ -136,7 +166,7 @@ export function FilePreviewPage() {
             </div>
             {commits && commits.length > 0 ? (
               <ul className="divide-y divide-border">
-                {commits.map((commit) => (
+                {commits.map((commit, index) => (
                   <li key={commit.sha} className="px-4 py-3">
                     <p className="text-sm font-medium leading-snug">
                       {commit.message}
@@ -152,9 +182,28 @@ export function FilePreviewPage() {
                         })}
                       </span>
                     </div>
-                    <p className="mt-0.5 font-mono text-[10px] text-muted-foreground">
-                      {commit.sha.slice(0, 7)}
-                    </p>
+                    <div className="mt-0.5 flex items-center justify-between gap-2">
+                      <p className="font-mono text-[10px] text-muted-foreground">
+                        {commit.sha.slice(0, 7)}
+                        {index === 0 && (
+                          <span className="ml-1 not-italic text-primary">
+                            (current)
+                          </span>
+                        )}
+                      </p>
+                      {filePath && index > 0 && (
+                        <button
+                          type="button"
+                          onClick={() => handleRestore(commit.sha)}
+                          disabled={restoreVersion.isPending}
+                          className="rounded border border-border px-2 py-0.5 text-[11px] transition-colors hover:bg-muted disabled:opacity-50"
+                        >
+                          {restoringSha === commit.sha
+                            ? "Restoring..."
+                            : "Restore this version"}
+                        </button>
+                      )}
+                    </div>
                   </li>
                 ))}
               </ul>

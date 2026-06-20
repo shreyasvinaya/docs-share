@@ -5,6 +5,7 @@ import { LoginPage } from "@/pages/login";
 import { ShareGatePage } from "@/pages/share-gate";
 import { PublicDocsPage } from "@/pages/public-docs";
 import { PublicHomePage } from "@/pages/public-home";
+import { SetupPage } from "@/pages/setup";
 import { DashboardPage } from "@/pages/dashboard";
 import { DraftsPage } from "@/pages/drafts";
 import { DraftFormsPage } from "@/pages/draft-forms";
@@ -15,6 +16,7 @@ import { TeamsIndexPage } from "@/pages/teams-index";
 import { TeamOverviewPage } from "@/pages/team-overview";
 import { TeamSettingsPage } from "@/pages/team-settings";
 import { SettingsPage } from "@/pages/settings";
+import { AdminPage } from "@/pages/admin";
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const { data, isLoading, isError } = useSession();
@@ -36,6 +38,7 @@ export function App() {
         <Route path="/" element={<PublicHomePage />} />
         <Route path="/docs" element={<PublicDocsPage />} />
         <Route path="/docs/:guide" element={<PublicDocsPage />} />
+        <Route path="/setup" element={<SetupPage />} />
         <Route path="/login" element={<LoginPage />} />
         <Route path="/share-gate" element={<ShareGatePage />} />
         <Route
@@ -60,6 +63,7 @@ export function App() {
             element={<TeamSettingsPage />}
           />
           <Route path="settings" element={<SettingsPage />} />
+          <Route path="admin" element={<AdminPage />} />
         </Route>
       </Routes>
     </BrowserRouter>

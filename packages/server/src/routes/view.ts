@@ -2,13 +2,37 @@ import { Hono, type Context } from "hono";
 import { eq, and } from "drizzle-orm";
 import { db, schema } from "../db/index.js";
 import { requireAuth } from "../middleware/requireAuth.js";
+import { publicRateLimiter } from "../lib/rateLimiters.js";
 import { config } from "../lib/config.js";
 import { hashToken } from "../lib/crypto.js";
 import { normalizeRelativePath, resolveInside } from "../lib/security.js";
+import {
+  isHtmlContentType,
+  recordViewFromRequest,
+  type ViewTargetType,
+} from "../services/analytics.js";
 import { stat } from "fs/promises";
 import type { AppEnv } from "../lib/types.js";
 
 const app = new Hono<AppEnv>();
+
+/**
+ * Records a page view for a successfully served response, fire-and-forget.
+ *
+ * Only counts genuine page loads: the response must be a 2xx HTML document.
+ * Failed/redirect responses and sub-asset requests (css/js/images) are ignored
+ * so 404 paths and asset fetches never create view events.
+ */
+function recordServedView(
+  targetType: ViewTargetType,
+  targetId: string,
+  req: Request,
+  response: Response
+): void {
+  if (!response.ok) return;
+  if (!isHtmlContentType(response.headers.get("content-type"))) return;
+  recordViewFromRequest(targetType, targetId, req);
+}
 
 function securityHeaders(): Record<string, string> {
   return {
@@ -293,7 +317,7 @@ async function gateOrgAccess(
  * No auth required for "public" links.
  * "org" links require auth + matching email domain.
  */
-app.get("/public/:token/*", async (c) => {
+app.get("/public/:token/*", publicRateLimiter, async (c) => {
   const token = c.req.param("token");
   const publicPrefix = `/view/public/${token}/`;
   const filePath = c.req.path.startsWith(publicPrefix)
@@ -335,13 +359,19 @@ app.get("/public/:token/*", async (c) => {
     return c.json({ error: "Invalid path" }, 400);
   }
 
-  return serveFile(worktreeBase, resolvedRelativePath, c.req.path);
+  const response = await serveFile(
+    worktreeBase,
+    resolvedRelativePath,
+    c.req.path
+  );
+  recordServedView("public", share.id, c.req.raw, response);
+  return response;
 });
 
 /**
  * Also handle /public/:token with no trailing path (for file-level shares).
  */
-app.get("/public/:token", async (c) => {
+app.get("/public/:token", publicRateLimiter, async (c) => {
   const token = c.req.param("token");
 
   const share = await db
@@ -380,7 +410,13 @@ app.get("/public/:token", async (c) => {
     return c.json({ error: "Invalid path" }, 400);
   }
 
-  return serveFile(worktreeBase, normalizedSharePath, c.req.path);
+  const response = await serveFile(
+    worktreeBase,
+    normalizedSharePath,
+    c.req.path
+  );
+  recordServedView("public", share.id, c.req.raw, response);
+  return response;
 });
 
 app.get("/:repoId", requireAuth, async (c) => {

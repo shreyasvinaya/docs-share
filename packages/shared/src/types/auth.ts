@@ -7,6 +7,7 @@ export const apiTokenSchema = z.object({
   scopes: z.string(),
   expiresAt: z.string().nullable(),
   lastUsedAt: z.string().nullable(),
+  revokedAt: z.string().nullable().optional(),
   createdAt: z.string(),
 });
 
