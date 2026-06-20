@@ -15,8 +15,11 @@ import shareRoutes from "./routes/shares.js";
 import auditRoutes from "./routes/audit.js";
 import internalRoutes from "./routes/internal.js";
 import viewRoutes from "./routes/view.js";
+import setupRoutes from "./routes/setup.js";
 import gitRoutes from "./git/smartHttp.js";
 import { ensureRepoDir } from "./git/repoManager.js";
+import { openApiSpec } from "./docs/openapi.js";
+import { buildLlmsTxt } from "./docs/llms.js";
 import { config } from "./lib/config.js";
 import { resolveInside } from "./lib/security.js";
 import type { AppEnv } from "./lib/types.js";
@@ -40,6 +43,7 @@ app.route("/api/files", fileRoutes);
 app.route("/api/drafts", draftRoutes);
 app.route("/api/shares", shareRoutes);
 app.route("/api/audit", auditRoutes);
+app.route("/api/setup", setupRoutes);
 
 app.route("/git", gitRoutes);
 app.route("/internal", internalRoutes);
@@ -60,6 +64,17 @@ app.get("/draft-content/:draftId", (c) =>
 );
 
 app.get("/health", (c) => c.json({ ok: true }));
+
+// Public API documentation. The OpenAPI spec covers every endpoint; llms.txt
+// is a concise machine-readable summary for LLMs and agents.
+app.get("/openapi.json", (c) => c.json(openApiSpec));
+
+app.get("/llms.txt", (c) =>
+  c.text(buildLlmsTxt({ appUrl: config.APP_URL, apiUrl: config.API_URL }), 200, {
+    "Content-Type": "text/plain; charset=utf-8",
+    "Cache-Control": "public, max-age=3600",
+  })
+);
 
 function staticContentType(path: string): string {
   const ext = path.split(".").pop()?.toLowerCase();

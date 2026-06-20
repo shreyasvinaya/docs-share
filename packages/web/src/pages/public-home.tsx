@@ -1,6 +1,7 @@
 import { Link } from "react-router";
 import { PublicAuthAction } from "@/components/layout/public-auth-action";
 import { PublicThemeControl } from "@/components/layout/public-theme-control";
+import { useDeploymentName } from "@/hooks/use-setup";
 
 const workflows = [
   {
@@ -27,6 +28,8 @@ const capabilities = [
 ];
 
 export function PublicHomePage() {
+  const deploymentName = useDeploymentName();
+
   return (
     <main className="min-h-screen bg-background text-foreground">
       <header className="border-b border-border">
@@ -37,7 +40,7 @@ export function PublicHomePage() {
                 <path strokeLinecap="round" strokeLinejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 00-3.375-3.375h-1.5A1.125 1.125 0 0113.5 7.125v-1.5a3.375 3.375 0 00-3.375-3.375H8.25m0 12.75h7.5m-7.5 3H12M10.5 2.25H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 00-9-9z" />
               </svg>
             </span>
-            docs-share
+            {deploymentName}
           </Link>
           <nav className="flex items-center gap-2 text-sm">
             <Link to="/docs" className="rounded-lg px-3 py-2 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground">
@@ -59,7 +62,7 @@ export function PublicHomePage() {
               Give coding agents a private place to publish the HTML they want you to inspect.
             </h1>
             <p className="mt-5 max-w-2xl text-lg leading-8 text-muted-foreground">
-              docs-share turns agent-generated plans, reports, dashboards, and static prototypes into signed-in preview links with team sharing, versioned storage, and CLI-first publishing.
+              {deploymentName} turns agent-generated plans, reports, dashboards, and static prototypes into signed-in preview links with team sharing, versioned storage, and CLI-first publishing.
             </p>
             <div className="mt-8 flex flex-wrap gap-3">
               <PublicAuthAction

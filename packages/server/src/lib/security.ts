@@ -3,6 +3,8 @@ import { isAbsolute, relative, resolve } from "path";
 const INSECURE_SECRET_VALUES = new Set([
   "dev-secret-change-in-production",
   "dev-hook-secret-change-in-production",
+  "dev-draft-content-secret-change-in-production",
+  "dev-github-token-secret-change-in-production",
   "change-this-to-a-random-string",
   "",
 ]);

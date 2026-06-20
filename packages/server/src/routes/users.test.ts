@@ -2,16 +2,24 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { Hono } from "hono";
 import { eq, inArray } from "drizzle-orm";
 import { db, schema } from "../db/index.js";
+import { config } from "../lib/config.js";
 import { hashToken } from "../lib/crypto.js";
+import {
+  isGitHubAppOAuthConfigured,
+} from "../services/githubApp.js";
 import type { AppEnv } from "../lib/types.js";
 import userRoutes from "./users.js";
 
 const app = new Hono<AppEnv>();
 app.route("/api/users", userRoutes);
 
+const realFetch = globalThis.fetch;
+
 const cleanup = {
   tokenIds: [] as string[],
   userIds: [] as string[],
+  clientId: null as string | null,
+  clientSecret: null as string | null,
 };
 
 afterEach(async () => {
@@ -27,8 +35,13 @@ afterEach(async () => {
       .where(inArray(schema.users.id, cleanup.userIds))
       .run();
   }
+  if (cleanup.clientId !== null) config.GITHUB_APP_CLIENT_ID = cleanup.clientId;
+  if (cleanup.clientSecret !== null) config.GITHUB_APP_CLIENT_SECRET = cleanup.clientSecret;
+  globalThis.fetch = realFetch;
   cleanup.tokenIds = [];
   cleanup.userIds = [];
+  cleanup.clientId = null;
+  cleanup.clientSecret = null;
 });
 
 function testId(prefix: string): string {
@@ -67,7 +80,194 @@ function authHeaders(token: string): HeadersInit {
   };
 }
 
-describe("GitHub token settings routes", () => {
+describe("GitHub integration settings routes", () => {
+  test("returns the deployment role for the current user", async () => {
+    const { token, userId } = await seedUserWithToken();
+    await db
+      .update(schema.users)
+      .set({ role: "sysadmin" })
+      .where(eq(schema.users.id, userId))
+      .run();
+
+    const res = await app.request("/api/users/me", {
+      headers: authHeaders(token),
+    });
+    const body = (await res.json()) as { data: { role: string } };
+
+    expect(res.status).toBe(200);
+    expect(body.data.role).toBe("sysadmin");
+  });
+
+  test("stores GitHub App installation status from a validated callback", async () => {
+    const { token, userId } = await seedUserWithToken();
+    const state = "state_test_github_app";
+
+    cleanup.clientId = config.GITHUB_APP_CLIENT_ID;
+    cleanup.clientSecret = config.GITHUB_APP_CLIENT_SECRET;
+    config.GITHUB_APP_CLIENT_ID = "test-client-id";
+    config.GITHUB_APP_CLIENT_SECRET = "test-client-secret";
+
+    globalThis.fetch = (async (input: RequestInfo | URL) => {
+      const url = typeof input === "string" ? input : input.toString();
+      if (url.startsWith("https://github.com/login/oauth/access_token")) {
+        return new Response(JSON.stringify({ access_token: "user-token" }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+      if (url.startsWith("https://api.github.com/user/installations")) {
+        return new Response(
+          JSON.stringify({ total_count: 1, installations: [{ id: 98765 }] }),
+          { status: 200, headers: { "Content-Type": "application/json" } }
+        );
+      }
+      throw new Error(`Unexpected fetch in test: ${url}`);
+    }) as typeof fetch;
+
+    const callbackRes = await app.request(
+      `/api/users/me/github-app/callback?installation_id=98765&setup_action=install&state=${state}&code=oauth-code`,
+      {
+        headers: {
+          Authorization: `Bearer ${token}`,
+          Cookie: `github_app_state=${state}`,
+        },
+      }
+    );
+    const statusRes = await app.request("/api/users/me/github-token", {
+      headers: authHeaders(token),
+    });
+    const statusBody = (await statusRes.json()) as {
+      data: {
+        connected: boolean;
+        connectionType: "github_app" | "pat" | null;
+        installationId: string | null;
+      };
+    };
+    const stored = await db
+      .select({
+        installationId: schema.users.githubAppInstallationId,
+        connectedAt: schema.users.githubAppConnectedAt,
+      })
+      .from(schema.users)
+      .where(eq(schema.users.id, userId))
+      .get();
+
+    expect(callbackRes.status).toBe(302);
+    expect(callbackRes.headers.get("location")).toBe("/settings?tab=integrations");
+    expect(statusRes.status).toBe(200);
+    expect(statusBody.data.connected).toBe(true);
+    expect(statusBody.data.connectionType).toBe("github_app");
+    expect(statusBody.data.installationId).toBe("98765");
+    expect(JSON.stringify(statusBody)).not.toContain("github_pat_");
+    expect(stored?.installationId).toBe("98765");
+    expect(stored?.connectedAt).toBeTruthy();
+  });
+
+  test("rejects GitHub App callbacks with an invalid state", async () => {
+    const { token, userId } = await seedUserWithToken();
+
+    const callbackRes = await app.request(
+      "/api/users/me/github-app/callback?installation_id=98765&state=actual",
+      {
+        headers: {
+          Authorization: `Bearer ${token}`,
+          Cookie: "github_app_state=expected",
+        },
+      }
+    );
+    const stored = await db
+      .select({ installationId: schema.users.githubAppInstallationId })
+      .from(schema.users)
+      .where(eq(schema.users.id, userId))
+      .get();
+
+    expect(callbackRes.status).toBe(400);
+    expect(stored?.installationId).toBeNull();
+  });
+
+  test("fails closed when GitHub App OAuth verification is unconfigured", async () => {
+    const { token, userId } = await seedUserWithToken();
+    const state = "state_test_failclosed";
+
+    cleanup.clientId = config.GITHUB_APP_CLIENT_ID;
+    cleanup.clientSecret = config.GITHUB_APP_CLIENT_SECRET;
+    config.GITHUB_APP_CLIENT_ID = "";
+    config.GITHUB_APP_CLIENT_SECRET = "";
+
+    const callbackRes = await app.request(
+      `/api/users/me/github-app/callback?installation_id=123&state=${state}&code=oauth-code`,
+      {
+        headers: {
+          Authorization: `Bearer ${token}`,
+          Cookie: `github_app_state=${state}`,
+        },
+      }
+    );
+    const stored = await db
+      .select({ installationId: schema.users.githubAppInstallationId })
+      .from(schema.users)
+      .where(eq(schema.users.id, userId))
+      .get();
+
+    expect(callbackRes.status).toBe(503);
+    expect(stored?.installationId).toBeNull();
+  });
+
+  test("reports whether GitHub App OAuth credentials are configured", () => {
+    cleanup.clientId = config.GITHUB_APP_CLIENT_ID;
+    cleanup.clientSecret = config.GITHUB_APP_CLIENT_SECRET;
+
+    config.GITHUB_APP_CLIENT_ID = "";
+    config.GITHUB_APP_CLIENT_SECRET = "";
+    expect(isGitHubAppOAuthConfigured()).toBe(false);
+
+    config.GITHUB_APP_CLIENT_ID = "client-id";
+    config.GITHUB_APP_CLIENT_SECRET = "client-secret";
+    expect(isGitHubAppOAuthConfigured()).toBe(true);
+  });
+
+  test("disconnects only the current user's GitHub App installation", async () => {
+    const first = await seedUserWithToken();
+    const second = await seedUserWithToken();
+    const now = new Date().toISOString();
+
+    await db
+      .update(schema.users)
+      .set({
+        githubAppInstallationId: "first_installation",
+        githubAppConnectedAt: now,
+      })
+      .where(eq(schema.users.id, first.userId))
+      .run();
+    await db
+      .update(schema.users)
+      .set({
+        githubAppInstallationId: "second_installation",
+        githubAppConnectedAt: now,
+      })
+      .where(eq(schema.users.id, second.userId))
+      .run();
+
+    const deleteRes = await app.request("/api/users/me/github-token", {
+      method: "DELETE",
+      headers: authHeaders(first.token),
+    });
+    const firstUser = await db
+      .select({ installationId: schema.users.githubAppInstallationId })
+      .from(schema.users)
+      .where(eq(schema.users.id, first.userId))
+      .get();
+    const secondUser = await db
+      .select({ installationId: schema.users.githubAppInstallationId })
+      .from(schema.users)
+      .where(eq(schema.users.id, second.userId))
+      .get();
+
+    expect(deleteRes.status).toBe(200);
+    expect(firstUser?.installationId).toBeNull();
+    expect(secondUser?.installationId).toBe("second_installation");
+  });
+
   test("stores encrypted token status without returning plaintext", async () => {
     const { token, userId } = await seedUserWithToken();
     const githubToken = "github_pat_user_secret_1234567890";

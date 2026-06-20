@@ -16,11 +16,13 @@ export const users = sqliteTable(
     designation: text("designation"),
     avatarUrl: text("avatar_url"),
     googleId: text("google_id").notNull(),
+    role: text("role", { enum: ["user", "sysadmin"] }).notNull().default("user"),
     githubTokenEncrypted: text("github_token_encrypted"),
     githubTokenUpdatedAt: text("github_token_updated_at"),
-    isSysadmin: integer("is_sysadmin", { mode: "boolean" })
-      .notNull()
-      .default(false),
+    githubAppInstallationId: text("github_app_installation_id"),
+    githubAppAccountLogin: text("github_app_account_login"),
+    githubAppAccountType: text("github_app_account_type"),
+    githubAppConnectedAt: text("github_app_connected_at"),
     createdAt: text("created_at")
       .notNull()
       .default(sql`(CURRENT_TIMESTAMP)`),

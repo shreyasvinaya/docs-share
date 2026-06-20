@@ -28,5 +28,3 @@ CREATE INDEX `audit_log_actor_idx` ON `audit_log` (`actor_user_id`);
 CREATE INDEX `audit_log_target_idx` ON `audit_log` (`target_type`,`target_id`);
 --> statement-breakpoint
 CREATE INDEX `audit_log_created_at_idx` ON `audit_log` (`created_at`);
---> statement-breakpoint
-ALTER TABLE `users` ADD `is_sysadmin` integer DEFAULT false NOT NULL;
