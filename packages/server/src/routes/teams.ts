@@ -422,21 +422,41 @@ app.post("/:teamId/members", async (c) => {
     )
     .get();
 
-  if (existingInvite && !existingInvite.acceptedAt) {
+  if (existingInvite) {
+    // A row already exists for (teamId, email). The UNIQUE (teamId, email)
+    // index means a fresh insert would throw and bubble up as a 500. Return a
+    // clean 409 instead, distinguishing a still-pending invite from one that
+    // was already accepted (the invitee is effectively already a member).
+    if (existingInvite.acceptedAt) {
+      return c.json(
+        { error: "This email has already accepted an invite to this team" },
+        409
+      );
+    }
     return c.json({ error: "Invite already sent to this email" }, 409);
   }
 
   const inviteId = generateId();
   const token = generatePublicToken();
-  await db.insert(schema.invitations).values({
-    id: inviteId,
-    email,
-    teamId,
-    role: memberRole,
-    token,
-    invitedBy: userId,
-    createdAt: new Date().toISOString(),
-  }).run();
+  try {
+    await db.insert(schema.invitations).values({
+      id: inviteId,
+      email,
+      teamId,
+      role: memberRole,
+      token,
+      invitedBy: userId,
+      createdAt: new Date().toISOString(),
+    }).run();
+  } catch (error) {
+    // Belt-and-suspenders for the (teamId, email) UNIQUE index: a concurrent
+    // invite that wins the race between our existence check and this insert
+    // would otherwise surface as an uncaught 500. Convert it to a clean 409.
+    if (error instanceof Error && /UNIQUE constraint/i.test(error.message)) {
+      return c.json({ error: "Invite already sent to this email" }, 409);
+    }
+    throw error;
+  }
 
   return c.json({
     data: {
@@ -592,8 +612,9 @@ app.delete("/:teamId/members/:userId", async (c) => {
 
   const isSelf = currentUserId === targetUserId;
 
+  let callerMembership: typeof schema.teamMembers.$inferSelect | undefined;
   if (!isSelf) {
-    const callerMembership = await db
+    callerMembership = await db
       .select()
       .from(schema.teamMembers)
       .where(
@@ -624,22 +645,59 @@ app.delete("/:teamId/members/:userId", async (c) => {
     return c.json({ error: "Member not found" }, 404);
   }
 
-  // Prevent removing the last owner
-  if (targetMember.role === "owner") {
-    const ownerCount = await db
-      .select()
-      .from(schema.teamMembers)
-      .where(
-        and(
-          eq(schema.teamMembers.teamId, teamId),
-          eq(schema.teamMembers.role, "owner")
-        )
-      )
-      .all();
+  // Rank check: an admin may only remove members/viewers (or themselves). Only
+  // an owner may remove a target that is an owner or admin. This mirrors the
+  // owner-only restriction on PATCH role changes and stops an admin from
+  // ejecting owners (which the last-owner guard alone would not prevent when
+  // there is more than one owner).
+  if (
+    !isSelf &&
+    (targetMember.role === "owner" || targetMember.role === "admin") &&
+    callerMembership?.role !== "owner"
+  ) {
+    return c.json(
+      { error: "Only an owner can remove an owner or admin" },
+      403
+    );
+  }
 
-    if (ownerCount.length <= 1) {
+  // Prevent removing the last owner. The count-then-delete split is racy: two
+  // concurrent removals of the last two owners could both read count==2 and
+  // both proceed, leaving the team ownerless. Serialize the count and the
+  // delete in a single (synchronous, bun-sqlite) transaction. The guard is
+  // signalled by the transaction returning false ("last owner") so the 400 is
+  // raised outside it. Mirror the PATCH-role last-owner guard.
+  if (targetMember.role === "owner") {
+    const removed = db.transaction((tx) => {
+      const owners = tx
+        .select({ userId: schema.teamMembers.userId })
+        .from(schema.teamMembers)
+        .where(
+          and(
+            eq(schema.teamMembers.teamId, teamId),
+            eq(schema.teamMembers.role, "owner")
+          )
+        )
+        .all();
+
+      // Another owner must remain besides the target being removed.
+      const otherOwnerExists = owners.some((o) => o.userId !== targetUserId);
+      if (!otherOwnerExists) {
+        return false;
+      }
+
+      tx
+        .delete(schema.teamMembers)
+        .where(eq(schema.teamMembers.id, targetMember.id))
+        .run();
+      return true;
+    });
+
+    if (!removed) {
       return c.json({ error: "Cannot remove the last owner" }, 400);
     }
+
+    return c.json({ data: { removed: true } });
   }
 
   await db

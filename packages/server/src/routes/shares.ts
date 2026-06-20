@@ -21,7 +21,33 @@ import type { AppEnv } from "../lib/types.js";
 
 const app = new Hono<AppEnv>();
 
-async function toSharedItem(share: typeof schema.shares.$inferSelect) {
+/**
+ * Project a raw share row into a response-safe shape:
+ *  - NEVER expose `passwordHash` (an unsalted SHA-256). Replace it with a
+ *    boolean `hasPassword` so callers can still tell a password is required.
+ *  - Only expose `publicToken` to the share creator/owner. For everyone else
+ *    the token is omitted (null) so a non-creator cannot lift the live link.
+ *
+ * `viewerId` is the authenticated user requesting the row; pass it so the
+ * creator gets the token back and others do not.
+ */
+function toShareView(
+  share: typeof schema.shares.$inferSelect,
+  viewerId: string | null
+) {
+  const { passwordHash, publicToken, ...rest } = share;
+  const isOwner = viewerId != null && share.createdById === viewerId;
+  return {
+    ...rest,
+    publicToken: isOwner ? publicToken : null,
+    hasPassword: !!passwordHash,
+  };
+}
+
+async function toSharedItem(
+  share: typeof schema.shares.$inferSelect,
+  viewerId: string | null
+) {
   const owner = await db
     .select({
       displayName: schema.users.displayName,
@@ -32,7 +58,7 @@ async function toSharedItem(share: typeof schema.shares.$inferSelect) {
     .get();
 
   return {
-    share,
+    share: toShareView(share, viewerId),
     fileName: share.path?.split("/").filter(Boolean).pop() ?? "All files",
     ownerName: owner?.displayName ?? "Unknown",
     ownerEmail: owner?.email ?? "",
@@ -175,7 +201,9 @@ app.get("/for-resource", requireAuth, requireScope("share:read"), async (c) => {
       .all();
   }
 
-  return c.json({ data: shares });
+  // Project out secrets: never return passwordHash, and only hand publicToken
+  // back to the creator of each share.
+  return c.json({ data: shares.map((share) => toShareView(share, userId)) });
 });
 
 /**
@@ -277,7 +305,7 @@ app.post("/", requireAuth, requireScope("share:write"), async (c) => {
       },
     });
 
-    return c.json({ data: { ...share, recipients } }, 201);
+    return c.json({ data: { ...toShareView(share!, userId), recipients } }, 201);
   }
 
   if (shareType === "public_link") {
@@ -325,21 +353,52 @@ app.post("/", requireAuth, requireScope("share:write"), async (c) => {
     }
 
     if (existingShare) {
+      // Only the share's creator may mutate it. Repo access alone is NOT enough:
+      // a non-viewer team member could otherwise silently downgrade an owner's
+      // org-restricted / password-protected / expiring link to fully public
+      // while keeping the same already-distributed publicToken. Mirror the
+      // creator-only gate enforced on DELETE and analytics.
+      if (existingShare.createdById !== userId) {
+        return c.json(
+          { error: "Only the creator can update this share" },
+          403
+        );
+      }
+
       const updates: Record<string, string | null> = {
         linkAccess: access,
         orgDomain,
         updatedAt: new Date().toISOString(),
       };
 
+      // Detect whether this update LOOSENS the link's access controls. If so we
+      // rotate publicToken below so a previously-distributed restricted URL does
+      // not silently start resolving as a fully public one.
+      let loosens = existingShare.linkAccess === "org" && access === "public";
+
       if ("password" in body) {
-        updates.passwordHash = password ? hashToken(password) : null;
+        const newPasswordHash = password ? hashToken(password) : null;
+        updates.passwordHash = newPasswordHash;
+        // Removing an existing password loosens access.
+        if (existingShare.passwordHash && !newPasswordHash) {
+          loosens = true;
+        }
       }
 
       if ("expiresIn" in body) {
         const duration = expiresIn ? parseDuration(expiresIn) : null;
-        updates.expiresAt = duration
+        const newExpiresAt = duration
           ? new Date(Date.now() + duration).toISOString()
           : null;
+        updates.expiresAt = newExpiresAt;
+        // Removing an existing expiry loosens access.
+        if (existingShare.expiresAt && !newExpiresAt) {
+          loosens = true;
+        }
+      }
+
+      if (loosens) {
+        updates.publicToken = generatePublicToken();
       }
 
       await db
@@ -371,7 +430,9 @@ app.post("/", requireAuth, requireScope("share:write"), async (c) => {
         metadata: { shareType: "public_link", repoId, path: path || null, linkAccess: access },
       });
 
-      return c.json({ data: { ...updated, publicToken: updated!.publicToken } });
+      // The caller is the verified creator here, so it is safe to return the
+      // (possibly rotated) token.
+      return c.json({ data: toShareView(updated!, userId) });
     }
 
     // Create new public link
@@ -432,7 +493,7 @@ app.post("/", requireAuth, requireScope("share:write"), async (c) => {
       metadata: { shareType: "public_link", repoId, path: path || null, linkAccess: access },
     });
 
-    return c.json({ data: { ...share, publicToken } }, 201);
+    return c.json({ data: toShareView(share!, userId) }, 201);
   }
 
   if (shareType === "team") {
@@ -489,6 +550,16 @@ app.post("/", requireAuth, requireScope("share:write"), async (c) => {
       .get();
 
     if (existingShare) {
+      // Creator-only mutation: a non-creator team member must not be able to
+      // change an existing team share's permission (e.g. silently upgrade it to
+      // write). Mirror the creator-only gate on DELETE and analytics.
+      if (existingShare.createdById !== userId) {
+        return c.json(
+          { error: "Only the creator can update this share" },
+          403
+        );
+      }
+
       await db
         .update(schema.shares)
         .set({
@@ -521,7 +592,7 @@ app.post("/", requireAuth, requireScope("share:write"), async (c) => {
         metadata: { shareType: "team", repoId, path: path || null, teamId },
       });
 
-      return c.json({ data: share });
+      return c.json({ data: toShareView(share!, userId) });
     }
 
     await db
@@ -562,7 +633,7 @@ app.post("/", requireAuth, requireScope("share:write"), async (c) => {
       metadata: { shareType: "team", repoId, path: path || null, teamId },
     });
 
-    return c.json({ data: share }, 201);
+    return c.json({ data: toShareView(share!, userId) }, 201);
   }
 
   return c.json({ error: "Invalid shareType" }, 400);
@@ -580,7 +651,9 @@ app.get("/", requireAuth, requireScope("share:read"), async (c) => {
     .where(eq(schema.shares.createdById, userId))
     .all();
 
-  return c.json({ data: userShares });
+  // All rows belong to the caller, so they receive their own publicToken, but
+  // passwordHash is still projected away.
+  return c.json({ data: userShares.map((share) => toShareView(share, userId)) });
 });
 
 /**
@@ -634,8 +707,8 @@ app.get("/incoming", requireAuth, requireScope("share:read"), async (c) => {
     : [];
 
   const sharedItems = await Promise.all([
-    ...incoming.map((row) => toSharedItem(row.share)),
-    ...teamShares.map((row) => toSharedItem(row.share)),
+    ...incoming.map((row) => toSharedItem(row.share, userId)),
+    ...teamShares.map((row) => toSharedItem(row.share, userId)),
   ]);
 
   return c.json({ data: sharedItems });
