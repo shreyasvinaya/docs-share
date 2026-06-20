@@ -268,6 +268,33 @@ export const shareRecipients = sqliteTable(
   ]
 );
 
+export const invitations = sqliteTable(
+  "invitations",
+  {
+    id: text("id").primaryKey(),
+    email: text("email").notNull(),
+    teamId: text("team_id")
+      .notNull()
+      .references(() => teams.id, { onDelete: "cascade" }),
+    role: text("role", { enum: ["owner", "admin", "member", "viewer"] })
+      .notNull()
+      .default("member"),
+    token: text("token").notNull(),
+    invitedBy: text("invited_by")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    createdAt: text("created_at")
+      .notNull()
+      .default(sql`(CURRENT_TIMESTAMP)`),
+    acceptedAt: text("accepted_at"),
+  },
+  (table) => [
+    uniqueIndex("invitations_token_idx").on(table.token),
+    uniqueIndex("invitations_team_email_idx").on(table.teamId, table.email),
+    index("invitations_email_idx").on(table.email),
+  ]
+);
+
 export const sessions = sqliteTable(
   "sessions",
   {
@@ -298,10 +325,13 @@ export const githubSyncs = sqliteTable(
     sourcePath: text("source_path").default(""),
     lastCommitSha: text("last_commit_sha"),
     lastSyncedAt: text("last_synced_at"),
-    status: text("status", { enum: ["idle", "syncing", "success", "error"] })
+    status: text("status", {
+      enum: ["idle", "syncing", "success", "error", "failed"],
+    })
       .notNull()
       .default("idle"),
     error: text("error"),
+    retryCount: integer("retry_count").notNull().default(0),
     createdAt: text("created_at")
       .notNull()
       .default(sql`(CURRENT_TIMESTAMP)`),

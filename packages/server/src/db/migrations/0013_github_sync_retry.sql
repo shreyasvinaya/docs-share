@@ -1,0 +1,1 @@
+ALTER TABLE `github_syncs` ADD `retry_count` integer DEFAULT 0 NOT NULL;

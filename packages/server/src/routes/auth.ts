@@ -9,6 +9,7 @@ import { isProduction, safeNextPath } from "../lib/security.js";
 import { deploymentRoleForEmail, parseSysadminEmails } from "../lib/deployment.js";
 import { requireAuth } from "../middleware/requireAuth.js";
 import { createBareRepo } from "../git/repoManager.js";
+import { acceptPendingInvitationsForUser } from "../services/invitations.js";
 import type { AppEnv } from "../lib/types.js";
 
 const google = new Google(
@@ -188,6 +189,10 @@ app.get("/google/callback", async (c) => {
     });
   }
 
+  // Materialise any invitations addressed to this user's verified email into
+  // memberships. The email is re-read from the DB inside, never trusted here.
+  await acceptPendingInvitationsForUser({ userId: user.id });
+
   // Create session (30-day expiry)
   const sessionId = generateId();
   const expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
@@ -296,6 +301,10 @@ app.post("/dev-login", async (c) => {
   if (!user) {
     return c.json({ error: "Failed to create user" }, 500);
   }
+
+  // Materialise any invitations addressed to this user's verified email into
+  // memberships. The email is re-read from the DB inside, never trusted here.
+  await acceptPendingInvitationsForUser({ userId: user.id });
 
   const sessionId = generateId();
   const expiresAt = new Date(
