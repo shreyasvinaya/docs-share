@@ -6,7 +6,7 @@ import { requireScope } from "../middleware/requireScope.js";
 import { generateId } from "../lib/crypto.js";
 import { validateWebhookUrl } from "../lib/security.js";
 import { generateWebhookSecret } from "../services/webhooks.js";
-import { webhookEvents } from "@docs-share/shared";
+import { webhookEvents } from "@patra/shared";
 import type { AppEnv } from "../lib/types.js";
 
 const app = new Hono<AppEnv>();

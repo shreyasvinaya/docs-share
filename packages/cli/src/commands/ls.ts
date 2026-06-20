@@ -2,7 +2,7 @@ import { Command } from "commander";
 import { getClient } from "../lib/api-client.js";
 import { resolveTarget } from "../lib/target.js";
 import { output, formatTable, isInteractive } from "../lib/output.js";
-import type { FileNode, Team, Share } from "@docs-share/shared";
+import type { FileNode, Team, Share } from "@patra/shared";
 
 export const lsCommand = new Command("ls")
   .description("List files, teams, or shared items")

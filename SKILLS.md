@@ -1,18 +1,18 @@
-# docs-share Agent Skills
+# Patra Agent Skills
 
 Use this file as the quick project guide for coding agents. It does not replace
 repo instructions in `AGENTS.md`; it summarizes how to use and modify the
-docs-share product safely.
+Patra product safely.
 
 ## Project Shape
 
-docs-share is a Bun/Turbo monorepo:
+Patra is a Bun/Turbo monorepo:
 
 - `packages/server`: Hono API, SQLite/Drizzle schema, Git-backed storage,
   preview routes, draft routes, share routes, and auth.
 - `packages/web`: React/Vite app for files, teams, preview, sharing, settings,
   and API tokens.
-- `packages/cli`: `docs-share` command-line client for agents and automation.
+- `packages/cli`: `patra` command-line client for agents and automation.
 - `packages/shared`: shared TypeScript types and validation schemas.
 
 Read the [Product Guide](docs/product-guide.md) before changing product
@@ -35,20 +35,20 @@ API, auth, preview, draft, upload, or share behavior.
 Single-file authenticated draft:
 
 ```bash
-docs-share login --token ds_...
-docs-share draft ./plan.html
+patra login --token pat_...
+patra draft ./plan.html
 ```
 
 Multi-file static bundle:
 
 ```bash
-docs-share push ./site --to personal/run-123 --message "Publish run 123"
+patra push ./site --to personal/run-123 --message "Publish run 123"
 ```
 
 Public folder share:
 
 ```bash
-docs-share share personal/run-123 --public
+patra share personal/run-123 --public
 ```
 
 Local development:

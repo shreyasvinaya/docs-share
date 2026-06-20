@@ -27,7 +27,7 @@ describe("GET /openapi.json", () => {
 
     const spec = (await res.json()) as typeof openApiSpec;
     expect(spec.openapi).toBe("3.1.0");
-    expect(spec.info.title).toBe("docs-share API");
+    expect(spec.info.title).toBe("Patra API");
   });
 
   test("documents every endpoint family", async () => {
@@ -139,7 +139,7 @@ describe("GET /llms.txt", () => {
     expect(res.headers.get("content-type")).toContain("text/plain");
 
     const body = await res.text();
-    expect(body.startsWith("# docs-share")).toBe(true);
+    expect(body.startsWith("# Patra")).toBe(true);
     expect(body).toContain("## API base and auth");
     expect(body).toContain("## CLI commands");
   });

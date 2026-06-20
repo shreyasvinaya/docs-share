@@ -8,7 +8,7 @@ import { FileNotFoundError, CliError, EXIT_CODES } from "../lib/errors.js";
 import { getApiUrl } from "../lib/config.js";
 
 export const pushCommand = new Command("push")
-  .description("Upload files to a docs-share target")
+  .description("Upload files to a Patra target")
   .argument("<path>", "Local file or directory to upload")
   .requiredOption("--to <target>", 'Target: "personal", "personal/subfolder", "team-slug", "team-slug/subfolder"')
   .option("--message <msg>", "Commit message", "Upload via CLI")

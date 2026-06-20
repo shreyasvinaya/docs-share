@@ -2,7 +2,7 @@ import { createHmac } from "crypto";
 
 /**
  * Site-data collection lets hosted docs (drafts / repos) collect form
- * submissions back into docs-share via a public, unauthenticated ingestion
+ * submissions back into Patra via a public, unauthenticated ingestion
  * endpoint. Because the endpoint accepts writes from sandboxed third-party
  * pages, every helper here is deliberately conservative: strict shape/size
  * validation, spam/rate limiting, and only hashed visitor identifiers are
@@ -267,7 +267,7 @@ export class RateLimiter {
  * Build the `connect-src` CSP directive value that lets a sandboxed hosted page
  * POST form submissions to the ingestion endpoint. We allow ONLY the API
  * origin (plus 'self'), never a wildcard, so a compromised page can exfiltrate
- * to docs-share's own endpoint but not to arbitrary attacker servers.
+ * to Patra's own endpoint but not to arbitrary attacker servers.
  */
 export function siteDataConnectSrc(apiOrigin: string): string {
   const origin = normalizeOrigin(apiOrigin);

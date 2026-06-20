@@ -2,7 +2,7 @@ import { Command } from "commander";
 import { getClient } from "../lib/api-client.js";
 import { output, success, formatTable, isInteractive } from "../lib/output.js";
 import { NotFoundError } from "../lib/errors.js";
-import type { Team, TeamMember } from "@docs-share/shared";
+import type { Team, TeamMember } from "@patra/shared";
 
 export const teamsCommand = new Command("teams")
   .description("Manage teams")
@@ -92,7 +92,7 @@ async function listTeams(): Promise<void> {
 
   if (isInteractive()) {
     if (teams.length === 0) {
-      process.stdout.write("No teams found. Create one with `docs-share teams create <name>`.\n");
+      process.stdout.write("No teams found. Create one with `patra teams create <name>`.\n");
     } else {
       process.stdout.write(
         formatTable(

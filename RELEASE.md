@@ -6,7 +6,7 @@ Before tagging a release:
 
 1. Run `bun run check`.
 2. Run `bun audit`.
-3. Build the Docker image with `docker build -t docs-share:<version> .`.
+3. Build the Docker image with `docker build -t patra:<version> .`.
 4. Smoke test a fresh deployment with `docker compose up`.
 5. Update `CHANGELOG.md`.
 6. Tag the release.

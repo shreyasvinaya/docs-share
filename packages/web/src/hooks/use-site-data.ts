@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/api-client";
-import type { SiteDataCollection, SiteDataRecord } from "@docs-share/shared";
+import type { SiteDataCollection, SiteDataRecord } from "@patra/shared";
 
 /**
  * Build the `:target` route segment ("draft:<id>" | "repo:<id>") for the

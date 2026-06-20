@@ -166,7 +166,7 @@ describe("api token management is session-only", () => {
     expect(res.status).toBe(201);
     const body = (await res.json()) as { id: string; token: string; scopes: string };
     cleanup.tokenIds.push(body.id);
-    expect(body.token.startsWith("ds_")).toBe(true);
+    expect(body.token.startsWith("pat_")).toBe(true);
     expect(body.scopes).toBe("repo:read");
   });
 });

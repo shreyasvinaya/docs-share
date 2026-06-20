@@ -1,5 +1,5 @@
 {
-  "name": "@docs-share/web",
+  "name": "@patra/web",
   "version": "0.1.0",
   "type": "module",
   "scripts": {
@@ -12,7 +12,7 @@
     "preview": "vite preview"
   },
   "dependencies": {
-    "@docs-share/shared": "workspace:*",
+    "@patra/shared": "workspace:*",
     "@tanstack/react-query": "^5",
     "clsx": "^2.1.1",
     "react": "^19",

@@ -5,7 +5,7 @@ import type {
   CreatedWebhook,
   UpdateWebhook,
   Webhook,
-} from "@docs-share/shared";
+} from "@patra/shared";
 
 export function useWebhooks() {
   return useQuery({

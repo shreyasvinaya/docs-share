@@ -691,8 +691,8 @@ export async function prepareSelectedImport(
   }
 
   await runGit(["-C", importPath, "init"]);
-  await runGit(["-C", importPath, "config", "user.email", "github-sync@docs-share.local"]);
-  await runGit(["-C", importPath, "config", "user.name", "docs-share GitHub sync"]);
+  await runGit(["-C", importPath, "config", "user.email", "github-sync@patra.local"]);
+  await runGit(["-C", importPath, "config", "user.name", "Patra GitHub sync"]);
   await runGit(["-C", importPath, "add", "."]);
   await runGit([
     "-C",
@@ -888,7 +888,7 @@ function normalizeGitHubOwnerLogin(ownerLogin: string | null | undefined): strin
 function githubApiHeaders(token?: string): Record<string, string> {
   const headers: Record<string, string> = {
     Accept: "application/vnd.github+json",
-    "User-Agent": "docs-share",
+    "User-Agent": "patra",
     "X-GitHub-Api-Version": "2022-11-28",
   };
   if (token?.trim()) headers.Authorization = `Bearer ${token.trim()}`;

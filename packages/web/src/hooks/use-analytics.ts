@@ -1,6 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { api } from "@/lib/api-client";
-import type { AuditEntry, ViewStats } from "@docs-share/shared";
+import type { AuditEntry, ViewStats } from "@patra/shared";
 
 export function useShareAnalytics(shareId: string | undefined, enabled = true) {
   return useQuery({

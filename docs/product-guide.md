@@ -1,6 +1,6 @@
 # Product Guide
 
-docs-share is a self-hostable static document publishing app for teams and
+Patra is a self-hostable static document publishing app for teams and
 coding agents. It stores uploaded files in Git-backed repositories, extracts the
 latest tree for browsing and previewing, and can publish a single authenticated
 HTML draft URL for fast agent-to-human handoff.
@@ -21,7 +21,7 @@ This guide focuses on practical use. For deployment details, read
 - **Public share URL**: `/view/public/:token/...` URL created from a file or
   directory share.
 - **Draft URL**: authenticated `/d/:draftId` URL created from one uploaded HTML
-  file through `docs-share draft`.
+  file through `patra draft`.
 
 The public website and hosted docs live at `/` and `/docs`. The authenticated
 dashboard lives at `/app`, while existing app URLs such as `/files`, `/teams`,
@@ -74,8 +74,8 @@ again and are never reactivated — create a new token instead.
 Draft publishing is optimized for agent output:
 
 ```bash
-docs-share login --token ds_...
-docs-share draft examples/standalone-draft.html
+patra login --token pat_...
+patra draft examples/standalone-draft.html
 ```
 
 The command prints only the draft URL by default:
@@ -87,13 +87,13 @@ https://docs.example.com/d/<draft-id>
 Use JSON when another tool needs structured output:
 
 ```bash
-docs-share draft examples/standalone-draft.html --json
+patra draft examples/standalone-draft.html --json
 ```
 
 Use a display title override when the HTML title is not useful:
 
 ```bash
-docs-share draft plan.html --title "Migration Plan"
+patra draft plan.html --title "Migration Plan"
 ```
 
 Draft rules:
@@ -117,7 +117,7 @@ draft URL, copy its URL, or delete the draft record and stored HTML.
 ## Collecting Form Responses From Hosted Pages
 
 Hosted drafts (and user-owned repos) can collect form submissions back into
-docs-share. Collection is **opt-in per collection name** — a draft only accepts
+Patra. Collection is **opt-in per collection name** — a draft only accepts
 submissions to a collection its owner has explicitly enabled.
 
 Workflow:
@@ -152,8 +152,8 @@ page can call it, but it is hardened:
   a raw IP or any PII beyond the fields the form itself submits.
 
 The draft viewer's sandbox CSP is tightened to permit `connect-src` only to the
-docs-share API origin (plus `'self'`), so an opted-in form can POST back to
-docs-share but a compromised page cannot exfiltrate to an arbitrary server. The
+Patra API origin (plus `'self'`), so an opted-in form can POST back to
+Patra but a compromised page cannot exfiltrate to an arbitrary server. The
 iframe sandbox stays `allow-scripts` only (never `allow-same-origin`).
 
 ## Uploading Static HTML Bundles
@@ -176,19 +176,19 @@ folder.
 Upload a directory into your personal repository:
 
 ```bash
-docs-share push ./examples/linked-draft --to personal --message "Publish linked draft"
+patra push ./examples/linked-draft --to personal --message "Publish linked draft"
 ```
 
 Upload into a subfolder:
 
 ```bash
-docs-share push ./site --to personal/plans/migration --message "Publish migration plan"
+patra push ./site --to personal/plans/migration --message "Publish migration plan"
 ```
 
 Upload into a team repository:
 
 ```bash
-docs-share push ./site --to product-team/q2-plan --message "Publish team plan"
+patra push ./site --to product-team/q2-plan --message "Publish team plan"
 ```
 
 The CLI preserves directory paths and prints preview URLs for each uploaded
@@ -196,7 +196,7 @@ file.
 
 ## Updating Files And Folders
 
-docs-share treats repository uploads as Git commits.
+Patra treats repository uploads as Git commits.
 
 In the web app:
 
@@ -205,10 +205,10 @@ In the web app:
 - Use **History** on the preview page to inspect recent commits for the current
   file.
 
-In the CLI, re-run `docs-share push` with the same target path:
+In the CLI, re-run `patra push` with the same target path:
 
 ```bash
-docs-share push ./site --to personal/plans/migration --message "Update migration plan"
+patra push ./site --to personal/plans/migration --message "Update migration plan"
 ```
 
 If the uploaded content has not changed, the server reports that no file changes
@@ -235,7 +235,7 @@ repository tree to the chosen revision.
   a new commit and indexed as an independent blob. Pass `targetRepoId` to copy
   into another repository you can write to.
 - **Draft**: in the **Drafts** view choose **Duplicate**, or run
-  `docs-share draft-duplicate <draftId>`. This copies the stored HTML into a new
+  `patra draft-duplicate <draftId>`. This copies the stored HTML into a new
   draft titled `"<original> (copy)"`; the copy is fully independent of the
   original.
 
@@ -269,15 +269,15 @@ The CLI uses target strings:
 List teams from the CLI:
 
 ```bash
-docs-share teams
+patra teams
 ```
 
 Create and manage teams:
 
 ```bash
-docs-share teams create "Product Team"
-docs-share teams members product-team
-docs-share teams invite product-team teammate@example.com --role member
+patra teams create "Product Team"
+patra teams members product-team
+patra teams invite product-team teammate@example.com --role member
 ```
 
 ## Sharing
@@ -294,11 +294,11 @@ From the web preview or file tree:
 From the CLI:
 
 ```bash
-docs-share share personal/report.html --with user@example.com
-docs-share share personal/report.html --with editor@example.com --write
-docs-share share personal/reports --public
-docs-share share product-team/q2-plan --public --expires 7d
-docs-share share personal/report.html --revoke user@example.com
+patra share personal/report.html --with user@example.com
+patra share personal/report.html --with editor@example.com --write
+patra share personal/reports --public
+patra share product-team/q2-plan --public --expires 7d
+patra share personal/report.html --revoke user@example.com
 ```
 
 Important share behavior:
@@ -349,13 +349,13 @@ content host boundary.
 For one-file drafts, inline CSS and data URLs are the simplest path. Use:
 
 ```bash
-docs-share draft examples/standalone-draft.html
+patra draft examples/standalone-draft.html
 ```
 
 For linked assets, publish the whole folder:
 
 ```bash
-docs-share push examples/linked-draft --to personal/linked-draft
+patra push examples/linked-draft --to personal/linked-draft
 ```
 
 The linked example includes:

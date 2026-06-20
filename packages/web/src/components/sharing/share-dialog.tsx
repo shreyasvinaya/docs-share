@@ -10,7 +10,7 @@ import { useTeams } from "@/hooks/use-teams";
 import { useShareAnalytics } from "@/hooks/use-analytics";
 import { cn } from "@/lib/utils";
 import { formatLastOpened, formatViewSummary } from "@/lib/view-analytics";
-import type { SharePermission, LinkAccess } from "@docs-share/shared";
+import type { SharePermission, LinkAccess } from "@patra/shared";
 
 interface ShareDialogProps {
   open: boolean;

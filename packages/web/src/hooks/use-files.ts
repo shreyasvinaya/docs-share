@@ -1,6 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/api-client";
-import type { FileNode, Commit } from "@docs-share/shared";
+import type { FileNode, Commit } from "@patra/shared";
 
 export interface UploadItem {
   file: File;

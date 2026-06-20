@@ -1,4 +1,4 @@
-import type { ApiError } from "@docs-share/shared";
+import type { ApiError } from "@patra/shared";
 
 class ApiClientError extends Error {
   status: number;

@@ -1,4 +1,4 @@
-import type { Draft } from "@docs-share/shared";
+import type { Draft } from "@patra/shared";
 import { CliError, EXIT_CODES } from "../lib/errors.js";
 
 export interface DraftFile {

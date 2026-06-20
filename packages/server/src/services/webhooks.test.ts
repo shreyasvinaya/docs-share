@@ -139,7 +139,7 @@ describe("deliverWebhook SSRF / DNS-rebinding guard", () => {
     await deliverWebhook(baseParams, {
       lookupAll: async () => [{ address: "93.184.216.34", family: 4 }],
       sendRequest: async (req) => {
-        sentSignature = req.headers["X-DocsShare-Signature"];
+        sentSignature = req.headers["X-Patra-Signature"];
         return { statusCode: 200 };
       },
       isProductionEnv: false,

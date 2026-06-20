@@ -1,6 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/api-client";
-import type { User, ApiToken, CreateToken, UpdateUser } from "@docs-share/shared";
+import type { User, ApiToken, CreateToken, UpdateUser } from "@patra/shared";
 
 export interface GitHubTokenStatus {
   connected: boolean;

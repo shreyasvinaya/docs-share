@@ -1,7 +1,7 @@
 import { Command } from "commander";
 import { basename } from "node:path";
 import { readFileSync, statSync } from "node:fs";
-import type { Draft } from "@docs-share/shared";
+import type { Draft } from "@patra/shared";
 import { getClient } from "../lib/api-client.js";
 import { CliError, EXIT_CODES, FileNotFoundError } from "../lib/errors.js";
 import { output } from "../lib/output.js";

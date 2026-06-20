@@ -1,6 +1,6 @@
 # Contributing
 
-Thanks for helping improve docs-share.
+Thanks for helping improve Patra.
 
 ## Requirements
 

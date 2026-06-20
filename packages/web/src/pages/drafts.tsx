@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import { Link } from "react-router";
-import type { DraftListItem } from "@docs-share/shared";
+import type { DraftListItem } from "@patra/shared";
 import { EmptyState } from "@/components/common/empty-state";
 import {
   useDeleteDraft,

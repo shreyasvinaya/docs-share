@@ -3,7 +3,7 @@ import { Link } from "react-router";
 import { cn } from "@/lib/utils";
 import { ShareDialog } from "@/components/sharing/share-dialog";
 import { useDeleteFile, useUploadFile } from "@/hooks/use-files";
-import type { FileNode } from "@docs-share/shared";
+import type { FileNode } from "@patra/shared";
 import type { UploadItem } from "@/hooks/use-files";
 
 interface FileTreeProps {

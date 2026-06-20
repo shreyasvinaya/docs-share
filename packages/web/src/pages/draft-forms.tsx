@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import { Link, useParams } from "react-router";
-import type { SiteDataRecord } from "@docs-share/shared";
+import type { SiteDataRecord } from "@patra/shared";
 import { EmptyState } from "@/components/common/empty-state";
 import {
   siteDataTarget,
