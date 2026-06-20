@@ -9,8 +9,12 @@
  * Endpoints fall into a few authentication categories:
  *  - Cookie session (`ds_session`) — used by the web app.
  *  - Bearer API token (`Authorization: Bearer ds_...`) — used by the CLI and
- *    automation. Tokens carry scopes such as `draft:read`, `draft:write`, and
- *    `git:*`.
+ *    automation. Tokens carry scopes enforced on every authenticated endpoint:
+ *    `repo:*`, `project:*`, `share:*`, `team:*`, `user:*`, `admin:*`,
+ *    `audit:read`, `draft:*`, `git:*`, `site-data:*`, `webhook:*` (each
+ *    `:read`/`:write`), or `*` for all. NOTE: managing API tokens (create/list/
+ *    revoke under `/api/auth/tokens`) is session-only and cannot be done with a
+ *    bearer token.
  *  - HTTP Basic over the git smart-HTTP transport (token as the password).
  *  - Public (no auth) — share links, the spec itself, and `llms.txt`.
  */
@@ -234,7 +238,9 @@ export const openApiSpec: OpenApiSpec = {
       get: {
         tags: ["auth"],
         summary: "List the current user's API tokens (masked)",
-        security: sessionOrBearer,
+        description:
+          "Session-only: an API token cannot list tokens (returns 403).",
+        security: sessionAuth,
         responses: {
           "200": {
             description: "Token list",
@@ -253,8 +259,11 @@ export const openApiSpec: OpenApiSpec = {
       post: {
         tags: ["auth"],
         summary: "Create an API token",
-        description: "Returns the plaintext `ds_` token exactly once.",
-        security: sessionOrBearer,
+        description:
+          "Returns the plaintext `ds_` token exactly once. Session-only: an " +
+          "API token cannot mint tokens (returns 403), preventing privilege " +
+          "escalation.",
+        security: sessionAuth,
         requestBody: {
           required: true,
           content: {
@@ -266,7 +275,8 @@ export const openApiSpec: OpenApiSpec = {
                   name: { type: "string" },
                   scopes: {
                     type: "string",
-                    description: "Space- or comma-separated scopes (e.g. `draft:write git:*`). Defaults to `*`.",
+                    description:
+                      "Space- or comma-separated scopes, enforced on every authenticated endpoint: `repo:read|write`, `project:read|write`, `share:read|write`, `team:read|write`, `user:read|write`, `admin:read|write`, `audit:read`, `draft:read|write`, `git:read|write`, `site-data:read|write`, `webhook:read|write`, or wildcards (`*`, `repo:*`). Defaults to `*`. (Token management itself is session-only and not covered by any scope.)",
                   },
                   expiresIn: { type: "integer", description: "Lifetime in seconds." },
                 },
@@ -292,8 +302,9 @@ export const openApiSpec: OpenApiSpec = {
           "Soft-revokes the token by stamping `revokedAt`; the row is never " +
           "hard-deleted so it remains available for audit/history. A revoked " +
           "token is immediately rejected by authentication. Re-revoking an " +
-          "already-revoked token returns 404.",
-        security: sessionOrBearer,
+          "already-revoked token returns 404. Session-only: an API token " +
+          "cannot revoke tokens (returns 403).",
+        security: sessionAuth,
         parameters: [{ $ref: "#/components/parameters/TokenId" }],
         responses: {
           "200": { description: "Revoked", content: { "application/json": { schema: { $ref: "#/components/schemas/Ok" } } } },

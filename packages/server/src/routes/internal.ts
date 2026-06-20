@@ -4,6 +4,7 @@ import { timingSafeEqual } from "node:crypto";
 import { db, schema } from "../db/index.js";
 import { config } from "../lib/config.js";
 import { requireAuth } from "../middleware/requireAuth.js";
+import { requireScope } from "../middleware/requireScope.js";
 import { spawnWithTimeout } from "../git/gitOps.js";
 import {
   extractRepoFiles,
@@ -15,8 +16,13 @@ const app = new Hono<AppEnv>();
 
 // ---------------------------------------------------------------------------
 // GET /repo — Look up repo by owner type + owner ID (for CLI usage)
+//
+// Reachable by API token, so it is gated by `repo:read` (in addition to the
+// existing owner/membership check inside). A token scoped to an unrelated
+// resource (e.g. `draft:read`) cannot use it. The post-receive hook below is
+// NOT token-authenticated — it is guarded solely by the HOOK_SECRET header.
 // ---------------------------------------------------------------------------
-app.get("/repo", requireAuth, async (c) => {
+app.get("/repo", requireAuth, requireScope("repo:read"), async (c) => {
   const ownerType = c.req.query("ownerType");
   const ownerId = c.req.query("ownerId");
 

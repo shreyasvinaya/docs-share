@@ -2,6 +2,7 @@ import { Hono } from "hono";
 import { eq, and } from "drizzle-orm";
 import { db, schema } from "../db/index.js";
 import { requireAuth } from "../middleware/requireAuth.js";
+import { requireScopeByMethod } from "../middleware/requireScope.js";
 import { generateId, generatePublicToken } from "../lib/crypto.js";
 import { config } from "../lib/config.js";
 import { createBareRepo } from "../git/repoManager.js";
@@ -12,6 +13,10 @@ import type { AppEnv } from "../lib/types.js";
 const app = new Hono<AppEnv>();
 
 app.use("*", requireAuth);
+// API-token least-privilege: GET/HEAD require `team:read`, mutations (create,
+// update, delete, member add/remove/role, invite/accept) require `team:write`.
+// Session auth is unaffected (requireScope only enforces for api_token).
+app.use("*", requireScopeByMethod("team"));
 
 async function teamWithRepo(team: typeof schema.teams.$inferSelect) {
   const repo = await db

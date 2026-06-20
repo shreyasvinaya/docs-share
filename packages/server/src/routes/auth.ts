@@ -8,6 +8,7 @@ import { generateId, generateApiToken } from "../lib/crypto.js";
 import { isProduction, safeNextPath } from "../lib/security.js";
 import { deploymentRoleForEmail, parseSysadminEmails } from "../lib/deployment.js";
 import { requireAuth } from "../middleware/requireAuth.js";
+import { requireSession } from "../middleware/requireSession.js";
 import { authRateLimiter } from "../lib/rateLimiters.js";
 import { createBareRepo } from "../git/repoManager.js";
 import { acceptPendingInvitationsForUser } from "../services/invitations.js";
@@ -387,9 +388,16 @@ app.get("/session", requireAuth, async (c) => {
 });
 
 // ---------------------------------------------------------------------------
-// POST /tokens — Create a new API token (requires auth)
+// POST /tokens — Create a new API token (session only)
+//
+// Token management is SESSION-ONLY: an API token must never mint, list, or
+// revoke tokens, or a narrow `draft:read` token could `POST` here with
+// `scopes: "*"` and escalate to full access. requireSession (after requireAuth)
+// rejects api_token callers with 403. Tokens are created by a logged-in human
+// in the settings UI; the CLI authenticates with an already-issued token and
+// never calls this endpoint.
 // ---------------------------------------------------------------------------
-app.post("/tokens", authRateLimiter, requireAuth, async (c) => {
+app.post("/tokens", authRateLimiter, requireAuth, requireSession, async (c) => {
   const userId = c.get("userId");
   const body = await c.req.json<{
     name: string;
@@ -434,9 +442,9 @@ app.post("/tokens", authRateLimiter, requireAuth, async (c) => {
 });
 
 // ---------------------------------------------------------------------------
-// GET /tokens — List user's API tokens (masked, requires auth)
+// GET /tokens — List user's API tokens (masked, session only)
 // ---------------------------------------------------------------------------
-app.get("/tokens", requireAuth, async (c) => {
+app.get("/tokens", requireAuth, requireSession, async (c) => {
   const userId = c.get("userId");
 
   const tokens = await db
@@ -458,12 +466,13 @@ app.get("/tokens", requireAuth, async (c) => {
 });
 
 // ---------------------------------------------------------------------------
-// DELETE /tokens/:tokenId — Soft-revoke an API token (requires auth)
+// DELETE /tokens/:tokenId — Soft-revoke an API token (session only)
 //
 // Tokens are never hard-deleted: we set `revokedAt` so the row remains for
 // audit/history. requireAuth already rejects tokens with a non-null revokedAt.
+// Session-only (requireSession): an API token must not revoke tokens.
 // ---------------------------------------------------------------------------
-app.delete("/tokens/:tokenId", requireAuth, async (c) => {
+app.delete("/tokens/:tokenId", requireAuth, requireSession, async (c) => {
   const userId = c.get("userId");
   const tokenId = c.req.param("tokenId");
 

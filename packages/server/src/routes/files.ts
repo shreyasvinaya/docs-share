@@ -2,6 +2,7 @@ import { Hono } from "hono";
 import { eq, and, sql } from "drizzle-orm";
 import { db, schema } from "../db/index.js";
 import { requireAuth } from "../middleware/requireAuth.js";
+import { requireScopeByMethod } from "../middleware/requireScope.js";
 import {
   canReadRepoPath,
   canWriteRepoPath,
@@ -32,6 +33,10 @@ import type { AppEnv } from "../lib/types.js";
 const app = new Hono<AppEnv>();
 
 app.use("*", requireAuth);
+// API-token least-privilege: file reads (list/commits/content GET) require
+// `repo:read`; writes (upload/restore/copy/delete) require `repo:write`. The
+// `repo` resource is shared with the repos router. Session auth is unaffected.
+app.use("*", requireScopeByMethod("repo"));
 
 /**
  * GET /:repoId — List files in repo root (or at ?path= subpath).

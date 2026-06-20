@@ -11,6 +11,7 @@ import {
   useUpdateProfile,
 } from "@/hooks/use-auth";
 import { UserAvatar } from "@/components/common/user-avatar";
+import { API_TOKEN_SCOPES } from "@docs-share/shared";
 import { cn } from "@/lib/utils";
 import { getGitHubIntegrationView } from "@/lib/github-integration-status";
 import { SetupChecklist } from "@/components/setup/setup-checklist";
@@ -360,16 +361,31 @@ function TokensTab() {
   const [name, setName] = useState("");
   const [newTokenValue, setNewTokenValue] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
+  // Empty selection means "all access" (`*`); selecting specific scopes grants
+  // least-privilege. Scopes are sent space-separated, matching the server's
+  // requireScope parser.
+  const [selectedScopes, setSelectedScopes] = useState<string[]>([]);
+
+  const toggleScope = (scope: string) => {
+    setSelectedScopes((prev) =>
+      prev.includes(scope)
+        ? prev.filter((s) => s !== scope)
+        : [...prev, scope],
+    );
+  };
 
   const handleCreate = (e: React.FormEvent) => {
     e.preventDefault();
     if (!name.trim()) return;
+    const scopes =
+      selectedScopes.length > 0 ? selectedScopes.join(" ") : "*";
     createToken.mutate(
-      { name: name.trim(), scopes: "*" },
+      { name: name.trim(), scopes },
       {
         onSuccess: (data) => {
           setNewTokenValue(data.token);
           setName("");
+          setSelectedScopes([]);
         },
       },
     );
@@ -387,8 +403,8 @@ function TokensTab() {
       {/* Create token form */}
       <div className="rounded-lg border border-border p-4">
         <h3 className="mb-3 text-sm font-semibold">Create New Token</h3>
-        <form onSubmit={handleCreate} className="flex items-end gap-3">
-          <div className="flex-1">
+        <form onSubmit={handleCreate} className="space-y-4">
+          <div>
             <label
               htmlFor="token-name"
               className="mb-1 block text-sm font-medium"
@@ -403,6 +419,37 @@ function TokensTab() {
               onChange={(e) => setName(e.target.value)}
               className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm outline-none focus:border-primary focus:ring-1 focus:ring-primary"
             />
+          </div>
+          <div>
+            <label className="mb-1 block text-sm font-medium">Scopes</label>
+            <p className="mb-2 text-xs text-muted-foreground">
+              Grant least-privilege access. Leave all unchecked for full access
+              (<code className="font-mono">*</code>).
+            </p>
+            <div className="flex flex-wrap gap-2">
+              {API_TOKEN_SCOPES.map((scope) => {
+                const checked = selectedScopes.includes(scope);
+                return (
+                  <label
+                    key={scope}
+                    className={cn(
+                      "cursor-pointer rounded-full border px-3 py-1 font-mono text-xs transition-colors",
+                      checked
+                        ? "border-primary bg-primary/10 text-primary"
+                        : "border-border text-muted-foreground hover:bg-muted",
+                    )}
+                  >
+                    <input
+                      type="checkbox"
+                      className="sr-only"
+                      checked={checked}
+                      onChange={() => toggleScope(scope)}
+                    />
+                    {scope}
+                  </label>
+                );
+              })}
+            </div>
           </div>
           <button
             type="submit"

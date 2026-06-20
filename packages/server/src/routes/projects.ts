@@ -2,12 +2,16 @@ import { Hono } from "hono";
 import { eq, and } from "drizzle-orm";
 import { db, schema } from "../db/index.js";
 import { requireAuth } from "../middleware/requireAuth.js";
+import { requireScopeByMethod } from "../middleware/requireScope.js";
 import { generateId } from "../lib/crypto.js";
 import type { AppEnv } from "../lib/types.js";
 
 const app = new Hono<AppEnv>();
 
 app.use("*", requireAuth);
+// API-token least-privilege: GET/HEAD require `project:read`; mutations
+// (POST/PATCH/DELETE) require `project:write`. Session auth is unaffected.
+app.use("*", requireScopeByMethod("project"));
 
 /**
  * POST / — Create project (metadata for a subfolder).

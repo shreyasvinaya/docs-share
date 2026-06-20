@@ -2,6 +2,7 @@ import { Hono } from "hono";
 import { eq } from "drizzle-orm";
 import { db, schema } from "../db/index.js";
 import { requireAuth } from "../middleware/requireAuth.js";
+import { requireScopeByMethod } from "../middleware/requireScope.js";
 import { canReadRepoPath, canWriteRepoPath } from "../middleware/shareAccess.js";
 import { createMiddleware } from "hono/factory";
 import { generateId } from "../lib/crypto.js";
@@ -24,6 +25,10 @@ import type { AppEnv } from "../lib/types.js";
 const app = new Hono<AppEnv>();
 
 app.use("*", requireAuth);
+// API-token least-privilege: GET/HEAD require `repo:read`, mutations require
+// `repo:write`. The github-sync read helpers and writes both fall under the
+// `repo` resource. Session auth is unaffected (requireScope only checks tokens).
+app.use("*", requireScopeByMethod("repo"));
 
 /**
  * GitHub-sync endpoints configure and run a WHOLE-repo import. They are not

@@ -279,8 +279,12 @@ Also run a markdown/link sanity check if a local markdown tool is available.
   to `docs-share push` for a folder.
 - `Draft upload exceeds the 10 MB limit`: reduce or split the file. Linked asset
   bundles should use repository upload instead.
-- `Token scope does not allow this action`: create a token with `draft:read`,
-  `draft:write`, `draft:*`, or `*`, depending on the requested operation.
+- `Token scope does not allow this action`: token scopes are enforced on every
+  authenticated endpoint. Create a token with the scope the operation needs —
+  e.g. `draft:read`/`draft:write` for drafts, `repo:read`/`repo:write` for repo
+  files and content, `share:*`, `team:*`, `user:*`, `audit:read`, `git:*` for
+  smart-HTTP — or `*` for full access. `<resource>:*` grants both read and write
+  for one resource.
 - Relative CSS or page links fail from a public file share: share the containing
   directory instead of the single HTML file.
 - `/draft-content/...` returns 403: signed content URLs expire after a short TTL;

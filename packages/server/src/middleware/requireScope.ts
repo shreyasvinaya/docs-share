@@ -26,6 +26,25 @@ export function requireScope(requiredScope: string) {
   });
 }
 
+/**
+ * Method-aware variant of {@link requireScope}: enforces `<resource>:read` on
+ * safe (GET/HEAD) requests and `<resource>:write` on mutating
+ * (POST/PUT/PATCH/DELETE) requests. This lets a whole router gate every route
+ * with one middleware while still distinguishing read from write least-privilege
+ * (mirrors the per-route `requireScope("draft:read"|"draft:write")` style used in
+ * drafts.ts/webhooks.ts). Session-authenticated requests are unaffected because
+ * `requireScope` only enforces scopes for `authMethod === "api_token"`.
+ */
+export function requireScopeByMethod(resource: string) {
+  const read = requireScope(`${resource}:read`);
+  const write = requireScope(`${resource}:write`);
+  return createMiddleware<AppEnv>((c, next) => {
+    const method = c.req.method.toUpperCase();
+    const isRead = method === "GET" || method === "HEAD";
+    return (isRead ? read : write)(c, next);
+  });
+}
+
 export function hasScope(scopes: string, requiredScope: string): boolean {
   const parsedScopes = scopes
     .split(/[,\s]+/)
