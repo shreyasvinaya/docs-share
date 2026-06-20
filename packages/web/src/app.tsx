@@ -1,5 +1,6 @@
 import { BrowserRouter, Routes, Route, Navigate } from "react-router";
 import { useSession } from "@/hooks/use-auth";
+import { IS_PUBLIC_SITE } from "@/lib/public-site";
 import { AppLayout } from "@/components/layout/app-layout";
 import { LoginPage } from "@/pages/login";
 import { ShareGatePage } from "@/pages/share-gate";
@@ -31,7 +32,27 @@ function ProtectedRoute({ children }: { children: React.ReactNode }) {
   return <>{children}</>;
 }
 
+// Static GitHub Pages build: only the marketing home + docs, served under the
+// repo subpath via Vite's BASE_URL. No API/server is available here, so the
+// authenticated app, login, setup, and share-gate routes are not mounted.
+function PublicSiteApp() {
+  return (
+    <BrowserRouter basename={import.meta.env.BASE_URL}>
+      <Routes>
+        <Route path="/" element={<PublicHomePage />} />
+        <Route path="/docs" element={<PublicDocsPage />} />
+        <Route path="/docs/:guide" element={<PublicDocsPage />} />
+        <Route path="*" element={<Navigate to="/" replace />} />
+      </Routes>
+    </BrowserRouter>
+  );
+}
+
 export function App() {
+  if (IS_PUBLIC_SITE) {
+    return <PublicSiteApp />;
+  }
+
   return (
     <BrowserRouter>
       <Routes>

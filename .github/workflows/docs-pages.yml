@@ -1,16 +1,20 @@
-name: Deploy docs to GitHub Pages
+name: Deploy public site to GitHub Pages
 
-# Builds the /docs folder with Jekyll and deploys it to GitHub Pages.
+# Builds the web app's PUBLIC UI (marketing home + styled /docs pages) as a
+# static site and deploys it to GitHub Pages. The authenticated app, login,
+# setup, and share-gate routes are stripped out via VITE_PUBLIC_SITE=true, and
+# the build is served under the repo subpath via PAGES_BASE.
 #
-# To use this workflow, set the Pages source to "GitHub Actions":
-#   Settings -> Pages -> Build and deployment -> Source: "GitHub Actions"
-# (This is an alternative to the "Deploy from a branch" method. Pick ONE.)
+# To use this workflow: Settings -> Pages -> Build and deployment ->
+# Source: "GitHub Actions".
 
 on:
   push:
     branches:
       - main
     paths:
+      - "packages/web/**"
+      - "packages/shared/**"
       - "docs/**"
       - ".github/workflows/docs-pages.yml"
   # Allow manual runs from the Actions tab.
@@ -34,17 +38,36 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.8
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
       - name: Configure Pages
         uses: actions/configure-pages@v5
 
-      - name: Build with Jekyll
-        uses: actions/jekyll-build-pages@v1
-        with:
-          source: ./docs
-          destination: ./_site
+      # The web build resolves @docs-share/shared from its compiled dist output,
+      # so the shared package must be built first.
+      - name: Build shared package
+        run: bun run build:shared
+
+      - name: Build public site
+        # Repo-name-derived base means the site works whether the repo stays
+        # `docs-share` or is later renamed. VITE_PUBLIC_SITE strips the
+        # authenticated app; build:pages also writes dist/404.html for SPA deep
+        # links on GitHub Pages.
+        env:
+          PAGES_BASE: /${{ github.event.repository.name }}/
+          VITE_PUBLIC_SITE: "true"
+        run: bun run --filter @docs-share/web build:pages
 
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
+        with:
+          path: packages/web/dist
 
   deploy:
     needs: build

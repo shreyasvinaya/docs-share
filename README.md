@@ -143,32 +143,31 @@ Bun workspaces + Turborepo monorepo:
 
 ## Documentation on GitHub Pages
 
-The [`docs/`](docs/) folder is ready to publish as a GitHub Pages site (built with
-Jekyll and the `jekyll-theme-cayman` theme configured in
-[`docs/_config.yml`](docs/_config.yml); [`docs/index.md`](docs/index.md) is the
-landing page). Choose **one** of the two methods below.
+GitHub Pages serves the web app's **public UI** — the marketing home page and the
+styled `/docs` guides, exactly as they render in the app — as a static site. The
+authenticated app (login, setup, dashboard, sharing) is stripped out for the
+static build, since there is no server on Pages.
 
-### Method 1 — Deploy from a branch (simplest)
+The [`.github/workflows/docs-pages.yml`](.github/workflows/docs-pages.yml)
+workflow builds and deploys the site with GitHub Actions: it builds
+`packages/web` with `VITE_PUBLIC_SITE=true` (public routes only) and
+`PAGES_BASE=/<repo>/` (so assets and routes resolve under the repo subpath),
+writes a `404.html` SPA fallback for deep links, and publishes the `dist/` output.
+
+To enable it:
 
 1. In the repo, go to **Settings → Pages**.
-2. Under **Build and deployment**, set **Source** to **"Deploy from a branch"**.
-3. Set **Branch** to `main` and **Folder** to `/docs`, then click **Save**.
+2. Under **Build and deployment**, set **Source** to **"GitHub Actions"**.
 
-The site publishes at `https://<user>.github.io/<repo>/`. Because this repository
-is named `docs-share`, the URL path reflects the repo name
-(`https://<user>.github.io/docs-share/`) until/unless the repo is renamed. Adding
-new `docs/*.md` files auto-publishes them on the next push to `main`. The
-`title`/`theme` come from `docs/_config.yml`.
+The site publishes at `https://<user>.github.io/<repo>/`. The base path is derived
+from the repo name at build time, so it keeps working whether the repository stays
+named `docs-share` or is later renamed. Pushes to `main` that touch
+`packages/web/**`, `packages/shared/**`, `docs/**`, or the workflow file
+redeploy automatically; you can also trigger a manual run from the **Actions** tab.
 
-### Method 2 — GitHub Actions (more control)
-
-A ready-to-use workflow lives at
-[`.github/workflows/docs-pages.yml`](.github/workflows/docs-pages.yml). It builds
-`docs/` with the official Jekyll Pages action and deploys on every push to `main`
-that touches `docs/**`. To use it, set **Settings → Pages → Source** to **"GitHub
-Actions"** instead of the branch method.
-
-Pick exactly one method — they are alternatives, not complementary.
+The `/docs` content is the same Markdown in [`docs/`](docs/), imported at build
+time and rendered by the app's docs pages — editing those files updates both the
+running app and the published site.
 
 ## Security
 
