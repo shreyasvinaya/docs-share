@@ -1,7 +1,11 @@
 import { useMemo, useState } from "react";
 import type { DraftListItem } from "@docs-share/shared";
 import { EmptyState } from "@/components/common/empty-state";
-import { useDeleteDraft, useDrafts } from "@/hooks/use-drafts";
+import {
+  useDeleteDraft,
+  useDrafts,
+  useDuplicateDraft,
+} from "@/hooks/use-drafts";
 
 function formatBytes(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
@@ -29,6 +33,7 @@ function matchesDraft(draft: DraftListItem, query: string): boolean {
 export function DraftsPage() {
   const { data: drafts, isLoading, isError } = useDrafts();
   const deleteDraft = useDeleteDraft();
+  const duplicateDraft = useDuplicateDraft();
   const [query, setQuery] = useState("");
   const [copiedDraftId, setCopiedDraftId] = useState<string | null>(null);
 
@@ -46,6 +51,10 @@ export function DraftsPage() {
   const handleDelete = (draft: DraftListItem) => {
     if (!window.confirm(`Delete "${draft.title}"?`)) return;
     deleteDraft.mutate(draft.id);
+  };
+
+  const handleDuplicate = (draft: DraftListItem) => {
+    duplicateDraft.mutate(draft.id);
   };
 
   return (
@@ -130,6 +139,14 @@ export function DraftsPage() {
                     className="rounded-lg border border-border px-3 py-1.5 text-sm font-medium transition-colors hover:bg-muted"
                   >
                     {copiedDraftId === draft.id ? "Copied" : "Copy URL"}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleDuplicate(draft)}
+                    disabled={duplicateDraft.isPending}
+                    className="rounded-lg border border-border px-3 py-1.5 text-sm font-medium transition-colors hover:bg-muted disabled:opacity-50"
+                  >
+                    Duplicate
                   </button>
                   <button
                     type="button"

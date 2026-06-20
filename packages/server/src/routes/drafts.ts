@@ -200,6 +200,56 @@ app.get("/:draftId", requireAuth, requireScope("draft:read"), async (c) => {
   return c.json({ data: draftResponse(draft) });
 });
 
+app.post("/:draftId/duplicate", requireAuth, requireScope("draft:write"), async (c) => {
+  const userId = c.get("userId");
+  const draftId = c.req.param("draftId");
+  const source = await db
+    .select()
+    .from(schema.drafts)
+    .where(eq(schema.drafts.id, draftId))
+    .get();
+
+  if (!source) return c.json({ error: "Draft not found" }, 404);
+  if (source.ownerUserId !== userId) return c.json({ error: "Access denied" }, 403);
+
+  const sourceAbsolute = draftStorageAbsolutePath(source.storagePath);
+  if (!sourceAbsolute) return c.json({ error: "Invalid draft path" }, 400);
+
+  let content: Buffer;
+  try {
+    content = await readFile(sourceAbsolute);
+  } catch {
+    return c.json({ error: "Draft content not found" }, 404);
+  }
+
+  const newDraftId = generateId();
+  const storagePath = buildDraftStoragePath(newDraftId);
+  const absolutePath = draftStorageAbsolutePath(storagePath);
+  if (!absolutePath) return c.json({ error: "Invalid draft path" }, 400);
+
+  await mkdir(dirname(absolutePath), { recursive: true });
+  await Bun.write(absolutePath, content);
+
+  const title = `${source.title} (copy)`.slice(0, 160);
+  const now = new Date().toISOString();
+  await db.insert(schema.drafts).values({
+    id: newDraftId,
+    ownerUserId: userId,
+    storagePath,
+    title,
+    sourceFilename: source.sourceFilename,
+    sizeBytes: content.byteLength,
+    contentSha256: sha256Hex(new Uint8Array(content).buffer as ArrayBuffer),
+    createdAt: now,
+    updatedAt: now,
+  });
+
+  return c.json(
+    { data: draftResponse({ id: newDraftId, title, createdAt: now }) },
+    201
+  );
+});
+
 app.delete("/:draftId", requireAuth, requireScope("draft:write"), async (c) => {
   const userId = c.get("userId");
   const draftId = c.req.param("draftId");

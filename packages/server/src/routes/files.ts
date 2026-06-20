@@ -9,6 +9,7 @@ import {
   extractRepoFiles,
   indexRepoFiles,
 } from "../services/fileExtractor.js";
+import { commitAndPush, withClonedRepo } from "../git/gitOps.js";
 import { dirname, join } from "path";
 import { mkdir, mkdtemp, rm } from "fs/promises";
 import { tmpdir } from "os";
@@ -394,6 +395,265 @@ app.post("/:repoId/upload", checkAccess("write"), async (c) => {
 });
 
 /**
+ * POST /:repoId/restore — Restore a file (or the whole tree) to a prior commit.
+ *
+ * History is never rewritten: the content at the chosen revision is checked
+ * out into a fresh clone of HEAD, staged, and committed as a NEW commit.
+ *
+ * Body: { sha: string; path?: string }. Omit `path` to restore the full tree.
+ * Requires auth + write access.
+ */
+app.post("/:repoId/restore", checkAccess("write"), async (c) => {
+  const repoId = c.req.param("repoId");
+  const userId = c.get("userId");
+
+  const body = await c.req
+    .json<{ sha?: string; path?: string }>()
+    .catch((): { sha?: string; path?: string } => ({}));
+  const sha = typeof body.sha === "string" ? body.sha.trim() : "";
+  if (!sha || !/^[0-9a-fA-F]{4,64}$/.test(sha)) {
+    return c.json({ error: "A valid commit sha is required" }, 400);
+  }
+
+  let targetPath: string | null = "";
+  if (body.path !== undefined && body.path !== null && body.path !== "") {
+    targetPath = normalizeRelativePath(body.path);
+    if (targetPath === null || targetPath === "") {
+      return c.json({ error: "Invalid restore path" }, 400);
+    }
+  }
+
+  const repo = await db
+    .select()
+    .from(schema.repos)
+    .where(eq(schema.repos.id, repoId))
+    .get();
+  if (!repo) return c.json({ error: "Repository not found" }, 404);
+
+  const user = await db
+    .select()
+    .from(schema.users)
+    .where(eq(schema.users.id, userId))
+    .get();
+  if (!user) return c.json({ error: "User not found" }, 404);
+
+  try {
+    return await withClonedRepo(
+      repo.diskPath,
+      { name: user.displayName, email: user.email },
+      async (clone) => {
+        // Verify the revision exists.
+        const verify = await clone.git(["cat-file", "-e", `${sha}^{commit}`]);
+        if (verify.exitCode !== 0) {
+          return c.json({ error: "Commit not found in repository" }, 404);
+        }
+
+        if (targetPath) {
+          // Ensure the path existed at that revision.
+          const lsRev = await clone.git([
+            "ls-tree",
+            "-r",
+            "--name-only",
+            sha,
+            "--",
+            targetPath,
+          ]);
+          const matches = lsRev.stdout.trim().split("\n").filter(Boolean);
+          if (matches.length === 0) {
+            return c.json(
+              { error: "Path not found at the requested revision" },
+              404
+            );
+          }
+          // `git checkout <sha> -- <path>` stages the prior content over HEAD.
+          const checkout = await clone.git(["checkout", sha, "--", targetPath]);
+          if (checkout.exitCode !== 0) {
+            return c.json(
+              { error: "Failed to restore path", details: checkout.stderr.trim() },
+              500
+            );
+          }
+        } else {
+          // Restore the entire tree to the prior revision (working tree + index).
+          const checkout = await clone.git(["checkout", sha, "--", "."]);
+          if (checkout.exitCode !== 0) {
+            return c.json(
+              { error: "Failed to restore tree", details: checkout.stderr.trim() },
+              500
+            );
+          }
+          // `checkout -- .` does not delete files added after `sha`; remove them
+          // so the tree exactly matches the chosen revision.
+          await clone.git(["add", "-A"]);
+        }
+
+        await clone.git(["add", "-A"]);
+
+        const label = targetPath ? targetPath : "repository";
+        const message = `Restore ${label} to ${sha.slice(0, 7)}`;
+        const result = await commitAndPush(clone, message);
+
+        if (result.error) {
+          return c.json({ error: "Restore failed", details: result.error }, 500);
+        }
+        if (!result.headSha) {
+          // Nothing changed — already at this content.
+          return c.json({
+            data: {
+              commitSha: repo.headSha,
+              path: targetPath || null,
+              message: "Already at this version",
+            },
+          });
+        }
+
+        await db
+          .update(schema.repos)
+          .set({ headSha: result.headSha, lastPushAt: new Date().toISOString() })
+          .where(eq(schema.repos.id, repoId))
+          .run();
+
+        await extractRepoFiles(repoId, repo.diskPath, result.headSha);
+        await indexRepoFiles(repoId, repo.diskPath, result.headSha);
+
+        return c.json({
+          data: {
+            commitSha: result.headSha,
+            path: targetPath || null,
+            restoredFrom: sha,
+            message,
+          },
+        });
+      }
+    );
+  } catch {
+    return c.json({ error: "Restore failed" }, 500);
+  }
+});
+
+/**
+ * POST /:repoId/copy — Duplicate a file or directory to a new path, committed
+ * as a new commit. Optionally targets a different destination repo via
+ * `targetRepoId` (write access required on the destination too).
+ *
+ * Body: { sourcePath: string; targetPath: string; targetRepoId?: string }
+ * Requires auth + write access on the source repo.
+ */
+app.post("/:repoId/copy", checkAccess("write"), async (c) => {
+  const repoId = c.req.param("repoId");
+  const userId = c.get("userId");
+
+  const body = await c.req
+    .json<{ sourcePath?: string; targetPath?: string; targetRepoId?: string }>()
+    .catch(
+      (): {
+        sourcePath?: string;
+        targetPath?: string;
+        targetRepoId?: string;
+      } => ({})
+    );
+
+  const sourcePath = normalizeRelativePath(body.sourcePath);
+  const targetPath = normalizeRelativePath(body.targetPath);
+  if (!sourcePath) return c.json({ error: "sourcePath is required" }, 400);
+  if (!targetPath) return c.json({ error: "Invalid targetPath" }, 400);
+
+  const repo = await db
+    .select()
+    .from(schema.repos)
+    .where(eq(schema.repos.id, repoId))
+    .get();
+  if (!repo) return c.json({ error: "Repository not found" }, 404);
+
+  const user = await db
+    .select()
+    .from(schema.users)
+    .where(eq(schema.users.id, userId))
+    .get();
+  if (!user) return c.json({ error: "User not found" }, 404);
+
+  // Resolve destination repo (defaults to source). When different, verify the
+  // user can write to it before copying.
+  let destRepo = repo;
+  if (body.targetRepoId && body.targetRepoId !== repoId) {
+    const candidate = await db
+      .select()
+      .from(schema.repos)
+      .where(eq(schema.repos.id, body.targetRepoId))
+      .get();
+    if (!candidate) return c.json({ error: "Target repository not found" }, 404);
+    if (!(await userCanWrite(candidate, userId))) {
+      return c.json({ error: "Access denied to target repository" }, 403);
+    }
+    destRepo = candidate;
+  }
+
+  try {
+    // Read the source blob(s) from the source repo at HEAD.
+    const sourceFiles = await readTrackedFiles(repo.diskPath, sourcePath);
+    if (sourceFiles.length === 0) {
+      return c.json({ error: "Source file or directory not found" }, 404);
+    }
+
+    return await withClonedRepo(
+      destRepo.diskPath,
+      { name: user.displayName, email: user.email },
+      async (clone) => {
+        for (const file of sourceFiles) {
+          // Remap each source path under the new target path.
+          const suffix =
+            file.path === sourcePath
+              ? ""
+              : file.path.slice(sourcePath.length + 1);
+          const relativeTarget = suffix ? `${targetPath}/${suffix}` : targetPath;
+          const dest = resolveInside(clone.dir, relativeTarget);
+          if (!dest) {
+            return c.json({ error: "Invalid target path" }, 400);
+          }
+          await mkdir(dirname(dest), { recursive: true });
+          await Bun.write(dest, file.data);
+        }
+
+        await clone.git(["add", "-A"]);
+
+        const message = `Copy ${sourcePath} to ${targetPath}`;
+        const result = await commitAndPush(clone, message);
+        if (result.error) {
+          return c.json({ error: "Copy failed", details: result.error }, 500);
+        }
+        if (!result.headSha) {
+          return c.json({ error: "No changes — target already matches" }, 409);
+        }
+
+        await db
+          .update(schema.repos)
+          .set({ headSha: result.headSha, lastPushAt: new Date().toISOString() })
+          .where(eq(schema.repos.id, destRepo.id))
+          .run();
+
+        await extractRepoFiles(destRepo.id, destRepo.diskPath, result.headSha);
+        await indexRepoFiles(destRepo.id, destRepo.diskPath, result.headSha);
+
+        return c.json(
+          {
+            data: {
+              commitSha: result.headSha,
+              sourcePath,
+              targetPath,
+              targetRepoId: destRepo.id,
+              filesCopied: sourceFiles.length,
+            },
+          },
+          201
+        );
+      }
+    );
+  } catch {
+    return c.json({ error: "Copy failed" }, 500);
+  }
+});
+
+/**
  * DELETE /:repoId — Delete one file or directory path and commit the removal.
  * Query: ?path=<relative-path>
  * Requires auth + write access.
@@ -532,6 +792,64 @@ app.delete("/:repoId", checkAccess("write"), async (c) => {
     await rm(tmpDir, { recursive: true, force: true }).catch(() => {});
   }
 });
+
+/**
+ * Read every tracked blob at HEAD whose path equals `path` or lives under it.
+ * Returns the list of { path, data } for the matched file(s).
+ */
+async function readTrackedFiles(
+  diskPath: string,
+  path: string
+): Promise<Array<{ path: string; data: Uint8Array }>> {
+  const lsProc = Bun.spawn(
+    ["git", "-C", diskPath, "ls-tree", "-r", "--name-only", "HEAD", "--", path, `${path}/`],
+    { stdout: "pipe", stderr: "pipe" }
+  );
+  const listed = (await new Response(lsProc.stdout).text())
+    .trim()
+    .split("\n")
+    .filter(Boolean);
+  await lsProc.exited;
+
+  const files: Array<{ path: string; data: Uint8Array }> = [];
+  for (const matched of listed) {
+    const showProc = Bun.spawn(
+      ["git", "-C", diskPath, "show", `HEAD:${matched}`],
+      { stdout: "pipe", stderr: "pipe" }
+    );
+    const data = new Uint8Array(
+      await new Response(showProc.stdout).arrayBuffer()
+    );
+    await showProc.exited;
+    files.push({ path: matched, data });
+  }
+  return files;
+}
+
+/**
+ * Whether `userId` may write to `repo` (direct owner or non-viewer team member).
+ * Mirrors the write rules in {@link checkAccess}.
+ */
+async function userCanWrite(
+  repo: typeof schema.repos.$inferSelect,
+  userId: string
+): Promise<boolean> {
+  if (repo.ownerType === "user" && repo.ownerUserId === userId) return true;
+  if (repo.ownerType === "team" && repo.ownerTeamId) {
+    const membership = await db
+      .select()
+      .from(schema.teamMembers)
+      .where(
+        and(
+          eq(schema.teamMembers.teamId, repo.ownerTeamId),
+          eq(schema.teamMembers.userId, userId)
+        )
+      )
+      .get();
+    return !!membership && membership.role !== "viewer";
+  }
+  return false;
+}
 
 /**
  * Simple mime type guesser based on file extension.
