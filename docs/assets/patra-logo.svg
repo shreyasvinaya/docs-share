@@ -1,0 +1,28 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-labelledby="t d" width="128" height="128">
+  <title id="t">Patra</title>
+  <desc id="d">A leaf whose central vein is a document spine and whose side veins read as lines of text — "patra" means leaf, page, and document.</desc>
+  <defs>
+    <linearGradient id="leaf" x1="36" y1="14" x2="92" y2="118" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#14B8A6"/>
+      <stop offset="1" stop-color="#0F766E"/>
+    </linearGradient>
+  </defs>
+  <!-- Stem / petiole -->
+  <path d="M64 110 L64 122" fill="none" stroke="#0F766E" stroke-width="4" stroke-linecap="round"/>
+  <!-- Ovate leaf body (pointed tip, tapered base) = page. -->
+  <path d="M64 11 C41 24 33 47 37 67 C40 88 51 106 64 117 C77 106 88 88 91 67 C95 47 87 24 64 11 Z"
+        fill="url(#leaf)"/>
+  <!-- Highlight to give the leaf a turned-page sheen on one half. -->
+  <path d="M64 11 C41 24 33 47 37 67 C40 88 51 106 64 117 Z" fill="#0B5C56" opacity="0.18"/>
+  <!-- Midrib = document spine. -->
+  <path d="M64 22 C62 50 62 82 64 106" fill="none" stroke="#FBBF24" stroke-width="3.2" stroke-linecap="round"/>
+  <!-- Side veins = lines of text. -->
+  <g fill="none" stroke="#FCD34D" stroke-width="2.4" stroke-linecap="round">
+    <path d="M63 46 C56 45 51 43 46 39"/>
+    <path d="M65 46 C72 45 77 43 82 39"/>
+    <path d="M63 64 C54 63 49 61 44 57"/>
+    <path d="M65 64 C74 63 79 61 84 57"/>
+    <path d="M63 82 C56 81 52 80 48 77"/>
+    <path d="M65 82 C72 81 76 80 80 77"/>
+  </g>
+</svg>
