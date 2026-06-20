@@ -232,6 +232,38 @@ describe("recordViewEvent + aggregateViewStats", () => {
     expect(after.uniqueVisitors).toBe(2);
   });
 
+  test("dedupe is UA-independent: rotating the User-Agent from one IP does not create a second row", async () => {
+    const targetId = testId("share");
+    cleanup.viewTargets.push(targetId);
+
+    const base = {
+      targetType: "share" as const,
+      targetId,
+      ip: "7.7.7.7",
+      referrer: null,
+    };
+
+    // First view records.
+    await recordViewEventDeduped({ ...base, userAgent: "Chrome/1.0" });
+    // Same IP, DIFFERENT UA within the window: the old (UA-folded) dedupe would
+    // have treated this as a new visitor and inserted a second row. The
+    // UA-independent dedupe must suppress it.
+    await recordViewEventDeduped({ ...base, userAgent: "Firefox/2.0" });
+    await recordViewEventDeduped({ ...base, userAgent: "curl/8.0" });
+
+    const stats = await aggregateViewStats("share", targetId);
+    expect(stats.totalViews).toBe(1);
+
+    // A genuinely different IP is still counted.
+    await recordViewEventDeduped({
+      ...base,
+      ip: "8.8.8.8",
+      userAgent: "Chrome/1.0",
+    });
+    const after = await aggregateViewStats("share", targetId);
+    expect(after.totalViews).toBe(2);
+  });
+
   test("does not bleed across target types with the same id", async () => {
     const sharedId = testId("dup");
     cleanup.viewTargets.push(sharedId);

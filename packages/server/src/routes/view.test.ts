@@ -339,6 +339,16 @@ describe("path-scoped share authorization on view serving", () => {
     );
     expect(inside.status).toBe(200);
   });
+
+  test("authenticated repo file responses are marked private, no-store (FIX 8)", async () => {
+    const { repoId, recipientId } = await seedRepoWithScopedReadShare(null);
+
+    const fileRes = await authedAppAs(recipientId).request(
+      `/view/${repoId}/root.html`
+    );
+    expect(fileRes.status).toBe(200);
+    expect(fileRes.headers.get("cache-control")).toBe("private, no-store");
+  });
 });
 
 describe("public view recording", () => {

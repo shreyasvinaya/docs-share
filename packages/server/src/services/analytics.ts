@@ -42,6 +42,25 @@ export function computeVisitorHash(
 }
 
 /**
+ * Computes the keyed DEDUPE fingerprint for a target+visitor. Unlike
+ * {@link computeVisitorHash}, this deliberately EXCLUDES the User-Agent: the UA
+ * is fully attacker-controlled, so folding it in let a single source bypass the
+ * 30-minute dedupe window simply by rotating its UA, inflating view counts. By
+ * keying only on (targetType, targetId, ip) the dedupe is stable per source IP
+ * regardless of UA churn. It stays a keyed HMAC over SESSION_SECRET so the
+ * stored value is non-reversible (no raw IP/PII persisted).
+ */
+export function computeDedupeKey(
+  targetType: ViewTargetType,
+  targetId: string,
+  ip: string | null | undefined
+): string {
+  return createHmac("sha256", config.SESSION_SECRET)
+    .update(`view-dedupe:v1:${targetType}:${targetId}:${ip ?? ""}`)
+    .digest("hex");
+}
+
+/**
  * Reduces a raw referrer header to just its origin (scheme + host), dropping
  * any path, query, or fragment that could carry tokens or PII. Returns null
  * when the value is absent or cannot be parsed as a URL.
@@ -98,6 +117,10 @@ export async function recordViewEvent(
     targetId: input.targetId,
     viewedAt: new Date().toISOString(),
     visitorHash: computeVisitorHash(input.ip, input.userAgent),
+    // UA-independent dedupe fingerprint (see computeDedupeKey); stored so the
+    // 30-minute dedupe check below can match repeat views from one source IP
+    // even when the User-Agent is rotated.
+    dedupeKey: computeDedupeKey(input.targetType, input.targetId, input.ip),
     referrer: normalizeReferrer(input.referrer),
   });
 }
@@ -127,7 +150,9 @@ export function recordViewEventSafe(input: RecordViewEventInput): void {
 export async function recordViewEventDeduped(
   input: RecordViewEventInput
 ): Promise<void> {
-  const visitorHash = computeVisitorHash(input.ip, input.userAgent);
+  // Dedupe on the UA-INDEPENDENT key so rotating the (attacker-controlled)
+  // User-Agent from one source IP cannot mint a fresh view within the window.
+  const dedupeKey = computeDedupeKey(input.targetType, input.targetId, input.ip);
   const cutoff = new Date(Date.now() - DEDUPE_WINDOW_MS).toISOString();
 
   const recent = await db
@@ -137,7 +162,7 @@ export async function recordViewEventDeduped(
       and(
         eq(schema.viewEvents.targetType, input.targetType),
         eq(schema.viewEvents.targetId, input.targetId),
-        eq(schema.viewEvents.visitorHash, visitorHash),
+        eq(schema.viewEvents.dedupeKey, dedupeKey),
         gt(schema.viewEvents.viewedAt, cutoff)
       )
     )

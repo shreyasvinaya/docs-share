@@ -18,14 +18,22 @@ import type { AppEnv } from "../lib/types.js";
 
 const app = new Hono<AppEnv>();
 
-// Public ingestion is unauthenticated, so cap abuse. Per-visitor and a coarse
-// global bucket guard against single-source floods and broad spam waves.
+// Public ingestion is unauthenticated, so cap abuse. Per-visitor and per-IP
+// buckets guard against single-source floods, and a coarse global bucket caps
+// broad spam waves.
 const PER_VISITOR_LIMIT = 20;
 const PER_VISITOR_WINDOW_MS = 60 * 1000;
+const PER_IP_LIMIT = 600;
+const PER_IP_WINDOW_MS = 60 * 1000;
 const GLOBAL_LIMIT = 600;
 const GLOBAL_WINDOW_MS = 60 * 1000;
 
 const visitorLimiter = new RateLimiter(PER_VISITOR_LIMIT, PER_VISITOR_WINDOW_MS);
+// Per-IP bucket. The old 600/min was a SINGLE shared global bucket, so one
+// source flooding it starved every other source. Keying the same budget per
+// trusted client IP means an abusive IP exhausts only its own bucket, leaving
+// other IPs unaffected. The global bucket remains as an absolute ceiling.
+const ipLimiter = new RateLimiter(PER_IP_LIMIT, PER_IP_WINDOW_MS);
 const globalLimiter = new RateLimiter(GLOBAL_LIMIT, GLOBAL_WINDOW_MS);
 
 /**
@@ -36,6 +44,7 @@ const globalLimiter = new RateLimiter(GLOBAL_LIMIT, GLOBAL_WINDOW_MS);
  */
 export function __resetSiteDataLimiters(): void {
   visitorLimiter.reset();
+  ipLimiter.reset();
   globalLimiter.reset();
 }
 
@@ -138,7 +147,7 @@ app.post("/:target/data/:collection", async (c) => {
   const collection = normalizeCollectionName(c.req.param("collection"));
   if (!collection) return c.json({ error: "Invalid collection name" }, 400);
 
-  // Global flood guard first (cheap, no DB).
+  // Absolute global ceiling first (cheap, no DB).
   if (!globalLimiter.check("global").allowed) {
     return c.json({ error: "Too many requests" }, 429);
   }
@@ -146,6 +155,13 @@ app.post("/:target/data/:collection", async (c) => {
   // Trusted client IP (honors TRUST_PROXY; never trusts client X-Forwarded-For)
   // so a single source cannot mint fresh per-visitor buckets via header spoofing.
   const ip = resolveClientIp(c);
+
+  // Per-IP bucket so one source flooding the endpoint exhausts only its own
+  // budget and cannot starve other sources (the old single global bucket did).
+  if (!ipLimiter.check(`ip:${ip}`).allowed) {
+    return c.json({ error: "Too many requests" }, 429);
+  }
+
   const userAgent = c.req.header("User-Agent") ?? null;
   const visitorHash = hashVisitor({ ip, userAgent }, config.SESSION_SECRET);
 
@@ -206,6 +222,7 @@ app.post("/:target/data/:collection", async (c) => {
   });
 
   visitorLimiter.prune();
+  ipLimiter.prune();
   globalLimiter.prune();
 
   return c.json({ data: { received: true } }, 201);

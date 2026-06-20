@@ -411,6 +411,13 @@ export const webhookDeliveries = sqliteTable(
   (table) => [
     index("webhook_deliveries_webhook_idx").on(table.webhookId),
     index("webhook_deliveries_created_at_idx").on(table.createdAt),
+    // Composite (webhook_id, created_at) backs the per-webhook cap's correlated
+    // subquery (rank-by-created_at within a webhook), which was previously an
+    // O(n^2) scan. See services/webhookCleanup.ts.
+    index("webhook_deliveries_webhook_created_idx").on(
+      table.webhookId,
+      table.createdAt
+    ),
   ]
 );
 
@@ -458,11 +465,21 @@ export const viewEvents = sqliteTable(
       .notNull()
       .default(sql`(CURRENT_TIMESTAMP)`),
     visitorHash: text("visitor_hash").notNull(),
+    // UA-independent dedupe fingerprint (HMAC over targetType:targetId:ip).
+    // Nullable: rows written before migration 0016 have none.
+    dedupeKey: text("dedupe_key"),
     referrer: text("referrer"),
   },
   (table) => [
     index("view_events_target_idx").on(table.targetType, table.targetId),
     index("view_events_viewed_at_idx").on(table.viewedAt),
+    // Backs the 30-minute dedupe existence check on (targetType, targetId,
+    // dedupeKey) within the recent-views window.
+    index("view_events_dedupe_idx").on(
+      table.targetType,
+      table.targetId,
+      table.dedupeKey
+    ),
   ]
 );
 

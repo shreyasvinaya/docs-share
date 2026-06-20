@@ -167,7 +167,8 @@ function userHasAccess(
 async function serveFile(
   worktreeBase: string,
   relativePath: string,
-  requestPath?: string
+  requestPath?: string,
+  options: { private?: boolean } = {}
 ) {
   // Lexical containment first (cheap, rejects `..`/absolute/pathspec-magic),
   // then symlink-aware containment: a symlink materialized inside the worktree
@@ -223,6 +224,7 @@ async function serveFile(
       const indexContentType = resolveContentType(indexPath);
       const headers = securityHeaders(indexContentType);
       headers["Content-Type"] = indexContentType;
+      if (options.private) headers["Cache-Control"] = "private, no-store";
       return new Response(Bun.file(indexPath), { headers });
     }
 
@@ -237,6 +239,9 @@ async function serveFile(
     const contentType = resolveContentType(resolvedPath);
     const headers = securityHeaders(contentType);
     headers["Content-Type"] = contentType;
+    // Authenticated/private repo responses must never be cached by shared
+    // proxies or the browser disk cache where another user could retrieve them.
+    if (options.private) headers["Cache-Control"] = "private, no-store";
 
     return new Response(file, { headers });
   } catch {
@@ -447,7 +452,7 @@ app.get("/:repoId", requireAuth, async (c) => {
   }
 
   const worktreeBase = `${config.DATA_DIR}/worktrees/${repoId}`;
-  return serveFile(worktreeBase, "", c.req.path);
+  return serveFile(worktreeBase, "", c.req.path, { private: true });
 });
 
 /**
@@ -470,7 +475,7 @@ app.get("/:repoId/*", requireAuth, async (c) => {
   }
 
   const worktreeBase = `${config.DATA_DIR}/worktrees/${repoId}`;
-  return serveFile(worktreeBase, filePath, c.req.path);
+  return serveFile(worktreeBase, filePath, c.req.path, { private: true });
 });
 
 export default app;

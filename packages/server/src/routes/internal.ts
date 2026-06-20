@@ -1,5 +1,6 @@
 import { Hono } from "hono";
 import { eq, and } from "drizzle-orm";
+import { timingSafeEqual } from "node:crypto";
 import { db, schema } from "../db/index.js";
 import { config } from "../lib/config.js";
 import { requireAuth } from "../middleware/requireAuth.js";
@@ -84,7 +85,7 @@ app.get("/repo", requireAuth, async (c) => {
 
 app.post("/hooks/post-receive", async (c) => {
   const secret = c.req.header("X-Hook-Secret");
-  if (secret !== config.HOOK_SECRET) {
+  if (!timingSafeEqualStr(secret, config.HOOK_SECRET)) {
     return c.json({ error: "Forbidden" }, 403);
   }
 
@@ -127,6 +128,23 @@ app.post("/hooks/post-receive", async (c) => {
 
   return c.json({ ok: true });
 });
+
+/**
+ * Constant-time equality for the hook secret. A plain `===` short-circuits on
+ * the first differing byte, leaking secret length/prefix via timing; this guards
+ * the length first (so the buffers are equal-length for `timingSafeEqual`) and
+ * then compares in constant time. A missing/short header fails closed.
+ */
+export function timingSafeEqualStr(
+  provided: string | undefined | null,
+  expected: string
+): boolean {
+  if (typeof provided !== "string") return false;
+  const a = Buffer.from(provided, "utf8");
+  const b = Buffer.from(expected, "utf8");
+  if (a.length !== b.length) return false;
+  return timingSafeEqual(a, b);
+}
 
 async function validateGitUpdate(
   repoPath: string,

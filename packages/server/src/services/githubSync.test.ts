@@ -1,16 +1,21 @@
 import { afterEach, describe, expect, test } from "bun:test";
+import { $ } from "bun";
 import {
   lstat,
   mkdir,
   mkdtemp,
   readdir,
+  readFile,
   rm,
   symlink,
   writeFile,
 } from "fs/promises";
 import { join } from "path";
 import { tmpdir } from "os";
+import { config } from "../lib/config.js";
 import {
+  assertImportBlobsWithinLimit,
+  assertRepoSizeWithinLimit,
   filterGitHubTree,
   listGitHubAccessibleRepos,
   listGitHubBranches,
@@ -113,6 +118,67 @@ describe("orderGitHubBranches", () => {
     expect(
       orderGitHubBranches(["feature-x", "gh-pages", "master", "main", "staging"])
     ).toEqual(["main", "master", "staging", "gh-pages", "feature-x"]);
+  });
+});
+
+describe("assertRepoSizeWithinLimit (FIX 4: clone disk-exhaustion guard)", () => {
+  test("rejects a repo whose GitHub-reported size exceeds the limit", async () => {
+    // GitHub `size` is in KiB. Report 2 GiB against a 1 GiB cap.
+    globalThis.fetch = (async (_input: unknown, _init?: unknown) =>
+      new Response(JSON.stringify({ size: 2 * 1024 * 1024 }), {
+        status: 200,
+      })) as typeof fetch;
+
+    await expect(
+      assertRepoSizeWithinLimit({
+        repoUrl: "https://github.com/acme/huge",
+        maxImportKb: 1024 * 1024,
+      })
+    ).rejects.toThrow(/too large to import/i);
+  });
+
+  test("allows a repo within the limit", async () => {
+    globalThis.fetch = (async (_input: unknown, _init?: unknown) =>
+      new Response(JSON.stringify({ size: 5000 }), {
+        status: 200,
+      })) as typeof fetch;
+
+    await expect(
+      assertRepoSizeWithinLimit({
+        repoUrl: "https://github.com/acme/small",
+        maxImportKb: 1024 * 1024,
+      })
+    ).resolves.toBeUndefined();
+  });
+
+  test("is non-fatal when the metadata lookup fails (defers to the clone)", async () => {
+    globalThis.fetch = (async (
+      _input: unknown,
+      _init?: unknown
+    ): Promise<Response> => {
+      throw new Error("network down");
+    }) as typeof fetch;
+
+    await expect(
+      assertRepoSizeWithinLimit({
+        repoUrl: "https://github.com/acme/x",
+        maxImportKb: 1024 * 1024,
+      })
+    ).resolves.toBeUndefined();
+  });
+
+  test("is a no-op when the limit is disabled (<= 0)", async () => {
+    let called = false;
+    globalThis.fetch = (async (_input: unknown, _init?: unknown) => {
+      called = true;
+      return new Response("{}", { status: 200 });
+    }) as typeof fetch;
+
+    await assertRepoSizeWithinLimit({
+      repoUrl: "https://github.com/acme/x",
+      maxImportKb: 0,
+    });
+    expect(called).toBe(false);
   });
 });
 
@@ -559,5 +625,95 @@ describe("prepareSelectedImport (symlink containment)", () => {
       const info = await lstat(join(importPath, f));
       expect(info.isSymbolicLink()).toBe(false);
     }
+  });
+});
+
+describe("assertImportBlobsWithinLimit (FIX 3: per-blob import size preflight)", () => {
+  const dirs: string[] = [];
+  let originalMaxBlobBytes = config.GITHUB_MAX_BLOB_BYTES;
+
+  afterEach(async () => {
+    config.GITHUB_MAX_BLOB_BYTES = originalMaxBlobBytes;
+    await Promise.all(dirs.map((d) => rm(d, { recursive: true, force: true })));
+    dirs.length = 0;
+  });
+
+  async function scratch(prefix: string): Promise<string> {
+    const dir = await mkdtemp(join(tmpdir(), prefix));
+    dirs.push(dir);
+    return dir;
+  }
+
+  /**
+   * Build a real source repo with a small file and a "large" file, then make a
+   * `--no-checkout` clone of it (the exact shape syncGitHubRepo produces before
+   * the preflight). Returns the clone path.
+   */
+  async function buildNoCheckoutClone(largeBytes: number): Promise<string> {
+    const root = await scratch("ds-blob-src-");
+    const srcPath = join(root, "src");
+    await mkdir(join(srcPath, "docs"), { recursive: true });
+    await writeFile(join(srcPath, "docs", "ok.html"), "<p>small</p>");
+    // The over-limit blob lives under a DIFFERENT top-level dir so we can select
+    // the small subtree and prove path-scoping works.
+    await mkdir(join(srcPath, "big"), { recursive: true });
+    await writeFile(join(srcPath, "big", "huge.bin"), "x".repeat(largeBytes));
+
+    await $`git -C ${srcPath} init`.quiet();
+    await $`git -C ${srcPath} config user.email t@t.local`.quiet();
+    await $`git -C ${srcPath} config user.name tester`.quiet();
+    await $`git -C ${srcPath} add .`.quiet();
+    await $`git -C ${srcPath} commit -m init`.quiet();
+
+    const clonePath = join(root, "clone");
+    await $`git clone --no-checkout ${srcPath} ${clonePath}`.quiet();
+    return clonePath;
+  }
+
+  test("rejects an import whose selected tree contains an over-limit blob", async () => {
+    config.GITHUB_MAX_BLOB_BYTES = 1024; // 1 KiB cap
+    const clonePath = await buildNoCheckoutClone(4096); // 4 KiB blob
+
+    // A ROOT import sees the oversized blob and is rejected.
+    await expect(
+      assertImportBlobsWithinLimit(clonePath, "")
+    ).rejects.toThrow(/larger than|too large/i);
+
+    // Selecting the over-limit subtree specifically is also rejected.
+    await expect(
+      assertImportBlobsWithinLimit(clonePath, "big")
+    ).rejects.toThrow(/larger than|too large/i);
+
+    // Nothing was checked out (the work tree stays empty), so no oversized blob
+    // was materialized.
+    const entries = await readdir(clonePath);
+    expect(entries.filter((e) => e !== ".git")).toEqual([]);
+  });
+
+  test("passes when the selected path excludes the over-limit blob", async () => {
+    config.GITHUB_MAX_BLOB_BYTES = 1024;
+    const clonePath = await buildNoCheckoutClone(4096);
+
+    // The `docs` subtree only holds the small file → within budget.
+    await expect(
+      assertImportBlobsWithinLimit(clonePath, "docs")
+    ).resolves.toBeUndefined();
+  });
+
+  test("allows a normal small import and the selected-path copy still works", async () => {
+    config.GITHUB_MAX_BLOB_BYTES = 1024 * 1024; // generous cap
+    const clonePath = await buildNoCheckoutClone(64); // tiny "large" file
+
+    await expect(
+      assertImportBlobsWithinLimit(clonePath, "docs")
+    ).resolves.toBeUndefined();
+
+    // Materialize the validated path and run the real selected-path import.
+    await $`git -C ${clonePath} checkout HEAD -- docs`.quiet();
+    const importPath = join(await scratch("ds-blob-import-"), "import");
+    const pushPath = await prepareSelectedImport(clonePath, importPath, "docs");
+
+    const html = await readFile(join(pushPath, "ok.html"), "utf-8");
+    expect(html).toContain("small");
   });
 });

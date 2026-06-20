@@ -164,6 +164,72 @@ export const config = {
     "WEBHOOK_DELIVERY_MAX_PER_HOOK",
     1000
   ),
+
+  // ---------------------------------------------------------------------------
+  // Request body-size limits (memory-DoS guards). Each is the maximum number of
+  // bytes the corresponding handler will buffer; oversized requests are rejected
+  // with 413 BEFORE the body is parsed/read.
+  // ---------------------------------------------------------------------------
+  // General JSON / API request bodies. Default: 1 MiB.
+  MAX_JSON_BODY_BYTES: requiredPositiveInt("MAX_JSON_BODY_BYTES", 1024 * 1024),
+  // Public site-data form ingestion (POST /api/sites/:target/data/:collection).
+  // These are tiny structured submissions, so the cap is small. Default: 256 KiB.
+  MAX_SITE_DATA_BODY_BYTES: requiredPositiveInt(
+    "MAX_SITE_DATA_BODY_BYTES",
+    256 * 1024
+  ),
+  // Draft (single HTML document) upload. Default: 12 MiB.
+  MAX_UPLOAD_BYTES: requiredPositiveInt("MAX_UPLOAD_BYTES", 12 * 1024 * 1024),
+  // Repo file upload (multipart POST /api/files/:repoId/upload). These carry
+  // real document assets, so the cap must be larger than the 1 MiB general API
+  // default or legitimate uploads get a 413 before the handler runs.
+  // Default: 12 MiB.
+  MAX_FILE_UPLOAD_BYTES: requiredPositiveInt(
+    "MAX_FILE_UPLOAD_BYTES",
+    12 * 1024 * 1024
+  ),
+  // Git smart-HTTP push/fetch bodies (upload-pack / receive-pack). The handler
+  // buffers the whole body into git's stdin, so cap it. Default: 100 MiB.
+  GIT_MAX_BODY_BYTES: requiredPositiveInt(
+    "GIT_MAX_BODY_BYTES",
+    100 * 1024 * 1024
+  ),
+
+  // ---------------------------------------------------------------------------
+  // GitHub import / clone disk-exhaustion guards.
+  // ---------------------------------------------------------------------------
+  // Skip blobs larger than this when cloning (passed to git as
+  // `--filter=blob:limit=<bytes>`) so a few huge blobs cannot fill DATA_DIR.
+  // Default: 50 MiB.
+  GITHUB_MAX_BLOB_BYTES: requiredPositiveInt(
+    "GITHUB_MAX_BLOB_BYTES",
+    50 * 1024 * 1024
+  ),
+  // Reject an import whose GitHub-reported repo size exceeds this (in KiB, the
+  // unit the GitHub API returns) before cloning. Default: 1 GiB (1048576 KiB).
+  GITHUB_MAX_IMPORT_KB: requiredPositiveInt(
+    "GITHUB_MAX_IMPORT_KB",
+    1024 * 1024
+  ),
+
+  // ---------------------------------------------------------------------------
+  // Append-only analytics/audit retention sweeps (scheduler jobs). Like the
+  // webhook cleanup: interval 0 disables the job; retention 0 disables pruning.
+  // ---------------------------------------------------------------------------
+  // view_events retention sweep interval (ms). Default: every 24 hours.
+  VIEW_EVENTS_CLEANUP_INTERVAL_MS: nonNegativeInt(
+    "VIEW_EVENTS_CLEANUP_INTERVAL_MS",
+    86400000
+  ),
+  // Delete view_events older than this many days. Default: 90. 0 disables.
+  VIEW_EVENTS_RETENTION_DAYS: nonNegativeInt("VIEW_EVENTS_RETENTION_DAYS", 90),
+  // audit_log retention sweep interval (ms). Default: every 24 hours.
+  AUDIT_LOG_CLEANUP_INTERVAL_MS: nonNegativeInt(
+    "AUDIT_LOG_CLEANUP_INTERVAL_MS",
+    86400000
+  ),
+  // Delete audit_log rows older than this many days. Default: 365. 0 disables.
+  AUDIT_LOG_RETENTION_DAYS: nonNegativeInt("AUDIT_LOG_RETENTION_DAYS", 365),
 };
 
 assertProductionSecret("SESSION_SECRET", config.SESSION_SECRET);

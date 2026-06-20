@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import { and, eq, isNull } from "drizzle-orm";
 import { db, schema } from "../db/index.js";
+import { config } from "../lib/config.js";
 import { hashToken } from "../lib/crypto.js";
 import { spawnStreaming } from "./gitOps.js";
 import type { AppEnv } from "../lib/types.js";
@@ -248,8 +249,13 @@ app.post("/:ownerType/:ownerId/git-receive-pack", async (c) => {
   const body = await c.req.arrayBuffer();
 
   // Process-group spawn so the pack stream's whole tree is killed on timeout.
+  // Pass HOOK_SECRET through explicitly so the post-receive hook (which now
+  // reads `$HOOK_SECRET` from its environment instead of having the secret
+  // baked into the on-disk script) can authenticate back to /internal even when
+  // the var lives only in app config and not the ambient shell env.
   const proc = spawnStreaming(["git-receive-pack", "--stateless-rpc", repoPath], {
     stdin: new Uint8Array(body),
+    env: { ...process.env, HOOK_SECRET: config.HOOK_SECRET },
   });
 
   return new Response(proc.stdout, {

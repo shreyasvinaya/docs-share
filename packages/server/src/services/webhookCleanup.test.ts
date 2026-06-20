@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { inArray } from "drizzle-orm";
+import { inArray, sql } from "drizzle-orm";
 import { db, schema } from "../db/index.js";
 import { cleanupWebhookDeliveries } from "./webhookCleanup.js";
 
@@ -152,6 +152,19 @@ describe("cleanupWebhookDeliveries", () => {
     const remainingIds = remaining.map((r) => r.id);
     expect(remainingIds).toContain(newestA);
     expect(remainingIds).toContain(newestB);
+  });
+
+  test("composite (webhook_id, created_at) index exists and backs the per-hook cap (FIX 10)", async () => {
+    // Migration 0016 adds this composite index so the per-webhook cap's
+    // correlated subquery is index-backed instead of an O(n^2) scan.
+    const idx = await db
+      .select({ name: sql<string>`name` })
+      .from(sql`sqlite_master`)
+      .where(sql`type = 'index' AND name = 'webhook_deliveries_webhook_created_idx'`)
+      .all();
+    expect(idx.map((r) => r.name)).toContain(
+      "webhook_deliveries_webhook_created_idx"
+    );
   });
 
   test("does nothing when both policies are disabled", async () => {

@@ -20,11 +20,12 @@ import viewRoutes from "./routes/view.js";
 import setupRoutes from "./routes/setup.js";
 import adminRoutes from "./routes/admin.js";
 import gitRoutes from "./git/smartHttp.js";
-import { ensureRepoDir } from "./git/repoManager.js";
+import { ensureRepoDir, repairRepoHooks } from "./git/repoManager.js";
 import { startScheduler } from "./services/scheduler.js";
 import { openApiSpec } from "./docs/openapi.js";
 import { buildLlmsTxt } from "./docs/llms.js";
 import { config } from "./lib/config.js";
+import { apiBodyLimit, gitBodyLimit, ingestionPathRe } from "./lib/bodyLimits.js";
 import { publicRateLimiter } from "./lib/rateLimiters.js";
 import { resolveInside } from "./lib/security.js";
 import type { AppEnv } from "./lib/types.js";
@@ -49,7 +50,6 @@ const ingestionCors = cors({
   allowHeaders: ["Content-Type"],
   credentials: false,
 });
-const ingestionPathRe = /^\/api\/sites\/[^/]+\/data\/[^/]+$/;
 const apiCors = cors({ origin: config.APP_URL, credentials: true });
 
 app.use("/api/*", (c, next) => {
@@ -57,6 +57,15 @@ app.use("/api/*", (c, next) => {
   return apiCors(c, next);
 });
 app.use("*", sessionMiddleware);
+
+// Request body-size limits (memory-DoS guards). The `/api/*` dispatch picks one
+// cap per request so the 1MB general default never shadows the larger
+// upload/draft caps; see lib/bodyLimits.ts for the full rationale. The backstop
+// on the Bun.serve export (`maxRequestBodySize`) catches anything past routing.
+app.use("/api/*", apiBodyLimit());
+// Git smart-HTTP push/fetch bodies are buffered into git's stdin (see
+// git/smartHttp.ts), so cap them well before that buffering happens.
+app.use("/git/*", gitBodyLimit());
 
 app.route("/api/auth", authRoutes);
 app.route("/api/users", userRoutes);
@@ -167,6 +176,10 @@ await ensureRepoDir();
 // module is imported (e.g. by tests or tooling). `startScheduler` additionally
 // no-ops when SCHEDULER_ENABLED is false.
 if (import.meta.main) {
+  // Rewrite every existing repo's post-receive hook to the env-based version so
+  // no stale baked-in plaintext HOOK_SECRET remains on disk. Idempotent and
+  // guarded so it never runs during tests/imports.
+  await repairRepoHooks();
   startScheduler();
 }
 
@@ -174,6 +187,18 @@ export default {
   port: config.PORT,
   hostname: config.HOST,
   fetch: app.fetch,
+  // Backstop body cap at the Bun.serve layer: even routes that escape the
+  // `bodyLimit` middleware (or any unmatched path) cannot buffer more than the
+  // largest per-route limit. Without this, Bun defaults to 128MB. We size it to
+  // the largest configured limit (git push) so legitimate large requests still
+  // pass while a pathological body is refused at the socket layer.
+  maxRequestBodySize: Math.max(
+    config.GIT_MAX_BODY_BYTES,
+    config.MAX_UPLOAD_BYTES,
+    config.MAX_FILE_UPLOAD_BYTES,
+    config.MAX_JSON_BODY_BYTES,
+    config.MAX_SITE_DATA_BODY_BYTES
+  ),
 };
 
 console.log(`docs-share server running on ${config.HOST}:${config.PORT}`);
