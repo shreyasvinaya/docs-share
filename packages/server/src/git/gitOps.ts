@@ -14,11 +14,17 @@ export interface GitResult {
 /**
  * Run a git subprocess in the given working directory.
  * Returns captured stdout/stderr and the exit code.
+ *
+ * `GIT_LITERAL_PATHSPECS=1` is forced so that any user-controlled pathspec is
+ * treated literally — pathspec "magic" like `:(top)` / `:!` is never
+ * interpreted, removing a class of path-escape tricks. Callers that pass
+ * user paths should still separate them after `--`.
  */
 export async function runGit(args: string[]): Promise<GitResult> {
   const proc = Bun.spawn(["git", ...args], {
     stdout: "pipe",
     stderr: "pipe",
+    env: { ...process.env, GIT_LITERAL_PATHSPECS: "1" },
   });
   const stdout = await new Response(proc.stdout).text();
   const stderr = await new Response(proc.stderr).text();

@@ -2,14 +2,18 @@ import { Hono } from "hono";
 import { eq, and, like } from "drizzle-orm";
 import { db, schema } from "../db/index.js";
 import { requireAuth } from "../middleware/requireAuth.js";
-import { checkAccess } from "../middleware/shareAccess.js";
+import {
+  canReadRepoPath,
+  canWriteRepoPath,
+  checkAccess,
+} from "../middleware/shareAccess.js";
 import { config } from "../lib/config.js";
 import { normalizeRelativePath, resolveInside } from "../lib/security.js";
 import {
   extractRepoFiles,
   indexRepoFiles,
 } from "../services/fileExtractor.js";
-import { commitAndPush, withClonedRepo } from "../git/gitOps.js";
+import { commitAndPush, runGit, withClonedRepo } from "../git/gitOps.js";
 import { dirname, join } from "path";
 import { mkdir, mkdtemp, rm } from "fs/promises";
 import { tmpdir } from "os";
@@ -401,9 +405,13 @@ app.post("/:repoId/upload", checkAccess("write"), async (c) => {
  * out into a fresh clone of HEAD, staged, and committed as a NEW commit.
  *
  * Body: { sha: string; path?: string }. Omit `path` to restore the full tree.
- * Requires auth + write access.
+ *
+ * Authorization is path-aware: a whole-repo restore (no `path`) needs a
+ * repo-wide write grant, while a path-scoped restore only needs write that
+ * covers that path. A holder of only a path-scoped write share therefore cannot
+ * restore the whole repo.
  */
-app.post("/:repoId/restore", checkAccess("write"), async (c) => {
+app.post("/:repoId/restore", async (c) => {
   const repoId = c.req.param("repoId");
   const userId = c.get("userId");
 
@@ -421,6 +429,12 @@ app.post("/:repoId/restore", checkAccess("write"), async (c) => {
     if (targetPath === null || targetPath === "") {
       return c.json({ error: "Invalid restore path" }, 400);
     }
+  }
+
+  // Path-aware write check: whole-repo restore (targetPath "") requires a
+  // repo-wide grant; a scoped restore requires write covering that path.
+  if (!(await canWriteRepoPath(userId, repoId, targetPath))) {
+    return c.json({ error: "Access denied" }, 403);
   }
 
   const repo = await db
@@ -537,9 +551,13 @@ app.post("/:repoId/restore", checkAccess("write"), async (c) => {
  * `targetRepoId` (write access required on the destination too).
  *
  * Body: { sourcePath: string; targetPath: string; targetRepoId?: string }
- * Requires auth + write access on the source repo.
+ *
+ * Authorization is path-aware and uses the SAME helper for every case: READ on
+ * the source repo at `sourcePath`, and WRITE on the destination repo (source or
+ * `targetRepoId`) at `targetPath`. The cross-repo target uses the identical
+ * write check as the same-repo target.
  */
-app.post("/:repoId/copy", checkAccess("write"), async (c) => {
+app.post("/:repoId/copy", async (c) => {
   const repoId = c.req.param("repoId");
   const userId = c.get("userId");
 
@@ -558,6 +576,11 @@ app.post("/:repoId/copy", checkAccess("write"), async (c) => {
   if (!sourcePath) return c.json({ error: "sourcePath is required" }, 400);
   if (!targetPath) return c.json({ error: "Invalid targetPath" }, 400);
 
+  // Read authorization on the source path of the source repo.
+  if (!(await canReadRepoPath(userId, repoId, sourcePath))) {
+    return c.json({ error: "Access denied" }, 403);
+  }
+
   const repo = await db
     .select()
     .from(schema.repos)
@@ -572,19 +595,26 @@ app.post("/:repoId/copy", checkAccess("write"), async (c) => {
     .get();
   if (!user) return c.json({ error: "User not found" }, 404);
 
-  // Resolve destination repo (defaults to source). When different, verify the
-  // user can write to it before copying.
+  // Resolve destination repo (defaults to source). Authorize WRITE on the
+  // destination at the target path with the SAME path-aware helper used for the
+  // same-repo case — cross-repo is not special-cased.
+  const destRepoId =
+    body.targetRepoId && body.targetRepoId !== repoId
+      ? body.targetRepoId
+      : repoId;
+
+  if (!(await canWriteRepoPath(userId, destRepoId, targetPath))) {
+    return c.json({ error: "Access denied to target repository" }, 403);
+  }
+
   let destRepo = repo;
-  if (body.targetRepoId && body.targetRepoId !== repoId) {
+  if (destRepoId !== repoId) {
     const candidate = await db
       .select()
       .from(schema.repos)
-      .where(eq(schema.repos.id, body.targetRepoId))
+      .where(eq(schema.repos.id, destRepoId))
       .get();
     if (!candidate) return c.json({ error: "Target repository not found" }, 404);
-    if (!(await userCanWrite(candidate, userId))) {
-      return c.json({ error: "Access denied to target repository" }, 403);
-    }
     destRepo = candidate;
   }
 
@@ -796,59 +826,52 @@ app.delete("/:repoId", checkAccess("write"), async (c) => {
 /**
  * Read every tracked blob at HEAD whose path equals `path` or lives under it.
  * Returns the list of { path, data } for the matched file(s).
+ *
+ * Throws if any git invocation exits non-zero, so callers never operate on the
+ * output of a failed command. User paths are passed after `--` and run under
+ * `GIT_LITERAL_PATHSPECS=1` (see {@link runGit}).
  */
 async function readTrackedFiles(
   diskPath: string,
   path: string
 ): Promise<Array<{ path: string; data: Uint8Array }>> {
-  const lsProc = Bun.spawn(
-    ["git", "-C", diskPath, "ls-tree", "-r", "--name-only", "HEAD", "--", path, `${path}/`],
-    { stdout: "pipe", stderr: "pipe" }
-  );
-  const listed = (await new Response(lsProc.stdout).text())
-    .trim()
-    .split("\n")
-    .filter(Boolean);
-  await lsProc.exited;
+  const ls = await runGit([
+    "-C",
+    diskPath,
+    "ls-tree",
+    "-r",
+    "--name-only",
+    "HEAD",
+    "--",
+    path,
+    `${path}/`,
+  ]);
+  if (ls.exitCode !== 0) {
+    throw new Error(`git ls-tree failed: ${ls.stderr.trim()}`);
+  }
+  const listed = ls.stdout.trim().split("\n").filter(Boolean);
 
   const files: Array<{ path: string; data: Uint8Array }> = [];
   for (const matched of listed) {
     const showProc = Bun.spawn(
       ["git", "-C", diskPath, "show", `HEAD:${matched}`],
-      { stdout: "pipe", stderr: "pipe" }
+      {
+        stdout: "pipe",
+        stderr: "pipe",
+        env: { ...process.env, GIT_LITERAL_PATHSPECS: "1" },
+      }
     );
     const data = new Uint8Array(
       await new Response(showProc.stdout).arrayBuffer()
     );
+    const showStderr = await new Response(showProc.stderr).text();
     await showProc.exited;
+    if ((showProc.exitCode ?? 0) !== 0) {
+      throw new Error(`git show failed for ${matched}: ${showStderr.trim()}`);
+    }
     files.push({ path: matched, data });
   }
   return files;
-}
-
-/**
- * Whether `userId` may write to `repo` (direct owner or non-viewer team member).
- * Mirrors the write rules in {@link checkAccess}.
- */
-async function userCanWrite(
-  repo: typeof schema.repos.$inferSelect,
-  userId: string
-): Promise<boolean> {
-  if (repo.ownerType === "user" && repo.ownerUserId === userId) return true;
-  if (repo.ownerType === "team" && repo.ownerTeamId) {
-    const membership = await db
-      .select()
-      .from(schema.teamMembers)
-      .where(
-        and(
-          eq(schema.teamMembers.teamId, repo.ownerTeamId),
-          eq(schema.teamMembers.userId, userId)
-        )
-      )
-      .get();
-    return !!membership && membership.role !== "viewer";
-  }
-  return false;
 }
 
 /**
