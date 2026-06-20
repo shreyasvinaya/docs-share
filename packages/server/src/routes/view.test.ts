@@ -145,6 +145,115 @@ async function seedPublicShareWithFiles(): Promise<{
   return { token, shareId };
 }
 
+/**
+ * Seed a repo whose worktree has docs/page.html and root.html, and grant
+ * `recipientEmail`'s user a READ share scoped to `sharePath` (null = whole repo).
+ * Returns the repoId and the recipient userId.
+ */
+async function seedRepoWithScopedReadShare(sharePath: string | null): Promise<{
+  repoId: string;
+  recipientId: string;
+}> {
+  const ownerId = testId("owner");
+  const recipientId = testId("recipient");
+  const repoId = testId("repo");
+  const shareId = testId("share");
+
+  await db.insert(schema.users).values([
+    {
+      id: ownerId,
+      email: `${ownerId}@example.com`,
+      displayName: "Owner",
+      googleId: `g_${ownerId}`,
+    },
+    {
+      id: recipientId,
+      email: `${recipientId}@example.com`,
+      displayName: "Recipient",
+      googleId: `g_${recipientId}`,
+    },
+  ]);
+  await db.insert(schema.repos).values({
+    id: repoId,
+    ownerType: "user",
+    ownerUserId: ownerId,
+    diskPath: `/tmp/${repoId}.git`,
+  });
+  await db.insert(schema.shares).values({
+    id: shareId,
+    repoId,
+    path: sharePath,
+    createdById: ownerId,
+    shareType: "email",
+    permission: "read",
+  });
+  await db.insert(schema.shareRecipients).values({
+    id: testId("rcp"),
+    shareId,
+    email: `${recipientId}@example.com`,
+    userId: recipientId,
+  });
+
+  const worktreeBase = `${config.DATA_DIR}/worktrees/${repoId}`;
+  await mkdir(`${worktreeBase}/docs`, { recursive: true });
+  await writeFile(`${worktreeBase}/docs/page.html`, "<html>docs</html>");
+  await writeFile(`${worktreeBase}/root.html`, "<html>root</html>");
+
+  cleanup.userIds.push(ownerId, recipientId);
+  cleanup.repoIds.push(repoId);
+  cleanup.shareIds.push(shareId);
+  cleanup.worktreeDirs.push(worktreeBase);
+  return { repoId, recipientId };
+}
+
+function authedAppAs(userId: string): Hono<AppEnv> {
+  const app = new Hono<AppEnv>();
+  app.use("*", async (c, next) => {
+    c.set("userId", userId);
+    return next();
+  });
+  app.route("/view", viewRoutes);
+  return app;
+}
+
+describe("path-scoped share authorization on view serving", () => {
+  test("path-scoped reader can read a file within their path", async () => {
+    const { repoId, recipientId } = await seedRepoWithScopedReadShare("docs");
+    const res = await authedAppAs(recipientId).request(
+      `/view/${repoId}/docs/page.html`
+    );
+    expect(res.status).toBe(200);
+  });
+
+  test("path-scoped reader is denied a file outside their path", async () => {
+    const { repoId, recipientId } = await seedRepoWithScopedReadShare("docs");
+    const res = await authedAppAs(recipientId).request(
+      `/view/${repoId}/root.html`
+    );
+    expect(res.status).toBe(403);
+  });
+
+  test("path-scoped reader is denied the whole-repo index", async () => {
+    const { repoId, recipientId } = await seedRepoWithScopedReadShare("docs");
+    const res = await authedAppAs(recipientId).request(`/view/${repoId}`);
+    expect(res.status).toBe(403);
+  });
+
+  test("whole-repo reader can read any file and the index", async () => {
+    const { repoId, recipientId } = await seedRepoWithScopedReadShare(null);
+
+    const outside = await authedAppAs(recipientId).request(
+      `/view/${repoId}/root.html`
+    );
+    expect(outside.status).toBe(200);
+
+    const inside = await authedAppAs(recipientId).request(
+      `/view/${repoId}/docs/page.html`
+    );
+    expect(inside.status).toBe(200);
+  });
+});
+
 describe("public view recording", () => {
   test("records a view when an HTML page is served", async () => {
     const { token, shareId } = await seedPublicShareWithFiles();

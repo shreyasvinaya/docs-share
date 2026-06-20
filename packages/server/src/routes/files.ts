@@ -1,11 +1,10 @@
 import { Hono } from "hono";
-import { eq, and, like } from "drizzle-orm";
+import { eq, and, sql } from "drizzle-orm";
 import { db, schema } from "../db/index.js";
 import { requireAuth } from "../middleware/requireAuth.js";
 import {
   canReadRepoPath,
   canWriteRepoPath,
-  checkAccess,
 } from "../middleware/shareAccess.js";
 import { config } from "../lib/config.js";
 import { normalizeRelativePath, resolveInside } from "../lib/security.js";
@@ -28,19 +27,37 @@ app.use("*", requireAuth);
 /**
  * GET /:repoId — List files in repo root (or at ?path= subpath).
  * Returns FileNode[]. Requires auth + read access.
+ *
+ * Authorization is path-aware: listing a `?path` subtree requires read covering
+ * that path, while a repo-root listing (no `?path`) requires a repo-wide read
+ * grant (owner, team member, or a whole-repo read share). A path-scoped share
+ * therefore cannot list the repo root.
  */
-app.get("/:repoId", checkAccess("read"), async (c) => {
+app.get("/:repoId", async (c) => {
   const repoId = c.req.param("repoId");
+  const userId = c.get("userId");
   const pathPrefix = c.req.query("path") || "";
 
-  // Normalize: ensure prefix ends with / if non-empty, for directory matching
-  const normalizedPrefix = pathPrefix
-    ? pathPrefix.endsWith("/")
-      ? pathPrefix
-      : pathPrefix + "/"
-    : "";
+  // Authorize the requested target: the given ?path subtree, or the whole repo
+  // (empty target) when listing the root. normalizeRelativePath("") === "".
+  const requestedTarget = normalizeRelativePath(pathPrefix);
+  if (requestedTarget === null) {
+    return c.json({ error: "Invalid path" }, 400);
+  }
+  if (!(await canReadRepoPath(userId, repoId, requestedTarget))) {
+    return c.json({ error: "Access denied" }, 403);
+  }
 
-  // Get all files under this prefix
+  // Build the directory-matching prefix from the NORMALIZED, authorized path
+  // (`requestedTarget`), never the raw query input. A non-empty prefix always
+  // ends with "/" so it matches only immediate descendants of the directory.
+  const normalizedPrefix = requestedTarget ? `${requestedTarget}/` : "";
+
+  // Get all files under this prefix. The prefix is matched with LIKE, whose
+  // `%` and `_` are wildcards — so a path containing those characters (e.g.
+  // `docs_` or `a%b`) would otherwise match siblings like `docsA` / `axb`.
+  // Escape the LIKE metacharacters (`\`, `%`, `_`) and pin the escape char with
+  // `ESCAPE '\'` so the prefix matches ONLY its literal characters.
   const allFiles = normalizedPrefix
     ? await db
         .select()
@@ -48,7 +65,7 @@ app.get("/:repoId", checkAccess("read"), async (c) => {
         .where(
           and(
             eq(schema.files.repoId, repoId),
-            like(schema.files.path, `${normalizedPrefix}%`)
+            sql`${schema.files.path} LIKE ${`${escapeLikePattern(normalizedPrefix)}%`} ESCAPE '\\'`
           )
         )
         .all()
@@ -104,11 +121,25 @@ app.get("/:repoId", checkAccess("read"), async (c) => {
 /**
  * GET /:repoId/commits — List recent commits for the repo
  * (or at ?path= for a specific file). Uses `git log` subprocess.
+ *
+ * Authorization is path-aware: a `?path` query authorizes the history of that
+ * path (read covering it), while a repo-wide commit log (no `?path`) requires a
+ * repo-wide read grant. A path-scoped share cannot read the whole-repo log.
  */
-app.get("/:repoId/commits", checkAccess("read"), async (c) => {
+app.get("/:repoId/commits", async (c) => {
   const repoId = c.req.param("repoId");
+  const userId = c.get("userId");
   const filePath = c.req.query("path");
   const limit = parseInt(c.req.query("limit") || "20", 10);
+
+  // Authorize the requested target path (or whole repo when none given).
+  const requestedTarget = normalizeRelativePath(filePath ?? "");
+  if (requestedTarget === null) {
+    return c.json({ error: "Invalid path" }, 400);
+  }
+  if (!(await canReadRepoPath(userId, repoId, requestedTarget))) {
+    return c.json({ error: "Access denied" }, 403);
+  }
 
   const repo = await db
     .select()
@@ -175,9 +206,14 @@ app.get("/:repoId/commits", checkAccess("read"), async (c) => {
  * Creates a git commit in the bare repo.
  *
  * Body: multipart with files and optional `path` and `message` fields.
- * Requires auth + write access.
+ *
+ * Authorization is path-aware: every upload DESTINATION path (the normalized
+ * form `path` joined with each file's name) must be covered by a write grant.
+ * A path-scoped writer can upload within their path but any destination outside
+ * their scope is rejected (403). A repo-wide write (owner / non-viewer team
+ * member / whole-repo write share) covers every destination.
  */
-app.post("/:repoId/upload", checkAccess("write"), async (c) => {
+app.post("/:repoId/upload", async (c) => {
   const repoId = c.req.param("repoId");
   const userId = c.get("userId");
 
@@ -302,6 +338,16 @@ app.post("/:repoId/upload", checkAccess("write"), async (c) => {
       const relativePath = targetPath
         ? `${targetPath}/${normalizedFileName}`
         : normalizedFileName;
+
+      // Path-aware write check for THIS destination: a path-scoped writer may
+      // only land files inside their scope; anything outside is rejected.
+      if (!(await canWriteRepoPath(userId, repoId, relativePath))) {
+        return c.json(
+          { error: `Access denied for upload path: ${relativePath}` },
+          403
+        );
+      }
+
       const fileDest = resolveInside(clonePath, relativePath);
 
       if (!fileDest) {
@@ -686,9 +732,12 @@ app.post("/:repoId/copy", async (c) => {
 /**
  * DELETE /:repoId — Delete one file or directory path and commit the removal.
  * Query: ?path=<relative-path>
- * Requires auth + write access.
+ *
+ * Authorization is path-aware: deleting `?path` requires a write grant covering
+ * that path. A path-scoped writer can delete within their scope but is denied
+ * (403) for any path outside it.
  */
-app.delete("/:repoId", checkAccess("write"), async (c) => {
+app.delete("/:repoId", async (c) => {
   const repoId = c.req.param("repoId");
   const userId = c.get("userId");
   const requestedPath = c.req.query("path");
@@ -696,6 +745,11 @@ app.delete("/:repoId", checkAccess("write"), async (c) => {
 
   if (!targetPath) {
     return c.json({ error: "path is required" }, 400);
+  }
+
+  // Path-aware write check on the deletion target.
+  if (!(await canWriteRepoPath(userId, repoId, targetPath))) {
+    return c.json({ error: "Access denied" }, 403);
   }
 
   const repo = await db
@@ -872,6 +926,18 @@ async function readTrackedFiles(
     files.push({ path: matched, data });
   }
   return files;
+}
+
+/**
+ * Escape the SQLite LIKE metacharacters in `value` so it matches literally.
+ *
+ * SQLite LIKE treats `%` (any run) and `_` (any single char) as wildcards. We
+ * use `\` as the escape char (paired with an `ESCAPE '\'` clause at the call
+ * site), so `\` itself must be escaped first. Without this, a directory prefix
+ * like `docs_/` or `a%b/` would match siblings (`docsX/...`, `aZZb/...`).
+ */
+function escapeLikePattern(value: string): string {
+  return value.replace(/[\\%_]/g, (ch) => `\\${ch}`);
 }
 
 /**

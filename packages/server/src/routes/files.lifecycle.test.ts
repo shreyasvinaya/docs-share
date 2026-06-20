@@ -226,6 +226,47 @@ async function seedRepoWithDocs(
   return { repoId, v1Sha, diskPath };
 }
 
+/**
+ * Build an owned bare repo whose tree contains `files` (path -> content), each
+ * committed once. Returns the repoId + diskPath.
+ */
+async function seedRepoWithFiles(
+  ownerUserId: string,
+  files: Record<string, string>
+): Promise<{ repoId: string; diskPath: string }> {
+  const repoId = testId("repo");
+  const base = await mkdtemp(join(tmpdir(), "ds-seed-"));
+  cleanup.dirs.push(base);
+  const diskPath = join(base, "repo.git");
+  const work = join(base, "work");
+
+  await runGit(["init", "--bare", diskPath]);
+  await runGit(["clone", diskPath, work]);
+  await runGit(["-C", work, "config", "user.name", "Seed"]);
+  await runGit(["-C", work, "config", "user.email", "seed@example.com"]);
+
+  for (const [path, content] of Object.entries(files)) {
+    await Bun.write(join(work, path), content);
+  }
+  await runGit(["-C", work, "add", "-A"]);
+  await runGit(["-C", work, "commit", "-m", "seed"]);
+  await runGit(["-C", work, "push", "origin", "HEAD"]);
+  const head = await runGit(["-C", work, "rev-parse", "HEAD"]);
+
+  await db.insert(schema.repos).values({
+    id: repoId,
+    ownerType: "user",
+    ownerUserId,
+    diskPath,
+    headSha: head.stdout.trim(),
+  });
+  cleanup.repoIds.push(repoId);
+  await extractRepoFiles(repoId, diskPath, head.stdout.trim());
+  await indexRepoFiles(repoId, diskPath, head.stdout.trim());
+
+  return { repoId, diskPath };
+}
+
 /** Build an empty, owned bare repo (no commits). Returns repoId + diskPath. */
 async function seedEmptyRepo(
   ownerUserId: string
@@ -570,5 +611,199 @@ describe("file lifecycle routes", () => {
     });
 
     expect(res.status).toBe(500);
+  });
+});
+
+describe("path-scoped share authorization on file routes", () => {
+  /** Grant `userId` a path-scoped read share on docs/ for a docs repo. */
+  async function seedDocsRepoWithScopedReader(
+    permission: "read" | "write"
+  ): Promise<{ repoId: string; ownerId: string; scopedId: string; scopedToken: string }> {
+    const ownerId = await seedUser("Owner");
+    const scopedId = await seedUser("Scoped");
+    const scopedToken = await seedToken(scopedId);
+    const { repoId } = await seedRepoWithDocs(ownerId);
+    await seedEmailShare({
+      repoId,
+      createdById: ownerId,
+      recipientUserId: scopedId,
+      recipientEmail: await userEmail(scopedId),
+      permission,
+      path: "docs",
+    });
+    return { repoId, ownerId, scopedId, scopedToken };
+  }
+
+  test("path-scoped reader is denied the repo-root file list", async () => {
+    const { repoId, scopedToken } = await seedDocsRepoWithScopedReader("read");
+
+    const res = await routeApp.request(`/api/files/${repoId}`, {
+      headers: authHeaders(scopedToken),
+    });
+    expect(res.status).toBe(403);
+  });
+
+  test("path-scoped reader can list within their path", async () => {
+    const { repoId, scopedToken } = await seedDocsRepoWithScopedReader("read");
+
+    const res = await routeApp.request(`/api/files/${repoId}?path=docs`, {
+      headers: authHeaders(scopedToken),
+    });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { data: Array<{ path: string }> };
+    expect(body.data.some((n) => n.path === "docs/page.html")).toBe(true);
+  });
+
+  test("path-scoped reader is denied the repo-root commit log but allowed within their path", async () => {
+    const { repoId, scopedToken } = await seedDocsRepoWithScopedReader("read");
+
+    const wholeRepo = await routeApp.request(`/api/files/${repoId}/commits`, {
+      headers: authHeaders(scopedToken),
+    });
+    expect(wholeRepo.status).toBe(403);
+
+    const scoped = await routeApp.request(
+      `/api/files/${repoId}/commits?path=docs/page.html`,
+      { headers: authHeaders(scopedToken) }
+    );
+    expect(scoped.status).toBe(200);
+  });
+
+  test("owner can list the repo root and read the whole-repo commit log", async () => {
+    const ownerId = await seedUser("Owner");
+    const ownerToken = await seedToken(ownerId);
+    const { repoId } = await seedRepoWithDocs(ownerId);
+
+    const list = await routeApp.request(`/api/files/${repoId}`, {
+      headers: authHeaders(ownerToken),
+    });
+    expect(list.status).toBe(200);
+
+    const commits = await routeApp.request(`/api/files/${repoId}/commits`, {
+      headers: authHeaders(ownerToken),
+    });
+    expect(commits.status).toBe(200);
+  });
+
+  test("path-scoped writer is denied delete outside their path but allowed inside", async () => {
+    const { repoId, diskPath, scopedToken } = await (async () => {
+      const seeded = await seedDocsRepoWithScopedReader("write");
+      const repo = await db
+        .select()
+        .from(schema.repos)
+        .where(inArray(schema.repos.id, [seeded.repoId]))
+        .get();
+      return { ...seeded, diskPath: repo!.diskPath };
+    })();
+
+    // Deleting root.html (outside docs/) is denied.
+    const denied = await routeApp.request(
+      `/api/files/${repoId}?path=root.html`,
+      { method: "DELETE", headers: authHeaders(scopedToken) }
+    );
+    expect(denied.status).toBe(403);
+
+    // Deleting docs/page.html (inside scope) is allowed.
+    const allowed = await routeApp.request(
+      `/api/files/${repoId}?path=docs/page.html`,
+      { method: "DELETE", headers: authHeaders(scopedToken) }
+    );
+    expect(allowed.status).toBe(200);
+    // root.html still present; docs/page.html removed at HEAD.
+    expect(await readFileAtHead(diskPath, "root.html")).toBe("<p>root</p>");
+  });
+
+  test("path-scoped writer is denied upload outside their path but allowed inside", async () => {
+    const { repoId, scopedToken } = await seedDocsRepoWithScopedReader("write");
+
+    // Upload OUTSIDE docs/ (root destination) is denied.
+    const deniedForm = new FormData();
+    deniedForm.set("path", "");
+    deniedForm.set(
+      "file",
+      new File(["<p>nope</p>"], "evil.html", { type: "text/html" })
+    );
+    const denied = await routeApp.request(`/api/files/${repoId}/upload`, {
+      method: "POST",
+      headers: authHeaders(scopedToken),
+      body: deniedForm,
+    });
+    expect(denied.status).toBe(403);
+
+    // Upload INSIDE docs/ is allowed.
+    const allowedForm = new FormData();
+    allowedForm.set("path", "docs");
+    allowedForm.set(
+      "file",
+      new File(["<p>ok</p>"], "added.html", { type: "text/html" })
+    );
+    const allowed = await routeApp.request(`/api/files/${repoId}/upload`, {
+      method: "POST",
+      headers: authHeaders(scopedToken),
+      body: allowedForm,
+    });
+    expect(allowed.status).toBe(201);
+  });
+});
+
+describe("file listing treats the path prefix literally (LIKE wildcards)", () => {
+  test("a read share scoped to literal `a_b` does not list sibling `axb`", async () => {
+    const ownerId = await seedUser("Owner");
+    const scopedId = await seedUser("Scoped");
+    const scopedToken = await seedToken(scopedId);
+    // `_` is a LIKE single-char wildcard: a `a_b/%` pattern would match `axb/`.
+    const { repoId } = await seedRepoWithFiles(ownerId, {
+      "a_b/inside.html": "<p>inside</p>",
+      "axb/sibling.html": "<p>sibling</p>",
+      "aZb/other.html": "<p>other</p>",
+    });
+    await seedEmailShare({
+      repoId,
+      createdById: ownerId,
+      recipientUserId: scopedId,
+      recipientEmail: await userEmail(scopedId),
+      permission: "read",
+      path: "a_b",
+    });
+
+    const res = await routeApp.request(`/api/files/${repoId}?path=a_b`, {
+      headers: authHeaders(scopedToken),
+    });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { data: Array<{ path: string }> };
+    const paths = body.data.map((n) => n.path);
+    // Only the literal a_b/ subtree is listed; siblings must NOT leak.
+    expect(paths).toContain("a_b/inside.html");
+    expect(paths).not.toContain("axb/sibling.html");
+    expect(paths).not.toContain("aZb/other.html");
+  });
+
+  test("a read share scoped to literal `a%b` does not list sibling `aZZb`", async () => {
+    const ownerId = await seedUser("Owner");
+    const scopedId = await seedUser("Scoped");
+    const scopedToken = await seedToken(scopedId);
+    // `%` is a LIKE any-run wildcard: a `a%b/%` pattern would match `aZZb/`.
+    const { repoId } = await seedRepoWithFiles(ownerId, {
+      "a%b/inside.html": "<p>inside</p>",
+      "aZZb/sibling.html": "<p>sibling</p>",
+    });
+    await seedEmailShare({
+      repoId,
+      createdById: ownerId,
+      recipientUserId: scopedId,
+      recipientEmail: await userEmail(scopedId),
+      permission: "read",
+      path: "a%b",
+    });
+
+    const res = await routeApp.request(
+      `/api/files/${repoId}?path=${encodeURIComponent("a%b")}`,
+      { headers: authHeaders(scopedToken) }
+    );
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { data: Array<{ path: string }> };
+    const paths = body.data.map((n) => n.path);
+    expect(paths).toContain("a%b/inside.html");
+    expect(paths).not.toContain("aZZb/sibling.html");
   });
 });
