@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="docs/assets/patra-banner.svg" alt="Patra — publish & share docs as shareable links, self-hosted" width="820">
+  <img src="docs/assets/patra-readme-logo.svg" alt="Patra — Git-backed publishing and sharing for documents, drafts, and static sites" width="720">
 </p>
 
 # Patra
@@ -11,6 +11,10 @@ publishing.
 > **Patra** (ಪತ್ರ / पत्र) is Sanskrit/Kannada for "page," "leaf," or "letter" —
 > a fitting name for a place to keep and share your documents. The logo is a leaf
 > whose veins read as lines of text.
+
+<p align="center">
+  <img src="docs/assets/patra-readme-hero.png" alt="Illustration of Patra publishing, sharing, versioning, and securing documents" width="920">
+</p>
 
 ## What It Is
 
@@ -25,6 +29,10 @@ multi-file static sites with real access control. It is built for two audiences:
 
 It is a Bun/Turbo monorepo: a Hono API server, a React/Vite web app, a
 `patra` CLI, and a shared types package.
+
+<p align="center">
+  <img src="docs/assets/patra-workflow.png" alt="Illustration of an agent publishing an HTML draft through Git-backed storage into a secure preview link" width="760">
+</p>
 
 ## Features
 
@@ -61,6 +69,10 @@ It is a Bun/Turbo monorepo: a Hono API server, a React/Vite web app, a
 - **Rate limiting** — in-memory fixed-window limiter on public and auth endpoints,
   tunable via env.
 - **Docker self-hosting** — single app container, SQLite + Git repos on a volume.
+
+<p align="center">
+  <img src="docs/assets/patra-secure-sharing.png" alt="Illustration of secure document sharing and access controls" width="760">
+</p>
 
 ## Quick Start (Local Dev)
 

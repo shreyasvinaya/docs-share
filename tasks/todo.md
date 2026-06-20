@@ -1,3 +1,16 @@
+# README Branding Asset Pass
+
+**Goal:** Add a polished Patra logo and README image while preserving existing behavior and unrelated local changes.
+
+- [x] Inspect current README, asset directory, and repo state.
+- [x] Create repo-local logo and README hero asset.
+- [x] Generate additional workflow and secure-sharing visuals.
+- [x] Refresh public home and docs UI around the new visual direction.
+- [x] Update `README.md` to reference the assets.
+- [x] Verify markdown references and asset validity.
+
+---
+
 # Org-Link Login Gate Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
