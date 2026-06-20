@@ -2,8 +2,10 @@ import { useState } from "react";
 import { NavLink, useNavigate } from "react-router";
 import { useTeams } from "@/hooks/use-teams";
 import { useSession } from "@/hooks/use-auth";
+import { useDeploymentName } from "@/hooks/use-setup";
 import { useUiStore } from "@/stores/ui-store";
 import { cn } from "@/lib/utils";
+import { getAdminNavItems } from "@/lib/app-navigation";
 import { CreateTeamDialog } from "@/components/teams/create-team-dialog";
 
 const mainNav = [
@@ -51,8 +53,10 @@ export function AppSidebar() {
   const navigate = useNavigate();
   const { data: teams } = useTeams();
   const { data: session } = useSession();
+  const deploymentName = useDeploymentName();
   const [showCreateTeam, setShowCreateTeam] = useState(false);
   const user = session?.user;
+  const adminNav = getAdminNavItems(user);
 
   return (
     <aside
@@ -68,7 +72,7 @@ export function AppSidebar() {
           </svg>
         </div>
         {!collapsed && (
-          <span className="text-sm font-semibold">docs-share</span>
+          <span className="truncate text-sm font-semibold">{deploymentName}</span>
         )}
       </div>
 
@@ -179,6 +183,43 @@ export function AppSidebar() {
             )
           )}
         </div>
+
+        {adminNav.length > 0 && (
+          <div className="mt-6">
+            {!collapsed && (
+              <div className="mb-1 px-3">
+                <h3 className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
+                  Admin
+                </h3>
+              </div>
+            )}
+            <ul className="space-y-0.5">
+              {adminNav.map((item) => (
+                <li key={item.to}>
+                  <NavLink
+                    to={item.to}
+                    aria-label={collapsed ? item.label : undefined}
+                    title={collapsed ? item.label : undefined}
+                    className={({ isActive }) =>
+                      cn(
+                        "flex items-center gap-3 rounded-lg px-3 py-2 text-sm transition-colors",
+                        isActive
+                          ? "bg-muted font-medium text-foreground"
+                          : "text-muted-foreground hover:bg-muted/50 hover:text-foreground",
+                        collapsed && "justify-center px-0",
+                      )
+                    }
+                  >
+                    <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M9 12.75L11.25 15 15 9.75M12 3.75l7.5 3v5.25c0 4.35-3.19 8.43-7.5 9.75-4.31-1.32-7.5-5.4-7.5-9.75V6.75l7.5-3z" />
+                    </svg>
+                    {!collapsed && <span>{item.label}</span>}
+                  </NavLink>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
       </nav>
 
       <div className="border-t border-border p-2">

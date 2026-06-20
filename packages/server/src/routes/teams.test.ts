@@ -271,4 +271,59 @@ describe("POST /api/teams/invitations/:token/accept", () => {
     );
     expect(res.status).toBe(404);
   });
+
+  test("rejects with 403 when the accepting user's email does not match the invite", async () => {
+    const { ownerId, teamId } = await seedTeamWithMember();
+    const email = `${testId("intended")}@example.com`;
+
+    const inviteRes = await appAs(ownerId).request(`/api/teams/${teamId}/members`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email, role: "member" }),
+    });
+    const inviteBody = (await inviteRes.json()) as { data: { id: string; token: string } };
+    cleanup.inviteIds.push(inviteBody.data.id);
+
+    // A different, authenticated user (wrong email) tries to redeem the token.
+    const intruderId = testId("intruder");
+    await db.insert(schema.users).values({
+      id: intruderId,
+      email: `${testId("intruder")}@example.com`,
+      displayName: "Intruder",
+      googleId: `g_${intruderId}`,
+    });
+    cleanup.userIds.push(intruderId);
+
+    const acceptRes = await appAs(intruderId).request(
+      `/api/teams/invitations/${inviteBody.data.token}/accept`,
+      { method: "POST" }
+    );
+    expect(acceptRes.status).toBe(403);
+
+    // No teamMembers row was created for the intruder.
+    const membership = await db
+      .select()
+      .from(schema.teamMembers)
+      .where(
+        and(
+          eq(schema.teamMembers.teamId, teamId),
+          eq(schema.teamMembers.userId, intruderId)
+        )
+      )
+      .get();
+    expect(membership).toBeUndefined();
+  });
+
+  test("rejects an unauthenticated accept with 401", async () => {
+    // Mount the routes without pre-setting userId so the router's own
+    // requireAuth middleware runs.
+    const app = new Hono<AppEnv>();
+    app.route("/api/teams", teamRoutes);
+
+    const res = await app.request(
+      `/api/teams/invitations/${testId("tok")}/accept`,
+      { method: "POST" }
+    );
+    expect(res.status).toBe(401);
+  });
 });

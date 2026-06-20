@@ -10,6 +10,20 @@ export interface AcceptInvitationResult {
 }
 
 /**
+ * Outcome of attempting to accept an invitation by token on behalf of a user.
+ *
+ * - `not_found`  — no invitation exists for the supplied token.
+ * - `forbidden`  — the authenticated user does not own the invited email
+ *   address (or no such user exists). The invitation is NOT consumed.
+ * - `accepted`   — the invitation was accepted (or was already accepted and is
+ *   resolved idempotently); `result` carries the membership details.
+ */
+export type AcceptInvitationByTokenOutcome =
+  | { status: "not_found" }
+  | { status: "forbidden" }
+  | { status: "accepted"; result: AcceptInvitationResult };
+
+/**
  * Convert a single pending invitation into a real team membership.
  *
  * The operation is idempotent: re-running it for an already-accepted invitation
@@ -77,19 +91,43 @@ async function acceptInvitation(
 /**
  * Accept an invitation identified by its opaque token on behalf of `userId`.
  *
- * @returns The acceptance result, or `null` when the token is unknown.
+ * Security: the invitation is bound to a specific email address. To prevent an
+ * IDOR where any authenticated user could redeem someone else's token, the
+ * authenticated user's own email must match the invitation's email
+ * (case-insensitively). If the user does not exist or the emails differ, the
+ * invitation is left untouched and `forbidden` is returned.
+ *
+ * The operation remains idempotent: re-accepting an already-accepted invitation
+ * (by the rightful owner) resolves to the existing membership.
+ *
+ * @param token - The opaque invitation token.
+ * @param userId - The id of the authenticated user attempting to accept.
+ * @returns A discriminated outcome describing whether the invitation was
+ *   accepted, the token was unknown, or the user was not authorised.
  */
 export async function acceptInvitationByToken(
   token: string,
   userId: string
-): Promise<AcceptInvitationResult | null> {
+): Promise<AcceptInvitationByTokenOutcome> {
   const invitation = await db
     .select()
     .from(schema.invitations)
     .where(eq(schema.invitations.token, token))
     .get();
-  if (!invitation) return null;
-  return acceptInvitation(invitation, userId);
+  if (!invitation) return { status: "not_found" };
+
+  const user = await db
+    .select()
+    .from(schema.users)
+    .where(eq(schema.users.id, userId))
+    .get();
+
+  if (!user || user.email.toLowerCase() !== invitation.email.toLowerCase()) {
+    return { status: "forbidden" };
+  }
+
+  const result = await acceptInvitation(invitation, userId);
+  return { status: "accepted", result };
 }
 
 /**

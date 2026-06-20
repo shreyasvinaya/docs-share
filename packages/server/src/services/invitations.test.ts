@@ -92,14 +92,16 @@ async function seedUser(email: string): Promise<string> {
 
 describe("acceptInvitationByToken", () => {
   test("creates a membership with the invited role and stamps acceptedAt", async () => {
-    const { token, teamId, inviteId } = await seedTeamAndInvite("admin");
-    const userId = await seedUser(`${testId("u")}@example.com`);
+    const { token, teamId, inviteId, email } = await seedTeamAndInvite("admin");
+    // The accepting user must own the invited email address.
+    const userId = await seedUser(email);
 
-    const result = await acceptInvitationByToken(token, userId);
-    expect(result).not.toBeNull();
-    expect(result?.alreadyMember).toBe(false);
-    expect(result?.role).toBe("admin");
-    if (result) cleanup.memberIds.push(result.membershipId);
+    const outcome = await acceptInvitationByToken(token, userId);
+    expect(outcome.status).toBe("accepted");
+    if (outcome.status !== "accepted") return;
+    expect(outcome.result.alreadyMember).toBe(false);
+    expect(outcome.result.role).toBe("admin");
+    cleanup.memberIds.push(outcome.result.membershipId);
 
     const membership = await db
       .select()
@@ -121,17 +123,29 @@ describe("acceptInvitationByToken", () => {
     expect(invite?.acceptedAt).toBeTruthy();
   });
 
+  test("matches the invited email case-insensitively", async () => {
+    const { token, email } = await seedTeamAndInvite("member");
+    const userId = await seedUser(email.toUpperCase());
+
+    const outcome = await acceptInvitationByToken(token, userId);
+    expect(outcome.status).toBe("accepted");
+    if (outcome.status === "accepted") cleanup.memberIds.push(outcome.result.membershipId);
+  });
+
   test("is idempotent — accepting twice does not create a duplicate membership", async () => {
-    const { token, teamId } = await seedTeamAndInvite();
-    const userId = await seedUser(`${testId("u")}@example.com`);
+    const { token, teamId, email } = await seedTeamAndInvite();
+    const userId = await seedUser(email);
 
     const first = await acceptInvitationByToken(token, userId);
     const second = await acceptInvitationByToken(token, userId);
-    if (first) cleanup.memberIds.push(first.membershipId);
+    expect(first.status).toBe("accepted");
+    expect(second.status).toBe("accepted");
+    if (first.status !== "accepted" || second.status !== "accepted") return;
+    cleanup.memberIds.push(first.result.membershipId);
 
-    expect(first?.alreadyMember).toBe(false);
-    expect(second?.alreadyMember).toBe(true);
-    expect(second?.membershipId).toBe(first?.membershipId);
+    expect(first.result.alreadyMember).toBe(false);
+    expect(second.result.alreadyMember).toBe(true);
+    expect(second.result.membershipId).toBe(first.result.membershipId);
 
     const memberships = await db
       .select()
@@ -146,10 +160,39 @@ describe("acceptInvitationByToken", () => {
     expect(memberships.length).toBe(1);
   });
 
-  test("returns null for an unknown token", async () => {
+  test("returns not_found for an unknown token", async () => {
     const userId = await seedUser(`${testId("u")}@example.com`);
-    const result = await acceptInvitationByToken(generateId(), userId);
-    expect(result).toBeNull();
+    const outcome = await acceptInvitationByToken(generateId(), userId);
+    expect(outcome.status).toBe("not_found");
+  });
+
+  test("returns forbidden and does not consume the invite when emails differ", async () => {
+    const { token, teamId, inviteId } = await seedTeamAndInvite("member");
+    // A user whose email does NOT match the invitation.
+    const userId = await seedUser(`${testId("intruder")}@example.com`);
+
+    const outcome = await acceptInvitationByToken(token, userId);
+    expect(outcome.status).toBe("forbidden");
+
+    // No membership was created and the invite was left untouched.
+    const membership = await db
+      .select()
+      .from(schema.teamMembers)
+      .where(
+        and(
+          eq(schema.teamMembers.teamId, teamId),
+          eq(schema.teamMembers.userId, userId)
+        )
+      )
+      .get();
+    expect(membership).toBeUndefined();
+
+    const invite = await db
+      .select()
+      .from(schema.invitations)
+      .where(eq(schema.invitations.id, inviteId))
+      .get();
+    expect(invite?.acceptedAt).toBeNull();
   });
 });
 

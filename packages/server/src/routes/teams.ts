@@ -436,19 +436,30 @@ app.post("/:teamId/members", async (c) => {
 /**
  * POST /invitations/:token/accept — Accept a pending invitation by token.
  * Converts the invitation into a real teamMembers row for the current user.
- * Idempotent: accepting an already-accepted invitation returns the existing
- * membership.
+ *
+ * Auth: protected by the router-wide `requireAuth` middleware, so `userId` is
+ * always present here. The invitation is additionally bound to the invited
+ * email — the authenticated user's email must match the invitation's email,
+ * otherwise the request is rejected with 403 and the invite is left untouched.
+ * This prevents an IDOR where any authenticated holder of a token could join a
+ * team they were never invited to.
+ *
+ * Idempotent: accepting an already-accepted invitation by its rightful owner
+ * returns the existing membership.
  */
 app.post("/invitations/:token/accept", async (c) => {
   const userId = c.get("userId");
   const token = c.req.param("token");
 
-  const result = await acceptInvitationByToken(token, userId);
-  if (!result) {
+  const outcome = await acceptInvitationByToken(token, userId);
+  if (outcome.status === "not_found") {
     return c.json({ error: "Invitation not found" }, 404);
   }
+  if (outcome.status === "forbidden") {
+    return c.json({ error: "This invitation was issued to a different email" }, 403);
+  }
 
-  return c.json({ data: result });
+  return c.json({ data: outcome.result });
 });
 
 /**

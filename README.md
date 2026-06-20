@@ -51,7 +51,10 @@ Minimum production settings:
 - `APP_URL=https://your-domain`
 - `API_URL=https://your-domain`
 - `CONTENT_ORIGIN=https://your-domain`
+- `DEPLOYMENT_NAME="Your Company Docs"` for visible deployment branding
+- `SYSADMIN_EMAILS=admin@your-domain` for setup access in Settings
 - `GOOGLE_REDIRECT_URI=https://your-domain/api/auth/google/callback`
+- `GITHUB_APP_ID`, `GITHUB_APP_SLUG`, and `GITHUB_APP_PRIVATE_KEY` for GitHub imports
 - `SESSION_SECRET` and `HOOK_SECRET` with at least 32 random characters
 
 If you terminate TLS at a reverse proxy, forward traffic to the container on port `3000`.
@@ -88,7 +91,7 @@ Upload options:
 
 - Website: upload individual files for flat bundles, or choose/drop a folder to preserve nested paths.
 - CLI: `docs-share push ./site --to personal` preserves paths under `./site`.
-- GitHub sync: choose from repositories accessible to the importing user's GitHub token, narrow by organization, or enter another `https://github.com/owner/repo` URL. Repository choices are ordered by last updated, branches load after a repository URL is selected, and users can browse/select one file or folder before syncing.
+- GitHub sync: connect the GitHub App from **Settings -> Integrations**, choose which repositories the app can access in GitHub, or use the personal access token fallback when the app is not configured. Users can narrow by organization or enter another `https://github.com/owner/repo` URL. Repository choices are ordered by last updated, branches load after a repository URL is selected, and users can browse/select one file or folder before syncing.
 
 For public links, share the containing directory when an HTML page depends on sibling pages or assets. File-only shares expose only that file.
 

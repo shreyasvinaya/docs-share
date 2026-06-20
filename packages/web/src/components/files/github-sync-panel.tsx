@@ -73,7 +73,7 @@ export function GitHubSyncPanel({ repoId }: GitHubSyncPanelProps) {
       <div className="mb-3">
         <h2 className="text-sm font-semibold">GitHub sync</h2>
         <p className="mt-0.5 text-xs text-muted-foreground">
-          Import from repositories your GitHub token can access, or enter another GitHub URL.
+          Import from repositories your GitHub integration can access, or enter another GitHub URL.
         </p>
       </div>
       <form
@@ -252,7 +252,7 @@ export function GitHubSyncPanel({ repoId }: GitHubSyncPanelProps) {
               <p className="px-3 py-3 text-sm text-muted-foreground">Loading repository tree...</p>
             ) : tree.isError ? (
               <p className="px-3 py-3 text-sm text-destructive">
-                Could not load repository tree. Check the URL, branch, and your GitHub token in Settings.
+                Could not load repository tree. Check the URL, branch, and your GitHub integration in Settings.
               </p>
             ) : tree.data && tree.data.length > 0 ? (
               <ul className="divide-y divide-border">

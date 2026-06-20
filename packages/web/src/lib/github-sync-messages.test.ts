@@ -19,7 +19,7 @@ function repo(
 }
 
 describe("getGitHubPrivateRepoNotice", () => {
-  test("warns when a connected token only returns public repositories", () => {
+  test("warns when a connected GitHub App only returns public repositories", () => {
     expect(
       getGitHubPrivateRepoNotice({
         tokenConnected: true,
@@ -28,7 +28,7 @@ describe("getGitHubPrivateRepoNotice", () => {
         isError: false,
         ownerFilter: "Mstack-Chemicals",
       })
-    ).toContain("only returning public repositories for Mstack-Chemicals");
+    ).toContain("update the GitHub App repository access");
   });
 
   test("does not warn when private repositories are present", () => {

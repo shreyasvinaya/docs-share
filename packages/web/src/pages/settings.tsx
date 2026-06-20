@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { useSession } from "@/hooks/use-auth";
 import {
+  connectGitHubApp,
   useApiTokens,
   useCreateToken,
   useDeleteGitHubToken,
@@ -11,11 +12,24 @@ import {
 } from "@/hooks/use-auth";
 import { UserAvatar } from "@/components/common/user-avatar";
 import { cn } from "@/lib/utils";
+import { getGitHubIntegrationView } from "@/lib/github-integration-status";
+import { SetupChecklist } from "@/components/setup/setup-checklist";
+import { useSetupStatus } from "@/hooks/use-setup";
 
-type Tab = "profile" | "tokens" | "integrations";
+type Tab = "profile" | "tokens" | "integrations" | "setup";
 
 export function SettingsPage() {
-  const [tab, setTab] = useState<Tab>("profile");
+  const { data: session } = useSession();
+  const isSysadmin = session?.user.role === "sysadmin";
+  const initialTab = new URLSearchParams(window.location.search).get("tab");
+  const [tab, setTab] = useState<Tab>(
+    initialTab === "integrations" ||
+      initialTab === "tokens" ||
+      initialTab === "setup"
+      ? initialTab
+      : "profile"
+  );
+  const activeTab = tab === "setup" && !isSysadmin ? "profile" : tab;
 
   return (
     <div className="mx-auto max-w-3xl p-6">
@@ -27,7 +41,7 @@ export function SettingsPage() {
           onClick={() => setTab("profile")}
           className={cn(
             "border-b-2 px-4 py-2 text-sm font-medium transition-colors",
-            tab === "profile"
+            activeTab === "profile"
               ? "border-primary text-foreground"
               : "border-transparent text-muted-foreground hover:text-foreground",
           )}
@@ -39,7 +53,7 @@ export function SettingsPage() {
           onClick={() => setTab("tokens")}
           className={cn(
             "border-b-2 px-4 py-2 text-sm font-medium transition-colors",
-            tab === "tokens"
+            activeTab === "tokens"
               ? "border-primary text-foreground"
               : "border-transparent text-muted-foreground hover:text-foreground",
           )}
@@ -51,18 +65,57 @@ export function SettingsPage() {
           onClick={() => setTab("integrations")}
           className={cn(
             "border-b-2 px-4 py-2 text-sm font-medium transition-colors",
-            tab === "integrations"
+            activeTab === "integrations"
               ? "border-primary text-foreground"
               : "border-transparent text-muted-foreground hover:text-foreground",
           )}
         >
           Integrations
         </button>
+        {isSysadmin && (
+          <button
+            type="button"
+            onClick={() => setTab("setup")}
+            className={cn(
+              "border-b-2 px-4 py-2 text-sm font-medium transition-colors",
+              activeTab === "setup"
+                ? "border-primary text-foreground"
+                : "border-transparent text-muted-foreground hover:text-foreground",
+            )}
+          >
+            Setup
+          </button>
+        )}
       </div>
 
-      {tab === "profile" && <ProfileTab />}
-      {tab === "tokens" && <TokensTab />}
-      {tab === "integrations" && <IntegrationsTab />}
+      {activeTab === "profile" && <ProfileTab />}
+      {activeTab === "tokens" && <TokensTab />}
+      {activeTab === "integrations" && <IntegrationsTab />}
+      {activeTab === "setup" && isSysadmin && <SetupTab />}
+    </div>
+  );
+}
+
+function SetupTab() {
+  const { data: status, isLoading, isError } = useSetupStatus();
+
+  return (
+    <div>
+      <div className="mb-4">
+        <h2 className="text-lg font-semibold">Deployment setup</h2>
+        <p className="mt-1 text-sm text-muted-foreground">
+          Review deployment-wide configuration for this installation.
+        </p>
+      </div>
+      {isLoading ? (
+        <p className="text-sm text-muted-foreground">Loading setup status...</p>
+      ) : isError || !status ? (
+        <p className="rounded-lg border border-destructive/30 bg-destructive/10 px-4 py-3 text-sm text-destructive">
+          Could not load setup status.
+        </p>
+      ) : (
+        <SetupChecklist status={status} />
+      )}
     </div>
   );
 }
@@ -72,8 +125,10 @@ function IntegrationsTab() {
   const saveGitHubToken = useSaveGitHubToken();
   const deleteGitHubToken = useDeleteGitHubToken();
   const [token, setToken] = useState("");
+  const { connectedWithApp, connectedWithLegacyPat, showPatFallback } =
+    getGitHubIntegrationView(githubToken);
 
-  const handleSubmit = (event: React.FormEvent) => {
+  const handlePatSubmit = (event: React.FormEvent) => {
     event.preventDefault();
     if (!token.trim()) return;
     saveGitHubToken.mutate(token.trim(), {
@@ -84,54 +139,80 @@ function IntegrationsTab() {
   return (
     <div className="space-y-6">
       <div className="rounded-lg border border-border p-4">
-        <h3 className="mb-1 text-sm font-semibold">GitHub private imports</h3>
+        <h3 className="mb-1 text-sm font-semibold">GitHub imports</h3>
         <p className="mb-4 text-sm text-muted-foreground">
-          Connect a GitHub token with repository read access to import your private repositories.
+          Connect the GitHub App and choose the repositories that Docs Share can import.
         </p>
 
         {isLoading ? (
           <p className="text-sm text-muted-foreground">Loading GitHub status...</p>
-        ) : githubToken?.connected ? (
+        ) : connectedWithApp ? (
           <div className="mb-4 rounded-lg border border-border bg-muted/50 px-3 py-2 text-sm">
             Connected
-            {githubToken.updatedAt && (
+            {githubToken?.accountLogin && (
+              <span className="text-muted-foreground"> to {githubToken.accountLogin}</span>
+            )}
+            {githubToken?.updatedAt && (
               <span className="text-muted-foreground">
                 {" "}
                 since {new Date(githubToken.updatedAt).toLocaleDateString()}
               </span>
             )}
           </div>
+        ) : connectedWithLegacyPat ? (
+          <div className="mb-4 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
+            A legacy GitHub token is connected. Reconnect with the GitHub App to choose repository access in GitHub.
+          </div>
         ) : (
           <div className="mb-4 rounded-lg border border-border bg-muted/50 px-3 py-2 text-sm text-muted-foreground">
-            No GitHub token connected.
+            No GitHub integration connected.
           </div>
         )}
 
-        <form onSubmit={handleSubmit} className="flex items-end gap-3">
-          <div className="flex-1">
-            <label
-              htmlFor="github-token"
-              className="mb-1 block text-sm font-medium"
-            >
-              GitHub token
-            </label>
-            <input
-              id="github-token"
-              type="password"
-              value={token}
-              onChange={(event) => setToken(event.target.value)}
-              placeholder="github_pat_..."
-              className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm outline-none focus:border-primary focus:ring-1 focus:ring-primary"
-            />
-          </div>
+        {githubToken?.configured ? (
           <button
-            type="submit"
-            disabled={saveGitHubToken.isPending || !token.trim()}
+            type="button"
+            onClick={connectGitHubApp}
             className="rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90 disabled:opacity-50"
           >
-            {saveGitHubToken.isPending ? "Saving..." : "Save"}
+            {connectedWithApp ? "Manage repository access" : "Connect GitHub"}
           </button>
-        </form>
+        ) : (
+          <p className="rounded-lg border border-border bg-muted/50 px-3 py-2 text-sm text-muted-foreground">
+            GitHub App integration is not configured on this server. Use a personal access token below.
+          </p>
+        )}
+
+        {showPatFallback && (
+          <form onSubmit={handlePatSubmit} className="mt-4 flex items-end gap-3">
+            <div className="flex-1">
+              <label
+                htmlFor="github-token"
+                className="mb-1 block text-sm font-medium"
+              >
+                Personal access token
+              </label>
+              <input
+                id="github-token"
+                type="password"
+                value={token}
+                onChange={(event) => setToken(event.target.value)}
+                placeholder="github_pat_..."
+                className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm outline-none focus:border-primary focus:ring-1 focus:ring-primary"
+              />
+              <p className="mt-1 text-xs text-muted-foreground">
+                Use a fine-grained token with read access to the repositories you want to import.
+              </p>
+            </div>
+            <button
+              type="submit"
+              disabled={saveGitHubToken.isPending || !token.trim()}
+              className="rounded-lg bg-secondary px-4 py-2 text-sm font-medium text-secondary-foreground transition-colors hover:bg-secondary/80 disabled:opacity-50"
+            >
+              {saveGitHubToken.isPending ? "Saving..." : "Save token"}
+            </button>
+          </form>
+        )}
 
         {githubToken?.connected && (
           <button
@@ -140,7 +221,7 @@ function IntegrationsTab() {
             disabled={deleteGitHubToken.isPending}
             className="mt-4 text-sm text-destructive transition-colors hover:text-destructive/80 disabled:opacity-50"
           >
-            {deleteGitHubToken.isPending ? "Disconnecting..." : "Disconnect GitHub token"}
+            {deleteGitHubToken.isPending ? "Disconnecting..." : "Disconnect GitHub"}
           </button>
         )}
       </div>
@@ -349,45 +430,67 @@ function TokensTab() {
           <p className="text-sm text-muted-foreground">Loading tokens...</p>
         ) : tokens && tokens.length > 0 ? (
           <div className="rounded-lg border border-border">
-            {tokens.map((token, i) => (
-              <div
-                key={token.id}
-                className={`flex items-center justify-between px-4 py-3 ${
-                  i < tokens.length - 1 ? "border-b border-border" : ""
-                }`}
-              >
-                <div>
-                  <p className="text-sm font-medium">{token.name}</p>
-                  <div className="mt-0.5 flex items-center gap-3 text-xs text-muted-foreground">
-                    <span className="font-mono">{token.tokenPrefix}...</span>
-                    <span>
-                      Created{" "}
-                      {new Date(token.createdAt).toLocaleDateString()}
-                    </span>
-                    {token.lastUsedAt && (
-                      <span>
-                        Last used{" "}
-                        {new Date(token.lastUsedAt).toLocaleDateString()}
-                      </span>
-                    )}
-                    {token.expiresAt && (
-                      <span>
-                        Expires{" "}
-                        {new Date(token.expiresAt).toLocaleDateString()}
-                      </span>
-                    )}
-                  </div>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => revokeToken.mutate(token.id)}
-                  disabled={revokeToken.isPending}
-                  className="text-sm text-destructive transition-colors hover:text-destructive/80"
+            {tokens.map((token, i) => {
+              const isRevoked = !!token.revokedAt;
+              return (
+                <div
+                  key={token.id}
+                  className={`flex items-center justify-between px-4 py-3 ${
+                    i < tokens.length - 1 ? "border-b border-border" : ""
+                  } ${isRevoked ? "opacity-60" : ""}`}
                 >
-                  Revoke
-                </button>
-              </div>
-            ))}
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <p className="text-sm font-medium">{token.name}</p>
+                      {isRevoked && (
+                        <span className="rounded-full bg-destructive/10 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-destructive">
+                          Revoked
+                        </span>
+                      )}
+                    </div>
+                    <div className="mt-0.5 flex items-center gap-3 text-xs text-muted-foreground">
+                      <span className="font-mono">{token.tokenPrefix}...</span>
+                      <span>
+                        Created{" "}
+                        {new Date(token.createdAt).toLocaleDateString()}
+                      </span>
+                      {token.lastUsedAt && (
+                        <span>
+                          Last used{" "}
+                          {new Date(token.lastUsedAt).toLocaleDateString()}
+                        </span>
+                      )}
+                      {token.expiresAt && (
+                        <span>
+                          Expires{" "}
+                          {new Date(token.expiresAt).toLocaleDateString()}
+                        </span>
+                      )}
+                      {isRevoked && token.revokedAt && (
+                        <span>
+                          Revoked{" "}
+                          {new Date(token.revokedAt).toLocaleDateString()}
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                  {isRevoked ? (
+                    <span className="text-sm text-muted-foreground">
+                      Revoked
+                    </span>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => revokeToken.mutate(token.id)}
+                      disabled={revokeToken.isPending}
+                      className="text-sm text-destructive transition-colors hover:text-destructive/80"
+                    >
+                      Revoke
+                    </button>
+                  )}
+                </div>
+              );
+            })}
           </div>
         ) : (
           <p className="rounded-lg border border-border px-4 py-8 text-center text-sm text-muted-foreground">
