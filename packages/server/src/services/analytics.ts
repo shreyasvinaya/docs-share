@@ -1,8 +1,11 @@
 import { and, desc, eq, gt, sql } from "drizzle-orm";
 import { createHmac } from "node:crypto";
+import type { Context } from "hono";
 import { db, schema } from "../db/index.js";
 import { config } from "../lib/config.js";
 import { generateId } from "../lib/crypto.js";
+import { resolveClientIp } from "../lib/clientIp.js";
+import type { AppEnv } from "../lib/types.js";
 
 export type ViewTargetType = "share" | "draft" | "public";
 
@@ -81,6 +84,11 @@ export function normalizeReferrer(
 /**
  * Best-effort extraction of the originating client IP from proxy headers.
  * Returns null when no forwarding headers are present.
+ *
+ * NOTE: this reads the RAW, client-spoofable `X-Forwarded-For` / `X-Real-IP`
+ * headers and is therefore NOT used to key view-event dedupe / visitor counts —
+ * those go through the TRUST_PROXY-aware {@link resolveClientIp}. It is retained
+ * only as a low-stakes header helper.
  */
 export function extractClientIp(headers: Headers): string | null {
   const forwardedFor = headers.get("x-forwarded-for");
@@ -155,31 +163,75 @@ export async function recordViewEventDeduped(
   const dedupeKey = computeDedupeKey(input.targetType, input.targetId, input.ip);
   const cutoff = new Date(Date.now() - DEDUPE_WINDOW_MS).toISOString();
 
-  const recent = await db
-    .select({ id: schema.viewEvents.id })
-    .from(schema.viewEvents)
-    .where(
-      and(
-        eq(schema.viewEvents.targetType, input.targetType),
-        eq(schema.viewEvents.targetId, input.targetId),
-        eq(schema.viewEvents.dedupeKey, dedupeKey),
-        gt(schema.viewEvents.viewedAt, cutoff)
+  // The SELECT-then-INSERT is inherently TOCTOU: two concurrent requests for
+  // the same target+visitor could both observe an empty window and both insert.
+  // Running the check + insert inside a single transaction serializes them on
+  // SQLite's write lock, so concurrent duplicates collapse to one row. This is
+  // best-effort (kept cheap): it bounds, rather than perfectly prevents, races.
+  await db.transaction(async (tx) => {
+    const recent = await tx
+      .select({ id: schema.viewEvents.id })
+      .from(schema.viewEvents)
+      .where(
+        and(
+          eq(schema.viewEvents.targetType, input.targetType),
+          eq(schema.viewEvents.targetId, input.targetId),
+          eq(schema.viewEvents.dedupeKey, dedupeKey),
+          gt(schema.viewEvents.viewedAt, cutoff)
+        )
       )
-    )
-    .limit(1)
-    .get();
+      .limit(1)
+      .get();
 
-  if (recent) return;
+    if (recent) return;
 
-  await recordViewEvent(input);
+    await tx.insert(schema.viewEvents).values({
+      id: generateId(),
+      targetType: input.targetType,
+      targetId: input.targetId,
+      viewedAt: new Date().toISOString(),
+      visitorHash: computeVisitorHash(input.ip, input.userAgent),
+      // UA-independent dedupe fingerprint (see computeDedupeKey).
+      dedupeKey,
+      referrer: normalizeReferrer(input.referrer),
+    });
+  });
 }
 
 /**
- * Records a view event from an incoming request, deriving ip/ua/referrer.
+ * Records a view event from an incoming request context, deriving ip/ua/referrer.
  *
  * Only actual page views are recorded: callers must confirm the served response
  * is an HTML document (content-type starts with `text/html`) before invoking
  * this, so sub-asset requests (css/js/images) never create view events.
+ *
+ * The client IP is resolved via the TRUST_PROXY-aware {@link resolveClientIp}
+ * rather than from raw forwarding headers, so a spoofed `X-Forwarded-For` /
+ * `X-Real-IP` cannot create distinct dedupe buckets or inflate unique-visitor
+ * counts when the deployment does not trust a reverse proxy. This is the
+ * preferred entry point for untrusted/public view paths (e.g. share links).
+ */
+export function recordViewFromContext(
+  targetType: ViewTargetType,
+  targetId: string,
+  c: Context<AppEnv>
+): void {
+  recordViewEventSafe({
+    targetType,
+    targetId,
+    ip: resolveClientIp(c),
+    userAgent: c.req.header("user-agent") ?? null,
+    referrer: c.req.header("referer") ?? c.req.header("referrer") ?? null,
+  });
+}
+
+/**
+ * Legacy entry point that derives the client IP from RAW forwarding headers via
+ * {@link extractClientIp}. Retained only for owner-gated paths (e.g. a draft
+ * owner previewing their own draft) where the viewer is already authenticated,
+ * so header spoofing can at most perturb that owner's own dedupe and cannot
+ * inflate cross-tenant counts. Untrusted/public paths must use
+ * {@link recordViewFromContext} instead.
  */
 export function recordViewFromRequest(
   targetType: ViewTargetType,

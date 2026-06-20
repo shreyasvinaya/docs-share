@@ -14,7 +14,7 @@ import {
 } from "../lib/security.js";
 import {
   isHtmlContentType,
-  recordViewFromRequest,
+  recordViewFromContext,
   type ViewTargetType,
 } from "../services/analytics.js";
 import { stat } from "fs/promises";
@@ -32,12 +32,12 @@ const app = new Hono<AppEnv>();
 function recordServedView(
   targetType: ViewTargetType,
   targetId: string,
-  req: Request,
+  c: Context<AppEnv>,
   response: Response
 ): void {
   if (!response.ok) return;
   if (!isHtmlContentType(response.headers.get("content-type"))) return;
-  recordViewFromRequest(targetType, targetId, req);
+  recordViewFromContext(targetType, targetId, c);
 }
 
 /**
@@ -335,6 +335,35 @@ async function gateOrgAccess(
 }
 
 /**
+ * Whether a public share is access-gated (password-protected or org-restricted).
+ * Content behind such a gate is authorization-dependent and MUST NOT be cached
+ * by a shared/proxy cache where an unauthorized visitor could later be served
+ * it from cache without re-passing the gate.
+ */
+function isProtectedShare(share: {
+  passwordHash: string | null;
+  linkAccess: string | null;
+  orgDomain: string | null;
+}): boolean {
+  if (share.passwordHash) return true;
+  if (share.linkAccess === "org" && share.orgDomain) return true;
+  return false;
+}
+
+/**
+ * Stamp a served Response so caches never reuse authorization-gated content for
+ * a different visitor. `Cache-Control: private, no-store` keeps it out of shared
+ * and disk caches; `Vary` lists the request inputs the authorization decision
+ * depends on (the share password header, the session cookie, and the auth
+ * header) so even a permissive cache keys per-credential. The sandbox CSP/CORP
+ * headers set by `serveFile` / the global middleware are left untouched.
+ */
+function applyNoStoreHeaders(response: Response): void {
+  response.headers.set("Cache-Control", "private, no-store");
+  response.headers.set("Vary", "X-Share-Password, Cookie, Authorization");
+}
+
+/**
  * GET /public/:token/* — Serve files via public share link.
  * No auth required for "public" links.
  * "org" links require auth + matching email domain.
@@ -386,7 +415,8 @@ app.get("/public/:token/*", publicRateLimiter, async (c) => {
     resolvedRelativePath,
     c.req.path
   );
-  recordServedView("public", share.id, c.req.raw, response);
+  if (isProtectedShare(share)) applyNoStoreHeaders(response);
+  recordServedView("public", share.id, c, response);
   return response;
 });
 
@@ -437,7 +467,8 @@ app.get("/public/:token", publicRateLimiter, async (c) => {
     normalizedSharePath,
     c.req.path
   );
-  recordServedView("public", share.id, c.req.raw, response);
+  if (isProtectedShare(share)) applyNoStoreHeaders(response);
+  recordServedView("public", share.id, c, response);
   return response;
 });
 

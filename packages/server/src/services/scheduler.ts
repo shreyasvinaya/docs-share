@@ -3,6 +3,7 @@ import { sweepExpiredShares } from "./expiredShares.js";
 import { retryFailedGitHubSyncs } from "./githubSyncRetry.js";
 import { cleanupWebhookDeliveries } from "./webhookCleanup.js";
 import { cleanupAuditLog, cleanupViewEvents } from "./analyticsCleanup.js";
+import { purgeDeletedSiteDataRecords } from "./siteDataCleanup.js";
 
 export interface ScheduledJob {
   name: string;
@@ -65,6 +66,17 @@ export function buildScheduledJobs(): ScheduledJob[] {
       run: () =>
         cleanupAuditLog({
           retentionDays: config.AUDIT_LOG_RETENTION_DAYS,
+        }),
+    });
+  }
+
+  if (config.SITE_DATA_CLEANUP_INTERVAL_MS > 0) {
+    jobs.push({
+      name: "site-data-cleanup",
+      intervalMs: config.SITE_DATA_CLEANUP_INTERVAL_MS,
+      run: () =>
+        purgeDeletedSiteDataRecords({
+          retentionDays: config.SITE_DATA_DELETED_RETENTION_DAYS,
         }),
     });
   }
