@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { Hono } from "hono";
-import { inArray } from "drizzle-orm";
+import { eq, inArray } from "drizzle-orm";
 import { db, schema } from "../db/index.js";
 import { recordViewEvent } from "../services/analytics.js";
 import type { AppEnv } from "../lib/types.js";
@@ -11,6 +11,7 @@ const cleanup = {
   shareIds: [] as string[],
   repoIds: [] as string[],
   userIds: [] as string[],
+  auditTargets: [] as string[],
 };
 
 afterEach(async () => {
@@ -18,6 +19,11 @@ afterEach(async () => {
     await db
       .delete(schema.viewEvents)
       .where(inArray(schema.viewEvents.targetId, cleanup.viewTargets))
+      .run();
+  if (cleanup.auditTargets.length)
+    await db
+      .delete(schema.auditLog)
+      .where(inArray(schema.auditLog.targetId, cleanup.auditTargets))
       .run();
   if (cleanup.shareIds.length)
     await db
@@ -38,7 +44,24 @@ afterEach(async () => {
   cleanup.shareIds = [];
   cleanup.repoIds = [];
   cleanup.userIds = [];
+  cleanup.auditTargets = [];
 });
+
+async function waitForAuditEntry(
+  targetId: string,
+  attempts = 50
+): Promise<typeof schema.auditLog.$inferSelect | undefined> {
+  for (let i = 0; i < attempts; i++) {
+    const row = await db
+      .select()
+      .from(schema.auditLog)
+      .where(eq(schema.auditLog.targetId, targetId))
+      .get();
+    if (row) return row;
+    await new Promise((r) => setTimeout(r, 10));
+  }
+  return undefined;
+}
 
 function testId(prefix: string): string {
   return `${prefix}_${Date.now()}_${Math.random().toString(36).slice(2)}`;
@@ -161,5 +184,60 @@ describe("GET /api/shares/:shareId/analytics", () => {
       `/api/shares/${testId("missing")}/analytics`
     );
     expect(res.status).toBe(404);
+  });
+});
+
+describe("email-share audit metadata", () => {
+  test("records recipientCount, never raw email addresses", async () => {
+    const ownerId = testId("user");
+    const repoId = testId("repo");
+
+    await db.insert(schema.users).values({
+      id: ownerId,
+      email: `${ownerId}@example.com`,
+      displayName: "Owner",
+      googleId: `g_${ownerId}`,
+    });
+    await db.insert(schema.repos).values({
+      id: repoId,
+      ownerType: "user",
+      ownerUserId: ownerId,
+      diskPath: `/tmp/${repoId}.git`,
+    });
+    cleanup.userIds.push(ownerId);
+    cleanup.repoIds.push(repoId);
+
+    const emails = ["alice@secret.example", "bob@secret.example"];
+    const res = await appAs(ownerId).request("/api/shares", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        repoId,
+        path: "index.html",
+        shareType: "email",
+        permission: "read",
+        emails,
+      }),
+    });
+    expect(res.status).toBe(201);
+    const body = (await res.json()) as { data: { id: string } };
+    const shareId = body.data.id;
+    cleanup.shareIds.push(shareId);
+    cleanup.viewTargets.push(shareId);
+    cleanup.auditTargets.push(shareId);
+
+    const auditRow = await waitForAuditEntry(shareId);
+    expect(auditRow).toBeDefined();
+    expect(auditRow?.action).toBe("share.created");
+
+    const metadataRaw = auditRow?.metadata ?? "{}";
+    const metadata = JSON.parse(metadataRaw) as Record<string, unknown>;
+    expect(metadata.recipientCount).toBe(emails.length);
+    expect(metadata).not.toHaveProperty("recipients");
+
+    // Defense-in-depth: no raw email address leaks into the serialized metadata.
+    for (const email of emails) {
+      expect(metadataRaw).not.toContain(email);
+    }
   });
 });

@@ -204,6 +204,9 @@ app.get("/:draftId", requireAuth, requireScope("draft:read"), async (c) => {
   return c.json({ data: draftResponse(draft) });
 });
 
+// Intentionally OWNER-ONLY: draft analytics are scoped to the draft owner and
+// are deliberately NOT widened to sysadmins. Sysadmins use the audit log for
+// oversight, not per-draft view metrics.
 app.get(
   "/:draftId/analytics",
   requireAuth,
@@ -218,6 +221,7 @@ app.get(
       .get();
 
     if (!draft) return c.json({ error: "Draft not found" }, 404);
+    // Owner-only gate (see handler doc): do not widen to sysadmins.
     if (draft.ownerUserId !== userId)
       return c.json({ error: "Access denied" }, 403);
 

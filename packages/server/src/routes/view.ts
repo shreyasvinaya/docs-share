@@ -5,11 +5,33 @@ import { requireAuth } from "../middleware/requireAuth.js";
 import { config } from "../lib/config.js";
 import { hashToken } from "../lib/crypto.js";
 import { normalizeRelativePath, resolveInside } from "../lib/security.js";
-import { recordViewFromRequest } from "../services/analytics.js";
+import {
+  isHtmlContentType,
+  recordViewFromRequest,
+  type ViewTargetType,
+} from "../services/analytics.js";
 import { stat } from "fs/promises";
 import type { AppEnv } from "../lib/types.js";
 
 const app = new Hono<AppEnv>();
+
+/**
+ * Records a page view for a successfully served response, fire-and-forget.
+ *
+ * Only counts genuine page loads: the response must be a 2xx HTML document.
+ * Failed/redirect responses and sub-asset requests (css/js/images) are ignored
+ * so 404 paths and asset fetches never create view events.
+ */
+function recordServedView(
+  targetType: ViewTargetType,
+  targetId: string,
+  req: Request,
+  response: Response
+): void {
+  if (!response.ok) return;
+  if (!isHtmlContentType(response.headers.get("content-type"))) return;
+  recordViewFromRequest(targetType, targetId, req);
+}
 
 function securityHeaders(): Record<string, string> {
   return {
@@ -336,9 +358,13 @@ app.get("/public/:token/*", async (c) => {
     return c.json({ error: "Invalid path" }, 400);
   }
 
-  recordViewFromRequest("public", share.id, c.req.raw);
-
-  return serveFile(worktreeBase, resolvedRelativePath, c.req.path);
+  const response = await serveFile(
+    worktreeBase,
+    resolvedRelativePath,
+    c.req.path
+  );
+  recordServedView("public", share.id, c.req.raw, response);
+  return response;
 });
 
 /**
@@ -383,9 +409,13 @@ app.get("/public/:token", async (c) => {
     return c.json({ error: "Invalid path" }, 400);
   }
 
-  recordViewFromRequest("public", share.id, c.req.raw);
-
-  return serveFile(worktreeBase, normalizedSharePath, c.req.path);
+  const response = await serveFile(
+    worktreeBase,
+    normalizedSharePath,
+    c.req.path
+  );
+  recordServedView("public", share.id, c.req.raw, response);
+  return response;
 });
 
 app.get("/:repoId", requireAuth, async (c) => {

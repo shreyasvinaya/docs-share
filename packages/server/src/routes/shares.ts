@@ -249,7 +249,12 @@ app.post("/", requireAuth, async (c) => {
       action: "share.created",
       targetType: "share",
       targetId: shareId,
-      metadata: { shareType: "email", repoId, path: path || null, recipients: emails },
+      metadata: {
+        shareType: "email",
+        repoId,
+        path: path || null,
+        recipientCount: emails.length,
+      },
     });
 
     return c.json({ data: { ...share, recipients } }, 201);
@@ -644,6 +649,10 @@ app.delete("/:shareId", requireAuth, async (c) => {
 
 /**
  * GET /:shareId/analytics — View metrics for a share, restricted to its creator.
+ *
+ * Intentionally OWNER-ONLY: per-share analytics are scoped to the share creator
+ * and are deliberately NOT widened to sysadmins. Sysadmins use the audit log
+ * (cross-actor, no per-visitor data) for oversight, not per-share view metrics.
  */
 app.get("/:shareId/analytics", requireAuth, async (c) => {
   const userId = c.get("userId");
@@ -659,6 +668,7 @@ app.get("/:shareId/analytics", requireAuth, async (c) => {
     return c.json({ error: "Share not found" }, 404);
   }
 
+  // Owner-only gate (see handler doc): do not widen to sysadmins.
   if (share.createdById !== userId) {
     return c.json({ error: "Only the creator can view analytics" }, 403);
   }

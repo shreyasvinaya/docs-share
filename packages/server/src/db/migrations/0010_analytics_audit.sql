@@ -4,8 +4,7 @@ CREATE TABLE `view_events` (
 	`target_id` text NOT NULL,
 	`viewed_at` text DEFAULT (CURRENT_TIMESTAMP) NOT NULL,
 	`visitor_hash` text NOT NULL,
-	`referrer` text,
-	`user_agent` text
+	`referrer` text
 );
 --> statement-breakpoint
 CREATE INDEX `view_events_target_idx` ON `view_events` (`target_type`,`target_id`);

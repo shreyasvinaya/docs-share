@@ -328,7 +328,6 @@ export const viewEvents = sqliteTable(
       .default(sql`(CURRENT_TIMESTAMP)`),
     visitorHash: text("visitor_hash").notNull(),
     referrer: text("referrer"),
-    userAgent: text("user_agent"),
   },
   (table) => [
     index("view_events_target_idx").on(table.targetType, table.targetId),
