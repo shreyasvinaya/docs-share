@@ -1,7 +1,8 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { Hono } from "hono";
-import { inArray } from "drizzle-orm";
+import { eq, inArray } from "drizzle-orm";
 import { db, schema } from "../db/index.js";
+import { config } from "../lib/config.js";
 import { sessionMiddleware } from "../middleware/session.js";
 import setupRoutes from "./setup.js";
 import type { AppEnv } from "../lib/types.js";
@@ -13,9 +14,14 @@ app.route("/api/setup", setupRoutes);
 const cleanup = {
   sessionIds: [] as string[],
   userIds: [] as string[],
+  sysadminEmails: null as string | null,
 };
 
 afterEach(async () => {
+  if (cleanup.sysadminEmails !== null) {
+    config.SYSADMIN_EMAILS = cleanup.sysadminEmails;
+    cleanup.sysadminEmails = null;
+  }
   if (cleanup.sessionIds.length) {
     await db
       .delete(schema.sessions)
@@ -36,13 +42,28 @@ function testId(prefix: string): string {
   return `${prefix}_${Date.now()}_${Math.random().toString(36).slice(2)}`;
 }
 
-async function seedSession(role: "user" | "sysadmin"): Promise<string> {
+/** Overrides SYSADMIN_EMAILS for the duration of a test (restored in afterEach). */
+function setSysadminEmails(value: string): void {
+  if (cleanup.sysadminEmails === null) {
+    cleanup.sysadminEmails = config.SYSADMIN_EMAILS;
+  }
+  config.SYSADMIN_EMAILS = value;
+}
+
+interface SeededSession {
+  sessionId: string;
+  userId: string;
+  email: string;
+}
+
+async function seedSession(role: "user" | "sysadmin"): Promise<SeededSession> {
   const userId = testId("user");
   const sessionId = testId("session");
+  const email = `${userId}@example.com`;
 
   await db.insert(schema.users).values({
     id: userId,
-    email: `${userId}@example.com`,
+    email,
     displayName: "Setup User",
     googleId: `google_${userId}`,
     role,
@@ -55,7 +76,7 @@ async function seedSession(role: "user" | "sysadmin"): Promise<string> {
 
   cleanup.userIds.push(userId);
   cleanup.sessionIds.push(sessionId);
-  return sessionId;
+  return { sessionId, userId, email };
 }
 
 describe("setup routes", () => {
@@ -73,7 +94,9 @@ describe("setup routes", () => {
   });
 
   test("rejects setup status for a non-sysadmin user", async () => {
-    const sessionId = await seedSession("user");
+    const { sessionId, email } = await seedSession("user");
+    setSysadminEmails(`someone-else@example.com`);
+    expect(email).not.toBe("someone-else@example.com");
 
     const res = await app.request("/api/setup/status", {
       headers: { Cookie: `ds_session=${sessionId}` },
@@ -83,7 +106,8 @@ describe("setup routes", () => {
   });
 
   test("returns setup status for a sysadmin user", async () => {
-    const sessionId = await seedSession("sysadmin");
+    const { sessionId, email } = await seedSession("sysadmin");
+    setSysadminEmails(email);
 
     const res = await app.request("/api/setup/status", {
       headers: { Cookie: `ds_session=${sessionId}` },
@@ -94,5 +118,25 @@ describe("setup routes", () => {
 
     expect(res.status).toBe(200);
     expect(body.data.security.productionSecrets).toBeDefined();
+  });
+
+  test("revokes a stale sysadmin once their email leaves SYSADMIN_EMAILS", async () => {
+    // Cached role says sysadmin, but the email is no longer configured.
+    const { sessionId, userId, email } = await seedSession("sysadmin");
+    setSysadminEmails("only-real-admin@example.com");
+    expect(email).not.toBe("only-real-admin@example.com");
+
+    const res = await app.request("/api/setup/status", {
+      headers: { Cookie: `ds_session=${sessionId}` },
+    });
+    expect(res.status).toBe(403);
+
+    // The cached role should have been downgraded to "user".
+    const stored = await db
+      .select({ role: schema.users.role })
+      .from(schema.users)
+      .where(eq(schema.users.id, userId))
+      .get();
+    expect(stored?.role).toBe("user");
   });
 });
