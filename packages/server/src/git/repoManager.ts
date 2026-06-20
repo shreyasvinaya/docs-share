@@ -16,12 +16,23 @@ import { config } from "../lib/config.js";
  * file is additionally `chmod 0700` (owner-only) as defense in depth.
  */
 function buildPostReceiveHook(): string {
+  // SECURITY: the ref name (and other fields) are attacker-controlled — a client
+  // can push a ref like `"; ...` — so we must NOT interpolate them straight into
+  // the JSON body. Build the body with jq, which JSON-escapes every value via
+  // --arg, so a malicious ref can never break out and produce malformed JSON (or
+  // inject extra fields that confuse / DoS the indexer).
   return `#!/bin/bash
 while read oldrev newrev refname; do
+  payload=$(jq -nc \\
+    --arg repoPath "$(pwd)" \\
+    --arg ref "$refname" \\
+    --arg oldRev "$oldrev" \\
+    --arg newRev "$newrev" \\
+    '{repoPath: $repoPath, ref: $ref, oldRev: $oldRev, newRev: $newRev}')
   curl -s -X POST "${config.HOOK_BASE_URL}/internal/hooks/post-receive" \\
     -H "Content-Type: application/json" \\
     -H "X-Hook-Secret: \${HOOK_SECRET}" \\
-    -d "{\\"repoPath\\": \\"$(pwd)\\", \\"ref\\": \\"$refname\\", \\"oldRev\\": \\"$oldrev\\", \\"newRev\\": \\"$newrev\\"}"
+    -d "$payload"
 done
 `;
 }

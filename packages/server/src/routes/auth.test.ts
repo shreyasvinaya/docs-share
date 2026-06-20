@@ -3,6 +3,7 @@ import { Hono } from "hono";
 import { eq, inArray } from "drizzle-orm";
 import { db, schema } from "../db/index.js";
 import { config } from "../lib/config.js";
+import { hashToken } from "../lib/crypto.js";
 import { sessionMiddleware } from "../middleware/session.js";
 import authRoutes from "./auth.js";
 import type { AppEnv } from "../lib/types.js";
@@ -14,6 +15,7 @@ app.route("/api/auth", authRoutes);
 const cleanup = {
   sessionIds: [] as string[],
   userIds: [] as string[],
+  tokenIds: [] as string[],
   roleRestores: [] as { userId: string; role: "user" | "sysadmin" }[],
   sysadminEmails: null as string | null,
 };
@@ -27,6 +29,12 @@ afterEach(async () => {
       .update(schema.users)
       .set({ role: restore.role })
       .where(eq(schema.users.id, restore.userId))
+      .run();
+  }
+  if (cleanup.tokenIds.length) {
+    await db
+      .delete(schema.apiTokens)
+      .where(inArray(schema.apiTokens.id, cleanup.tokenIds))
       .run();
   }
   if (cleanup.sessionIds.length) {
@@ -43,6 +51,7 @@ afterEach(async () => {
   }
   cleanup.sessionIds = [];
   cleanup.userIds = [];
+  cleanup.tokenIds = [];
   cleanup.roleRestores = [];
   cleanup.sysadminEmails = null;
 });
@@ -101,5 +110,46 @@ describe("auth session", () => {
       .where(eq(schema.users.id, userId))
       .get();
     expect(stored?.role).toBe("sysadmin");
+  });
+
+  test("GET /session requires user:read for an api_token (least privilege)", async () => {
+    const userId = testId("user");
+    await db.insert(schema.users).values({
+      id: userId,
+      email: `${userId}@example.com`,
+      displayName: "Scope Probe",
+      googleId: `google_${userId}`,
+      role: "user",
+    });
+    cleanup.userIds.push(userId);
+
+    const seedToken = async (scopes: string): Promise<string> => {
+      const token = `ds_test_${testId("token")}`;
+      const tokenId = testId("api_token");
+      await db.insert(schema.apiTokens).values({
+        id: tokenId,
+        userId,
+        name: "Test token",
+        tokenPrefix: token.slice(0, 8),
+        tokenHash: hashToken(token),
+        scopes,
+      });
+      cleanup.tokenIds.push(tokenId);
+      return token;
+    };
+
+    // A token WITHOUT user:read (only draft:read) must be rejected.
+    const draftToken = await seedToken("draft:read");
+    const denied = await app.request("/api/auth/session", {
+      headers: { Authorization: `Bearer ${draftToken}` },
+    });
+    expect(denied.status).toBe(403);
+
+    // A token WITH user:read can read its identity.
+    const userToken = await seedToken("user:read");
+    const allowed = await app.request("/api/auth/session", {
+      headers: { Authorization: `Bearer ${userToken}` },
+    });
+    expect(allowed.status).toBe(200);
   });
 });

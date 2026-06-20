@@ -4,7 +4,12 @@ import { db, schema } from "../db/index.js";
 import { requireAuth } from "../middleware/requireAuth.js";
 import { requireScope } from "../middleware/requireScope.js";
 import { publicRateLimiter } from "../lib/rateLimiters.js";
-import { generateId, generatePublicToken, hashToken } from "../lib/crypto.js";
+import {
+  generateId,
+  generatePublicToken,
+  hashSharePassword,
+  verifySharePassword,
+} from "../lib/crypto.js";
 import { config } from "../lib/config.js";
 import {
   buildEmailShareNotification,
@@ -377,7 +382,7 @@ app.post("/", requireAuth, requireScope("share:write"), async (c) => {
       let loosens = existingShare.linkAccess === "org" && access === "public";
 
       if ("password" in body) {
-        const newPasswordHash = password ? hashToken(password) : null;
+        const newPasswordHash = password ? hashSharePassword(password) : null;
         updates.passwordHash = newPasswordHash;
         // Removing an existing password loosens access.
         if (existingShare.passwordHash && !newPasswordHash) {
@@ -448,7 +453,7 @@ app.post("/", requireAuth, requireScope("share:write"), async (c) => {
 
     let passwordHash: string | null = null;
     if (password) {
-      passwordHash = hashToken(password);
+      passwordHash = hashSharePassword(password);
     }
 
     await db
@@ -889,7 +894,10 @@ app.get("/public/:token", publicRateLimiter, async (c) => {
 
   if (share.passwordHash) {
     const providedPassword = c.req.header("X-Share-Password");
-    if (!providedPassword || hashToken(providedPassword) !== share.passwordHash) {
+    if (
+      !providedPassword ||
+      !verifySharePassword(providedPassword, share.passwordHash)
+    ) {
       return c.json({
         data: {
           id: share.id,

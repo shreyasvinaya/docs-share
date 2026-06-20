@@ -5,7 +5,8 @@ import { tmpdir } from "os";
 import { join } from "path";
 import { inArray } from "drizzle-orm";
 import { db, schema } from "../db/index.js";
-import { repairRepoHooks } from "./repoManager.js";
+import { config } from "../lib/config.js";
+import { createBareRepo, repairRepoHooks } from "./repoManager.js";
 
 const dirs: string[] = [];
 const repoIds: string[] = [];
@@ -68,6 +69,50 @@ describe("repairRepoHooks (FIX 2: rewrite existing repos' post-receive hook)", (
     // And the file is locked down to owner-only (0700).
     const info = await stat(hookPath);
     expect(info.mode & 0o777).toBe(0o700);
+  });
+
+  test("post-receive hook JSON-escapes a malicious ref name (no injection)", async () => {
+    const root = await scratch("ds-hook-refescape-");
+    const repoPath = join(root, "repo.git");
+
+    // Stand up a listener that captures the hook's request body.
+    let receivedBody = "";
+    const server = Bun.serve({
+      port: 0,
+      async fetch(req) {
+        receivedBody = await req.text();
+        return new Response("ok");
+      },
+    });
+    const savedBaseUrl = config.HOOK_BASE_URL;
+    config.HOOK_BASE_URL = `http://localhost:${server.port}`;
+
+    try {
+      await createBareRepo(repoPath);
+      const hookPath = join(repoPath, "hooks", "post-receive");
+
+      // A ref a client could push that would break naive string interpolation:
+      // a double-quote followed by JSON-control characters.
+      const maliciousRef = 'refs/heads/"; DROP {bad: json} //';
+      const stdin = `0000000 1111111 ${maliciousRef}\n`;
+
+      const proc = Bun.spawn(["bash", hookPath], {
+        env: { ...process.env, HOOK_SECRET: "x" },
+        stdin: Buffer.from(stdin),
+        stdout: "ignore",
+        stderr: "ignore",
+      });
+      await proc.exited;
+
+      expect(receivedBody).not.toBe("");
+      // The body must be valid JSON despite the hostile ref...
+      const parsed = JSON.parse(receivedBody) as { ref: string };
+      // ...and the ref must round-trip exactly (no truncation / extra fields).
+      expect(parsed.ref).toBe(maliciousRef);
+    } finally {
+      config.HOOK_BASE_URL = savedBaseUrl;
+      server.stop(true);
+    }
   });
 
   test("is idempotent and tolerant of a missing repo directory", async () => {

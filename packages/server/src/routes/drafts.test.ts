@@ -11,6 +11,7 @@ import type { AppEnv } from "../lib/types.js";
 import {
   buildSignedContentUrl,
   draftListResponse,
+  serveDraftContent,
   validContentSignature,
 } from "./drafts.js";
 import draftRoutes from "./drafts.js";
@@ -175,6 +176,44 @@ describe("draft route helpers", () => {
     expect(validContentSignature("dr_123", "changed", exp, sig)).toBe(false);
     expect(validContentSignature("dr_123", "abc123", "1", sig)).toBe(false);
     expect(validContentSignature("dr_123", "abc123", exp, "bad")).toBe(false);
+  });
+
+  test("draft-content returns a uniform 404 for missing AND invalid-signature, not an oracle", async () => {
+    const ownerId = await seedUser("ContentOwner");
+    const { id: draftId } = await seedDraft({
+      ownerUserId: ownerId,
+      title: "Secret Draft",
+      createdAt: "2026-06-14T00:00:00.000Z",
+    });
+
+    // A real draft id with a bad signature must look identical to a fake id.
+    const realButUnsigned = await serveDraftContent(draftId, "1", "bad-sig");
+    const nonexistent = await serveDraftContent(
+      "dr_does_not_exist",
+      "1",
+      "bad-sig"
+    );
+
+    expect(realButUnsigned.status).toBe(404);
+    expect(nonexistent.status).toBe(404);
+    expect(await realButUnsigned.text()).toBe(await nonexistent.text());
+
+    // A valid signed URL still serves the content. buildSignedContentUrl signs
+    // against the draft's stored contentSha256, so read it back to sign.
+    const stored = await db
+      .select({ contentSha256: schema.drafts.contentSha256 })
+      .from(schema.drafts)
+      .where(eq(schema.drafts.id, draftId))
+      .get();
+    const signedUrl = new URL(
+      buildSignedContentUrl(draftId, stored!.contentSha256)
+    );
+    const ok = await serveDraftContent(
+      draftId,
+      signedUrl.searchParams.get("exp") ?? undefined,
+      signedUrl.searchParams.get("sig") ?? undefined
+    );
+    expect(ok.status).toBe(200);
   });
 
   test("lists only owner drafts newest first", async () => {

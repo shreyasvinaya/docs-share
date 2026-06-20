@@ -1,4 +1,10 @@
-import { readFileSync, writeFileSync, mkdirSync, existsSync } from "node:fs";
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  writeFileSync,
+} from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
 import { AuthError } from "./errors.js";
@@ -17,7 +23,11 @@ const DEFAULT_API_URL = "http://localhost:3000";
 
 function ensureConfigDir(): void {
   if (!existsSync(CONFIG_DIR)) {
-    mkdirSync(CONFIG_DIR, { recursive: true });
+    // The config file holds the API token, so keep the directory owner-only.
+    mkdirSync(CONFIG_DIR, { recursive: true, mode: 0o700 });
+  } else {
+    // Tighten an existing dir that may predate this restriction.
+    chmodSync(CONFIG_DIR, 0o700);
   }
 }
 
@@ -32,7 +42,14 @@ export function loadConfig(): CliConfig {
 
 export function saveConfig(config: CliConfig): void {
   ensureConfigDir();
-  writeFileSync(CONFIG_FILE, JSON.stringify(config, null, 2) + "\n", "utf-8");
+  // The token must never be world-readable: write owner-only (0600).
+  writeFileSync(CONFIG_FILE, JSON.stringify(config, null, 2) + "\n", {
+    encoding: "utf-8",
+    mode: 0o600,
+  });
+  // writeFileSync only applies mode when creating the file; enforce it on an
+  // already-existing config too.
+  chmodSync(CONFIG_FILE, 0o600);
 }
 
 export function getToken(): string {

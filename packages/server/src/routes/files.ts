@@ -165,14 +165,18 @@ app.get("/:repoId/commits", async (c) => {
     return c.json({ error: "Repository not found" }, 404);
   }
 
-  // Build git log command
-  const separator = "---COMMIT_SEP---";
-  const format = `%H${separator}%s${separator}%an${separator}%ae${separator}%aI`;
+  // Build git log command. Author-controlled fields (subject %s, author name %an,
+  // email %ae) can contain anything, so we delimit fields with a NUL byte (%x00)
+  // and records with -z (which also terminates each commit with a NUL). A NUL
+  // cannot appear inside any git-tracked field, so author-supplied text cannot
+  // inject extra fields or forge additional commit records.
+  const format = "%H%x00%s%x00%an%x00%ae%x00%aI";
   const args = [
     "git",
     "-C",
     repo.diskPath,
     "log",
+    "-z",
     `--format=${format}`,
     `-n`,
     String(limit),
@@ -202,14 +206,20 @@ app.get("/:repoId/commits", async (c) => {
       );
     }
 
-    const commits = stdout
-      .trim()
-      .split("\n")
-      .filter(Boolean)
-      .map((line) => {
-        const [sha, message, authorName, authorEmail, date] = line.split(separator);
-        return { sha, message, authorName, authorEmail, date };
-      });
+    // With -z and %x00 field separators the whole stream is a flat sequence of
+    // NUL-delimited fields (5 per commit), with a trailing NUL after each record.
+    const FIELDS_PER_COMMIT = 5;
+    const parts = stdout.split("\0");
+    // Drop a trailing empty segment produced by the final record terminator.
+    if (parts.length > 0 && parts[parts.length - 1] === "") parts.pop();
+    const commits = [];
+    for (let i = 0; i + FIELDS_PER_COMMIT <= parts.length; i += FIELDS_PER_COMMIT) {
+      const [sha, message, authorName, authorEmail, date] = parts.slice(
+        i,
+        i + FIELDS_PER_COMMIT
+      );
+      commits.push({ sha, message, authorName, authorEmail, date });
+    }
 
     return c.json({ data: commits });
   } catch (err) {

@@ -492,7 +492,37 @@ async function checkoutImportPath(
   await runGit(args);
 }
 
-export async function syncGitHubRepo(
+// Per-repo in-process async lock. Concurrent syncs of the SAME repo race on the
+// force-push + extract + re-index sequence below, which can corrupt the bare repo
+// or leave the index inconsistent. We serialize them by chaining onto a tail
+// promise keyed by repoId; different repos still sync in parallel.
+const repoSyncLocks = new Map<string, Promise<unknown>>();
+
+function withRepoSyncLock<T>(repoId: string, fn: () => Promise<T>): Promise<T> {
+  const previous = repoSyncLocks.get(repoId) ?? Promise.resolve();
+  const next = previous.then(fn, fn);
+  // Keep the chain alive but drop the entry once this is the last waiter so the
+  // map does not grow unbounded.
+  repoSyncLocks.set(repoId, next);
+  void next.catch(() => {}).finally(() => {
+    if (repoSyncLocks.get(repoId) === next) repoSyncLocks.delete(repoId);
+  });
+  return next;
+}
+
+export function syncGitHubRepo(
+  repo: typeof schema.repos.$inferSelect,
+  repoUrl: string,
+  branch: string,
+  sourcePath = "",
+  token = ""
+): Promise<GitHubSyncResult> {
+  return withRepoSyncLock(repo.id, () =>
+    syncGitHubRepoUnlocked(repo, repoUrl, branch, sourcePath, token)
+  );
+}
+
+async function syncGitHubRepoUnlocked(
   repo: typeof schema.repos.$inferSelect,
   repoUrl: string,
   branch: string,
