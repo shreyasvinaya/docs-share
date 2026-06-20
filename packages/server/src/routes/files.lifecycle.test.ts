@@ -226,6 +226,47 @@ async function seedRepoWithDocs(
   return { repoId, v1Sha, diskPath };
 }
 
+/**
+ * Build an owned bare repo whose tree contains `files` (path -> content), each
+ * committed once. Returns the repoId + diskPath.
+ */
+async function seedRepoWithFiles(
+  ownerUserId: string,
+  files: Record<string, string>
+): Promise<{ repoId: string; diskPath: string }> {
+  const repoId = testId("repo");
+  const base = await mkdtemp(join(tmpdir(), "ds-seed-"));
+  cleanup.dirs.push(base);
+  const diskPath = join(base, "repo.git");
+  const work = join(base, "work");
+
+  await runGit(["init", "--bare", diskPath]);
+  await runGit(["clone", diskPath, work]);
+  await runGit(["-C", work, "config", "user.name", "Seed"]);
+  await runGit(["-C", work, "config", "user.email", "seed@example.com"]);
+
+  for (const [path, content] of Object.entries(files)) {
+    await Bun.write(join(work, path), content);
+  }
+  await runGit(["-C", work, "add", "-A"]);
+  await runGit(["-C", work, "commit", "-m", "seed"]);
+  await runGit(["-C", work, "push", "origin", "HEAD"]);
+  const head = await runGit(["-C", work, "rev-parse", "HEAD"]);
+
+  await db.insert(schema.repos).values({
+    id: repoId,
+    ownerType: "user",
+    ownerUserId,
+    diskPath,
+    headSha: head.stdout.trim(),
+  });
+  cleanup.repoIds.push(repoId);
+  await extractRepoFiles(repoId, diskPath, head.stdout.trim());
+  await indexRepoFiles(repoId, diskPath, head.stdout.trim());
+
+  return { repoId, diskPath };
+}
+
 /** Build an empty, owned bare repo (no commits). Returns repoId + diskPath. */
 async function seedEmptyRepo(
   ownerUserId: string
@@ -702,5 +743,67 @@ describe("path-scoped share authorization on file routes", () => {
       body: allowedForm,
     });
     expect(allowed.status).toBe(201);
+  });
+});
+
+describe("file listing treats the path prefix literally (LIKE wildcards)", () => {
+  test("a read share scoped to literal `a_b` does not list sibling `axb`", async () => {
+    const ownerId = await seedUser("Owner");
+    const scopedId = await seedUser("Scoped");
+    const scopedToken = await seedToken(scopedId);
+    // `_` is a LIKE single-char wildcard: a `a_b/%` pattern would match `axb/`.
+    const { repoId } = await seedRepoWithFiles(ownerId, {
+      "a_b/inside.html": "<p>inside</p>",
+      "axb/sibling.html": "<p>sibling</p>",
+      "aZb/other.html": "<p>other</p>",
+    });
+    await seedEmailShare({
+      repoId,
+      createdById: ownerId,
+      recipientUserId: scopedId,
+      recipientEmail: await userEmail(scopedId),
+      permission: "read",
+      path: "a_b",
+    });
+
+    const res = await routeApp.request(`/api/files/${repoId}?path=a_b`, {
+      headers: authHeaders(scopedToken),
+    });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { data: Array<{ path: string }> };
+    const paths = body.data.map((n) => n.path);
+    // Only the literal a_b/ subtree is listed; siblings must NOT leak.
+    expect(paths).toContain("a_b/inside.html");
+    expect(paths).not.toContain("axb/sibling.html");
+    expect(paths).not.toContain("aZb/other.html");
+  });
+
+  test("a read share scoped to literal `a%b` does not list sibling `aZZb`", async () => {
+    const ownerId = await seedUser("Owner");
+    const scopedId = await seedUser("Scoped");
+    const scopedToken = await seedToken(scopedId);
+    // `%` is a LIKE any-run wildcard: a `a%b/%` pattern would match `aZZb/`.
+    const { repoId } = await seedRepoWithFiles(ownerId, {
+      "a%b/inside.html": "<p>inside</p>",
+      "aZZb/sibling.html": "<p>sibling</p>",
+    });
+    await seedEmailShare({
+      repoId,
+      createdById: ownerId,
+      recipientUserId: scopedId,
+      recipientEmail: await userEmail(scopedId),
+      permission: "read",
+      path: "a%b",
+    });
+
+    const res = await routeApp.request(
+      `/api/files/${repoId}?path=${encodeURIComponent("a%b")}`,
+      { headers: authHeaders(scopedToken) }
+    );
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { data: Array<{ path: string }> };
+    const paths = body.data.map((n) => n.path);
+    expect(paths).toContain("a%b/inside.html");
+    expect(paths).not.toContain("aZZb/sibling.html");
   });
 });

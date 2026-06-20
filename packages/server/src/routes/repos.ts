@@ -2,7 +2,7 @@ import { Hono } from "hono";
 import { eq } from "drizzle-orm";
 import { db, schema } from "../db/index.js";
 import { requireAuth } from "../middleware/requireAuth.js";
-import { canWriteRepoPath } from "../middleware/shareAccess.js";
+import { canReadRepoPath, canWriteRepoPath } from "../middleware/shareAccess.js";
 import { createMiddleware } from "hono/factory";
 import { generateId } from "../lib/crypto.js";
 import {
@@ -55,7 +55,38 @@ const requireRepoWideWrite = createMiddleware<AppEnv>(async (c, next) => {
   return next();
 });
 
-app.get("/:repoId/github-sync", requireRepoWideWrite, async (c) => {
+/**
+ * The github-sync GET endpoints (config, repositories, organizations, branches,
+ * tree) are read-only helpers for the import UI. They require a repo-wide READ
+ * grant: owner, any team member of the owning team, or a read share with NO
+ * path scope. `canReadRepoPath(_, _, "")` encodes exactly this — a path-scoped
+ * share does not cover the empty whole-repo target, so it is still denied.
+ */
+const requireRepoWideRead = createMiddleware<AppEnv>(async (c, next) => {
+  const userId = c.get("userId");
+  const repoId = c.req.param("repoId");
+
+  if (!repoId) {
+    return c.json({ error: "Missing repoId" }, 400);
+  }
+
+  const repo = await db
+    .select({ id: schema.repos.id })
+    .from(schema.repos)
+    .where(eq(schema.repos.id, repoId))
+    .get();
+  if (!repo) {
+    return c.json({ error: "Repository not found" }, 404);
+  }
+
+  if (!(await canReadRepoPath(userId, repoId, ""))) {
+    return c.json({ error: "Access denied" }, 403);
+  }
+
+  return next();
+});
+
+app.get("/:repoId/github-sync", requireRepoWideRead, async (c) => {
   const repoId = c.req.param("repoId");
   const sync = await db
     .select()
@@ -66,7 +97,7 @@ app.get("/:repoId/github-sync", requireRepoWideWrite, async (c) => {
   return c.json({ data: sync ?? null });
 });
 
-app.get("/:repoId/github-sync/repositories", requireRepoWideWrite, async (c) => {
+app.get("/:repoId/github-sync/repositories", requireRepoWideRead, async (c) => {
   const userId = c.get("userId");
   const ownerLogin = c.req.query("ownerLogin") ?? "";
 
@@ -82,7 +113,7 @@ app.get("/:repoId/github-sync/repositories", requireRepoWideWrite, async (c) => 
   }
 });
 
-app.get("/:repoId/github-sync/organizations", requireRepoWideWrite, async (c) => {
+app.get("/:repoId/github-sync/organizations", requireRepoWideRead, async (c) => {
   const userId = c.get("userId");
 
   try {
@@ -96,7 +127,7 @@ app.get("/:repoId/github-sync/organizations", requireRepoWideWrite, async (c) =>
   }
 });
 
-app.get("/:repoId/github-sync/branches", requireRepoWideWrite, async (c) => {
+app.get("/:repoId/github-sync/branches", requireRepoWideRead, async (c) => {
   const userId = c.get("userId");
   const repoUrl = c.req.query("repoUrl");
 
@@ -116,7 +147,7 @@ app.get("/:repoId/github-sync/branches", requireRepoWideWrite, async (c) => {
   }
 });
 
-app.get("/:repoId/github-sync/tree", requireRepoWideWrite, async (c) => {
+app.get("/:repoId/github-sync/tree", requireRepoWideRead, async (c) => {
   const userId = c.get("userId");
   const repoUrl = c.req.query("repoUrl");
   const branch = c.req.query("branch") ?? "main";

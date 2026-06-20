@@ -212,4 +212,68 @@ describe("github-sync repo-wide authorization", () => {
     );
     expect(res.status).toBe(200);
   });
+
+  test("a whole-repo READ share holder may GET github-sync config but not POST configure", async () => {
+    const owner = await seedUser("Owner");
+    const reader = await seedUser("Reader");
+    const readerToken = await seedToken(reader.id);
+    const repoId = await seedUserRepo(owner.id);
+    await seedScopedShare({
+      repoId,
+      createdById: owner.id,
+      recipientUserId: reader.id,
+      recipientEmail: reader.email,
+      permission: "read",
+      path: null,
+    });
+
+    // GET (read-only helper) is allowed for a whole-repo read share.
+    const get = await routeApp.request(`/api/repos/${repoId}/github-sync`, {
+      headers: authHeaders(readerToken),
+    });
+    expect(get.status).toBe(200);
+
+    // POST (state-changing configure) still requires repo-wide write -> 403.
+    const post = await routeApp.request(`/api/repos/${repoId}/github-sync`, {
+      method: "POST",
+      headers: {
+        ...authHeaders(readerToken),
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ repoUrl: "https://github.com/owner/repo" }),
+    });
+    expect(post.status).toBe(403);
+  });
+
+  test("a path-scoped read share holder is denied both GET and POST github-sync", async () => {
+    const owner = await seedUser("Owner");
+    const scoped = await seedUser("Scoped");
+    const scopedToken = await seedToken(scoped.id);
+    const repoId = await seedUserRepo(owner.id);
+    await seedScopedShare({
+      repoId,
+      createdById: owner.id,
+      recipientUserId: scoped.id,
+      recipientEmail: scoped.email,
+      permission: "read",
+      path: "docs",
+    });
+
+    // A path-scoped share does not cover the empty whole-repo target, so the
+    // read helper is denied.
+    const get = await routeApp.request(`/api/repos/${repoId}/github-sync`, {
+      headers: authHeaders(scopedToken),
+    });
+    expect(get.status).toBe(403);
+
+    const post = await routeApp.request(`/api/repos/${repoId}/github-sync`, {
+      method: "POST",
+      headers: {
+        ...authHeaders(scopedToken),
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ repoUrl: "https://github.com/owner/repo" }),
+    });
+    expect(post.status).toBe(403);
+  });
 });

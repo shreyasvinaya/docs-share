@@ -1,5 +1,5 @@
 import { Hono } from "hono";
-import { eq, and, like } from "drizzle-orm";
+import { eq, and, sql } from "drizzle-orm";
 import { db, schema } from "../db/index.js";
 import { requireAuth } from "../middleware/requireAuth.js";
 import {
@@ -48,14 +48,16 @@ app.get("/:repoId", async (c) => {
     return c.json({ error: "Access denied" }, 403);
   }
 
-  // Normalize: ensure prefix ends with / if non-empty, for directory matching
-  const normalizedPrefix = pathPrefix
-    ? pathPrefix.endsWith("/")
-      ? pathPrefix
-      : pathPrefix + "/"
-    : "";
+  // Build the directory-matching prefix from the NORMALIZED, authorized path
+  // (`requestedTarget`), never the raw query input. A non-empty prefix always
+  // ends with "/" so it matches only immediate descendants of the directory.
+  const normalizedPrefix = requestedTarget ? `${requestedTarget}/` : "";
 
-  // Get all files under this prefix
+  // Get all files under this prefix. The prefix is matched with LIKE, whose
+  // `%` and `_` are wildcards — so a path containing those characters (e.g.
+  // `docs_` or `a%b`) would otherwise match siblings like `docsA` / `axb`.
+  // Escape the LIKE metacharacters (`\`, `%`, `_`) and pin the escape char with
+  // `ESCAPE '\'` so the prefix matches ONLY its literal characters.
   const allFiles = normalizedPrefix
     ? await db
         .select()
@@ -63,7 +65,7 @@ app.get("/:repoId", async (c) => {
         .where(
           and(
             eq(schema.files.repoId, repoId),
-            like(schema.files.path, `${normalizedPrefix}%`)
+            sql`${schema.files.path} LIKE ${`${escapeLikePattern(normalizedPrefix)}%`} ESCAPE '\\'`
           )
         )
         .all()
@@ -924,6 +926,18 @@ async function readTrackedFiles(
     files.push({ path: matched, data });
   }
   return files;
+}
+
+/**
+ * Escape the SQLite LIKE metacharacters in `value` so it matches literally.
+ *
+ * SQLite LIKE treats `%` (any run) and `_` (any single char) as wildcards. We
+ * use `\` as the escape char (paired with an `ESCAPE '\'` clause at the call
+ * site), so `\` itself must be escaped first. Without this, a directory prefix
+ * like `docs_/` or `a%b/` would match siblings (`docsX/...`, `aZZb/...`).
+ */
+function escapeLikePattern(value: string): string {
+  return value.replace(/[\\%_]/g, (ch) => `\\${ch}`);
 }
 
 /**

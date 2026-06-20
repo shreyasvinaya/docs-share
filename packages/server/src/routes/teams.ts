@@ -524,30 +524,49 @@ app.patch("/:teamId/members/:userId", async (c) => {
     return c.json({ error: "Member not found" }, 404);
   }
 
-  // Prevent demoting the last owner: if the target is currently an owner and
-  // the new role is NOT owner, ensure at least one other owner remains.
+  // Prevent demoting the last owner. The count-then-update split is racy: two
+  // concurrent demotions of the last two owners could both read count==2 and
+  // both proceed, leaving the team ownerless. Serialize the count and the write
+  // in a single (synchronous, bun-sqlite) transaction so the guard cannot be
+  // bypassed by a concurrent demotion. The demotion is signalled by the
+  // transaction returning false ("last owner") so the 400 is raised outside it.
   if (targetMember.role === "owner" && role !== "owner") {
-    const owners = await db
-      .select()
-      .from(schema.teamMembers)
-      .where(
-        and(
-          eq(schema.teamMembers.teamId, teamId),
-          eq(schema.teamMembers.role, "owner")
+    const demoted = db.transaction((tx) => {
+      const owners = tx
+        .select({ userId: schema.teamMembers.userId })
+        .from(schema.teamMembers)
+        .where(
+          and(
+            eq(schema.teamMembers.teamId, teamId),
+            eq(schema.teamMembers.role, "owner")
+          )
         )
-      )
-      .all();
+        .all();
 
-    if (owners.length <= 1) {
+      // Another owner must remain besides the target being demoted.
+      const otherOwnerExists = owners.some((o) => o.userId !== targetUserId);
+      if (!otherOwnerExists) {
+        return false;
+      }
+
+      tx
+        .update(schema.teamMembers)
+        .set({ role })
+        .where(eq(schema.teamMembers.id, targetMember.id))
+        .run();
+      return true;
+    });
+
+    if (!demoted) {
       return c.json({ error: "Cannot remove the last owner" }, 400);
     }
+  } else {
+    await db
+      .update(schema.teamMembers)
+      .set({ role })
+      .where(eq(schema.teamMembers.id, targetMember.id))
+      .run();
   }
-
-  await db
-    .update(schema.teamMembers)
-    .set({ role })
-    .where(eq(schema.teamMembers.id, targetMember.id))
-    .run();
 
   return c.json({
     data: {
