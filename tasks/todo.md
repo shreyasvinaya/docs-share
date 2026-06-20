@@ -7,7 +7,7 @@
 - [x] Polish authenticated app shell and sidebar.
 - [x] Polish dashboard and drafts pages.
 - [x] Verify typecheck, tests, and build.
-- [ ] Commit and push scoped UI follow-up.
+- [x] Commit and push scoped UI follow-up.
 
 ---
 
