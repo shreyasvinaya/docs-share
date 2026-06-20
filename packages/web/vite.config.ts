@@ -4,6 +4,9 @@ import tailwindcss from "@tailwindcss/vite";
 import { resolve } from "path";
 
 export default defineConfig({
+  // Normal/dev builds are served from the domain root ("/"). The GitHub Pages
+  // build passes a repo subpath (e.g. "/docs-share/") via PAGES_BASE.
+  base: process.env.PAGES_BASE || "/",
   plugins: [react(), tailwindcss()],
   resolve: {
     alias: {
