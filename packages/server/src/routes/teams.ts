@@ -6,6 +6,7 @@ import { generateId, generatePublicToken } from "../lib/crypto.js";
 import { config } from "../lib/config.js";
 import { createBareRepo } from "../git/repoManager.js";
 import { acceptInvitationByToken } from "../services/invitations.js";
+import { deleteSiteDataForTarget } from "../services/siteDataCleanup.js";
 import type { AppEnv } from "../lib/types.js";
 
 const app = new Hono<AppEnv>();
@@ -241,6 +242,18 @@ app.delete("/:teamId", async (c) => {
 
   if (!membership || membership.role !== "owner") {
     return c.json({ error: "Only the owner can delete the team" }, 403);
+  }
+
+  // Deleting the team cascades its repos away at the DB level, but site-data
+  // opt-ins/records key on (target_type, target_id) with no FK to repos, so
+  // clean them up explicitly first to avoid orphaned public-ingestion targets.
+  const teamRepos = await db
+    .select({ id: schema.repos.id })
+    .from(schema.repos)
+    .where(eq(schema.repos.ownerTeamId, teamId))
+    .all();
+  for (const repo of teamRepos) {
+    await deleteSiteDataForTarget("repo", repo.id);
   }
 
   await db.delete(schema.teams).where(eq(schema.teams.id, teamId)).run();

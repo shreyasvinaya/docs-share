@@ -70,4 +70,18 @@ describe("draft helpers", () => {
     expect(headers["X-Content-Type-Options"]).toBe("nosniff");
     expect(headers["Content-Type"]).toBe("text/html; charset=utf-8");
   });
+
+  test("allows form POSTs to the API origin without weakening the sandbox", () => {
+    const headers = draftContentSecurityHeaders("http://localhost:3000");
+    const csp = headers["Content-Security-Policy"];
+
+    // Sandbox isolation invariant: scripts only, never same-origin.
+    expect(csp).toContain("sandbox allow-scripts");
+    expect(csp).not.toContain("allow-same-origin");
+    // The opted-in form can reach the ingestion endpoint...
+    expect(csp).toContain("connect-src 'self' http://localhost:3000");
+    // ...but exfiltration to arbitrary origins is blocked (no wildcard).
+    expect(csp).not.toContain("connect-src *");
+    expect(csp).not.toContain("*");
+  });
 });

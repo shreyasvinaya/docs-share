@@ -1,4 +1,5 @@
 import { useMemo, useState } from "react";
+import { Link } from "react-router";
 import type { DraftListItem } from "@docs-share/shared";
 import { EmptyState } from "@/components/common/empty-state";
 import {
@@ -156,6 +157,12 @@ export function DraftsPage() {
                   >
                     {copiedDraftId === draft.id ? "Copied" : "Copy URL"}
                   </button>
+                  <Link
+                    to={`/drafts/${draft.id}/forms`}
+                    className="rounded-lg border border-border px-3 py-1.5 text-sm font-medium transition-colors hover:bg-muted"
+                  >
+                    Forms
+                  </Link>
                   <button
                     type="button"
                     onClick={() => handleDuplicate(draft)}
