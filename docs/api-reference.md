@@ -119,9 +119,33 @@ curl -s -X PATCH "$API/api/users/me" \
   -d '{"displayName":"Ada Lovelace","designation":"Engineer"}'
 ```
 
+### GET /api/users/me/github-app/install
+
+Starts the GitHub App installation flow. Stores a CSRF state cookie and
+redirects (`302`) to the GitHub App installation page. Codes: `302`, `503`
+(App not configured).
+
+### GET /api/users/me/github-app/callback
+
+GitHub redirects here after installation. Query params: `installation_id`,
+`state`, `code`. Verifies the state cookie, exchanges the OAuth code, and
+confirms the user has access to the installation. On success redirects (`302`)
+to `/settings?tab=integrations`. Codes: `302`, `400` (bad state/params), `403`
+(not authorized for installation), `502` (GitHub API error), `503` (OAuth not
+configured).
+
 ### GET /api/users/me/github-token
 
-Returns `{ "data": { "connected": bool, "updatedAt": ... } }`.
+Returns the GitHub credential status for the current user.
+
+Response `data` fields:
+- `connected` (bool) — whether any GitHub credential (App or PAT) is stored.
+- `connectionType` (`"github_app"` | `"pat"` | `null`) — how the credential is stored.
+- `configured` (bool) — whether the GitHub App integration is configured on this deployment.
+- `updatedAt` (string | null) — ISO-8601 timestamp when the credential was last updated.
+- `installationId` (string | null) — GitHub App installation ID (null for PAT connections).
+- `accountLogin` (string | null) — GitHub account login for the App installation.
+- `accountType` (string | null) — GitHub account type (`"User"` or `"Organization"`).
 
 ### PUT /api/users/me/github-token
 
@@ -443,17 +467,31 @@ Codes: `200`, `400` invalid service, `401` auth required, `404` not found.
 
 ---
 
-## Internal
+## Setup
 
-### GET /internal/repo
+### GET /api/setup/branding
 
-Resolve a repo by owner (used by the CLI). Query: `ownerType`, `ownerId`. Codes:
-`200`, `400`, `403`, `404`.
+Public endpoint — no auth required. Returns the deployment name.
 
-### POST /internal/hooks/post-receive
+```bash
+curl -s "$API/api/setup/branding"
+# { "data": { "deploymentName": "Docs Share" } }
+```
 
-Git post-receive hook callback. Authenticated with the `X-Hook-Secret` header.
-Body: `repoPath`, `ref`, `oldRev`, `newRev`. Codes: `200`, `400`, `403`, `404`.
+### GET /api/setup/status
+
+Sysadmin-only. Returns the full deployment setup checklist. Codes: `200`, `401`,
+`403`.
+
+```bash
+curl -s "$API/api/setup/status" -H "Authorization: Bearer $TOKEN"
+```
+
+Response `data` shape: `SetupStatus` — includes `deploymentName`,
+`environment` (`production`, `appUrl`, `contentOrigin`, `devLogin`),
+`sysadmin`, `authentication.googleOAuth`, `integrations` (`githubApp`,
+`githubPatFallback`), and `security.productionSecrets`. Each sub-check has
+`configured` (bool), `label`, and `detail` fields.
 
 ---
 

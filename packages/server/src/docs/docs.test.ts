@@ -42,7 +42,11 @@ describe("GET /openapi.json", () => {
       "/api/auth/google",
       "/api/auth/session",
       "/api/auth/tokens",
+      "/api/setup/branding",
+      "/api/setup/status",
       "/api/users/me",
+      "/api/users/me/github-app/install",
+      "/api/users/me/github-app/callback",
       "/api/teams",
       "/api/teams/{teamId}/members",
       "/api/projects",
@@ -55,7 +59,6 @@ describe("GET /openapi.json", () => {
       "/view/public/{token}",
       "/d/{draftId}",
       "/git/{ownerType}/{ownerId}/info/refs",
-      "/internal/repo",
     ]) {
       expect(paths).toContain(expected);
     }

@@ -66,7 +66,7 @@ export const openApiSpec: OpenApiSpec = {
     { name: "shares", description: "Email, team, and public-link shares" },
     { name: "view", description: "Serving extracted repo and share content" },
     { name: "git", description: "Git smart-HTTP transport" },
-    { name: "internal", description: "CLI repo lookup and git hook callbacks" },
+    { name: "setup", description: "Deployment branding and setup status" },
     { name: "meta", description: "Health, OpenAPI spec, and llms.txt" },
   ],
   paths: {
@@ -335,6 +335,63 @@ export const openApiSpec: OpenApiSpec = {
         },
       },
     },
+    "/api/users/me/github-app/install": {
+      get: {
+        tags: ["users"],
+        summary: "Redirect to GitHub App install page",
+        description:
+          "Generates a CSRF state, stores it in a short-lived cookie, then redirects " +
+          "the browser to the GitHub App installation URL. Returns `503` if the " +
+          "GitHub App integration is not configured on this deployment.",
+        security: sessionOrBearer,
+        responses: {
+          "302": { description: "Redirect to the GitHub App installation page" },
+          "503": errorResponse("GitHub App integration is not configured"),
+        },
+      },
+    },
+    "/api/users/me/github-app/callback": {
+      get: {
+        tags: ["users"],
+        summary: "GitHub App installation callback",
+        description:
+          "GitHub redirects here after the user installs/authorizes the App. " +
+          "Verifies the state cookie, exchanges the OAuth code, confirms the user " +
+          "has access to the installation, and stores the installation credentials. " +
+          "On success, redirects to `/settings?tab=integrations`.",
+        security: sessionOrBearer,
+        parameters: [
+          {
+            name: "installation_id",
+            in: "query",
+            required: true,
+            schema: { type: "string" },
+            description: "GitHub App installation ID.",
+          },
+          {
+            name: "state",
+            in: "query",
+            required: true,
+            schema: { type: "string" },
+            description: "CSRF state token, must match the stored cookie.",
+          },
+          {
+            name: "code",
+            in: "query",
+            required: true,
+            schema: { type: "string" },
+            description: "GitHub OAuth authorization code.",
+          },
+        ],
+        responses: {
+          "302": { description: "Redirect to /settings on success" },
+          "400": errorResponse("Invalid or missing state, installation_id, or code"),
+          "403": errorResponse("User is not authorized for this GitHub App installation"),
+          "502": errorResponse("GitHub authorization or installation lookup failed"),
+          "503": errorResponse("GitHub App OAuth is not configured"),
+        },
+      },
+    },
     "/api/users/me/github-token": {
       get: {
         tags: ["users"],
@@ -374,6 +431,61 @@ export const openApiSpec: OpenApiSpec = {
         responses: {
           "200": { description: "Removed", content: { "application/json": { schema: { $ref: "#/components/schemas/GitHubTokenStatusEnvelope" } } } },
           "401": errorResponse("Not authenticated"),
+        },
+      },
+    },
+
+    // ---------------------------------------------------------------------
+    // setup
+    // ---------------------------------------------------------------------
+    "/api/setup/branding": {
+      get: {
+        tags: ["setup"],
+        summary: "Public deployment branding",
+        description: "Returns the configured deployment name. Available without authentication.",
+        security: [],
+        responses: {
+          "200": {
+            description: "Branding info",
+            content: {
+              "application/json": {
+                schema: {
+                  type: "object",
+                  properties: {
+                    data: {
+                      type: "object",
+                      properties: {
+                        deploymentName: { type: "string" },
+                      },
+                      required: ["deploymentName"],
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+    },
+    "/api/setup/status": {
+      get: {
+        tags: ["setup"],
+        summary: "Deployment setup checklist (sysadmin only)",
+        description:
+          "Returns the full setup status for this deployment. " +
+          "Requires an authenticated sysadmin (session or bearer token).",
+        security: sessionOrBearer,
+        responses: {
+          "200": {
+            description: "Setup status",
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/SetupStatusEnvelope" },
+              },
+            },
+          },
+          "401": errorResponse("Not authenticated"),
+          "403": errorResponse("Sysadmin role required"),
         },
       },
     },
@@ -1208,57 +1320,6 @@ export const openApiSpec: OpenApiSpec = {
       },
     },
 
-    // ---------------------------------------------------------------------
-    // internal
-    // ---------------------------------------------------------------------
-    "/internal/repo": {
-      get: {
-        tags: ["internal"],
-        summary: "Look up a repo by owner (CLI helper)",
-        security: sessionOrBearer,
-        parameters: [
-          { name: "ownerType", in: "query", required: true, schema: { type: "string", enum: ["user", "team"] } },
-          { name: "ownerId", in: "query", required: true, schema: { type: "string" } },
-        ],
-        responses: {
-          "200": { description: "Repo summary", content: { "application/json": { schema: { $ref: "#/components/schemas/DataEnvelope" } } } },
-          "400": errorResponse("ownerType and ownerId are required"),
-          "403": errorResponse("Access denied or not a team member"),
-          "404": errorResponse("Repository not found"),
-        },
-      },
-    },
-    "/internal/hooks/post-receive": {
-      post: {
-        tags: ["internal"],
-        summary: "Git post-receive hook callback",
-        description: "Called by the server's own git hook. Authenticated with the `X-Hook-Secret` header.",
-        security: [{ hookSecret: [] }],
-        requestBody: {
-          required: true,
-          content: {
-            "application/json": {
-              schema: {
-                type: "object",
-                required: ["repoPath", "ref", "oldRev", "newRev"],
-                properties: {
-                  repoPath: { type: "string" },
-                  ref: { type: "string" },
-                  oldRev: { type: "string" },
-                  newRev: { type: "string" },
-                },
-              },
-            },
-          },
-        },
-        responses: {
-          "200": { description: "Indexed", content: { "application/json": { schema: { $ref: "#/components/schemas/Ok" } } } },
-          "400": errorResponse("Invalid git update"),
-          "403": errorResponse("Forbidden"),
-          "404": errorResponse("Repository not found"),
-        },
-      },
-    },
   },
   components: {
     securitySchemes: {
@@ -1270,7 +1331,6 @@ export const openApiSpec: OpenApiSpec = {
         description: "API token created via POST /api/auth/tokens. Send as `Authorization: Bearer ds_...`.",
       },
       basicAuth: { type: "http", scheme: "basic", description: "Git smart-HTTP: any username, password is a `ds_` token." },
-      hookSecret: { type: "apiKey", in: "header", name: "X-Hook-Secret", description: "Shared secret for the git hook callback." },
     },
     parameters: {
       RepoId: { name: "repoId", in: "path", required: true, schema: { type: "string" } },
@@ -1340,11 +1400,71 @@ export const openApiSpec: OpenApiSpec = {
           data: {
             type: "object",
             properties: {
-              connected: { type: "boolean" },
-              updatedAt: { type: ["string", "null"] },
+              connected: { type: "boolean", description: "Whether any GitHub credential (App or PAT) is stored." },
+              connectionType: {
+                type: ["string", "null"],
+                enum: ["github_app", "pat", null],
+                description: "How the GitHub credential is stored.",
+              },
+              configured: { type: "boolean", description: "Whether the GitHub App integration is configured on this deployment." },
+              updatedAt: { type: ["string", "null"], description: "ISO-8601 timestamp of when the credential was last updated." },
+              installationId: { type: ["string", "null"], description: "GitHub App installation ID (null for PAT connections)." },
+              accountLogin: { type: ["string", "null"], description: "GitHub account login for the App installation." },
+              accountType: { type: ["string", "null"], description: "GitHub account type ('User' or 'Organization')." },
+            },
+            required: ["connected", "connectionType", "configured"],
+          },
+        },
+      },
+      SetupStatusEnvelope: {
+        type: "object",
+        properties: {
+          data: {
+            type: "object",
+            description: "Full deployment setup checklist.",
+            properties: {
+              deploymentName: { type: "string" },
+              environment: {
+                type: "object",
+                properties: {
+                  production: { type: "boolean" },
+                  appUrl: { $ref: "#/components/schemas/SetupCheck" },
+                  contentOrigin: { $ref: "#/components/schemas/SetupCheck" },
+                  devLogin: { $ref: "#/components/schemas/SetupCheck" },
+                },
+              },
+              sysadmin: { $ref: "#/components/schemas/SetupCheck" },
+              authentication: {
+                type: "object",
+                properties: {
+                  googleOAuth: { $ref: "#/components/schemas/SetupCheck" },
+                },
+              },
+              integrations: {
+                type: "object",
+                properties: {
+                  githubApp: { $ref: "#/components/schemas/SetupCheck" },
+                  githubPatFallback: { $ref: "#/components/schemas/SetupCheck" },
+                },
+              },
+              security: {
+                type: "object",
+                properties: {
+                  productionSecrets: { $ref: "#/components/schemas/SetupCheck" },
+                },
+              },
             },
           },
         },
+      },
+      SetupCheck: {
+        type: "object",
+        properties: {
+          configured: { type: "boolean" },
+          label: { type: "string" },
+          detail: { type: "string" },
+        },
+        required: ["configured", "label", "detail"],
       },
       ApiTokenMasked: {
         type: "object",

@@ -69,7 +69,10 @@ export function buildLlmsTxt({ appUrl, apiUrl }: LlmsTxtOptions): string {
 - POST ${api}/api/shares — create a share (email/public_link/team)
 - GET  ${api}/api/shares/public/{token} — resolve a public share
 - POST ${api}/api/repos/{repoId}/github-sync — configure & run GitHub sync
-- GET  ${api}/internal/repo — resolve a repo by owner (CLI helper)
+- GET  ${api}/api/setup/branding — deployment name (public, no auth)
+- GET  ${api}/api/setup/status — deployment setup checklist (sysadmin only)
+- GET  ${api}/api/users/me/github-app/install — start GitHub App installation flow
+- GET  ${api}/api/users/me/github-app/callback — GitHub App installation callback
 - Git smart-HTTP: ${api}/git/{ownerType}/{ownerId}/info/refs?service=...
 
 ## CLI commands
