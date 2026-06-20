@@ -6,6 +6,8 @@ import {
   getUploadTimeoutMs,
   getMaxRetries,
   getRetryBaseMs,
+  getMaxResponseBytes,
+  redactUrl,
 } from "./config.js";
 import {
   CliError,
@@ -28,6 +30,8 @@ export interface ApiClientOptions {
   maxRetries?: number;
   /** Override the base backoff delay (ms) between retries. */
   retryBaseMs?: number;
+  /** Override the max response-body size (bytes) we'll buffer. */
+  maxResponseBytes?: number;
 }
 
 /** HTTP status codes worth retrying for idempotent requests. */
@@ -36,15 +40,42 @@ const RETRYABLE_STATUSES = new Set([429, 502, 503, 504]);
 /** Cap any honored Retry-After / backoff delay so we never hang for minutes. */
 const MAX_BACKOFF_MS = 30_000;
 
+/**
+ * True if the hostname refers to the local machine. Covers the entire IPv4
+ * loopback range 127.0.0.0/8 (not just 127.0.0.1), the IPv6 loopback ::1, and
+ * IPv4-mapped loopback (::ffff:127.x.x.x) — any of which a self-hoster might use
+ * for a trusted plain-http server.
+ */
 function isLocalhost(hostname: string): boolean {
-  const h = hostname.toLowerCase();
-  return (
-    h === "localhost" ||
-    h === "127.0.0.1" ||
-    h === "::1" ||
-    h === "[::1]" ||
-    h.endsWith(".localhost")
-  );
+  let h = hostname.toLowerCase();
+  // Strip the brackets URL puts around IPv6 literals (e.g. "[::1]").
+  if (h.startsWith("[") && h.endsWith("]")) h = h.slice(1, -1);
+
+  if (h === "localhost" || h.endsWith(".localhost")) return true;
+  if (h === "::1") return true;
+
+  // IPv4-mapped IPv6 loopback in dotted form, e.g. ::ffff:127.0.0.1.
+  const mappedDotted = h.match(/^::ffff:(\d{1,3}(?:\.\d{1,3}){3})$/);
+  // The URL parser normalizes ::ffff:127.0.0.1 to the hex form ::ffff:7f00:1,
+  // so also accept ::ffff:<hi>:<lo> where the high group's top octet is 0x7f
+  // (127.x.x.x). The groups are 1-4 hex digits, zero-padded conceptually.
+  const mappedHex = h.match(/^::ffff:([0-9a-f]{1,4}):([0-9a-f]{1,4})$/);
+  if (mappedHex) {
+    const hi = parseInt(mappedHex[1], 16);
+    // Top 8 bits of the 16-bit high group is the first IPv4 octet.
+    if (((hi >> 8) & 0xff) === 127) return true;
+  }
+  const candidate = mappedDotted ? mappedDotted[1] : h;
+
+  // Any address in 127.0.0.0/8 is loopback.
+  const v4 = candidate.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
+  if (v4) {
+    const octets = v4.slice(1).map(Number);
+    if (octets.every((o) => o >= 0 && o <= 255) && octets[0] === 127) {
+      return true;
+    }
+  }
+  return false;
 }
 
 function sleep(ms: number): Promise<void> {
@@ -54,17 +85,18 @@ function sleep(ms: number): Promise<void> {
 /**
  * Parse a Retry-After header value into milliseconds. Supports both the
  * delta-seconds form ("120") and the HTTP-date form. Returns undefined when
- * absent or unparseable.
+ * absent or unparseable. The result is clamped to MAX_BACKOFF_MS inside the
+ * parser so every caller is safe from a server asking us to sleep for minutes.
  */
 function parseRetryAfter(value: string | null): number | undefined {
   if (!value) return undefined;
   const seconds = Number(value);
   if (Number.isFinite(seconds) && seconds >= 0) {
-    return seconds * 1000;
+    return Math.min(seconds * 1000, MAX_BACKOFF_MS);
   }
   const date = Date.parse(value);
   if (!Number.isNaN(date)) {
-    return Math.max(0, date - Date.now());
+    return Math.min(Math.max(0, date - Date.now()), MAX_BACKOFF_MS);
   }
   return undefined;
 }
@@ -76,6 +108,7 @@ export class ApiClient {
   private uploadTimeoutMs: number;
   private maxRetries: number;
   private retryBaseMs: number;
+  private maxResponseBytes: number;
   /** Tracks whether the plaintext-token warning has already been emitted. */
   private warnedPlaintext = false;
 
@@ -89,6 +122,7 @@ export class ApiClient {
     this.uploadTimeoutMs = opts.uploadTimeoutMs ?? getUploadTimeoutMs();
     this.maxRetries = opts.maxRetries ?? getMaxRetries();
     this.retryBaseMs = opts.retryBaseMs ?? getRetryBaseMs();
+    this.maxResponseBytes = opts.maxResponseBytes ?? getMaxResponseBytes();
   }
 
   /**
@@ -133,11 +167,13 @@ export class ApiClient {
           timeoutMs >= 1000
             ? `${Math.round(timeoutMs / 1000)}s`
             : `${timeoutMs}ms`;
-        throw new NetworkError(`request to ${url} timed out after ${secs}`);
+        throw new NetworkError(`request to ${redactUrl(url)} timed out after ${secs}`);
       }
       const message =
         err instanceof Error ? err.message : "Unknown network error";
-      throw new NetworkError(`Failed to connect to ${this.baseUrl}: ${message}`);
+      throw new NetworkError(
+        `Failed to connect to ${redactUrl(this.baseUrl)}: ${message}`
+      );
     } finally {
       clearTimeout(timer);
     }
@@ -206,8 +242,8 @@ export class ApiClient {
       if (res.type === "opaqueredirect" || (res.status >= 300 && res.status < 400)) {
         const location = res.headers.get("location");
         throw new NetworkError(
-          `Refusing to follow redirect from ${url}` +
-            (location ? ` to ${location}` : "") +
+          `Refusing to follow redirect from ${redactUrl(url)}` +
+            (location ? ` to ${redactUrl(location)}` : "") +
             " (would resend the API token to another location). " +
             "Check your API URL points directly at the Patra server."
         );
@@ -238,8 +274,79 @@ export class ApiClient {
     return Math.min(this.retryBaseMs * 2 ** (attempt - 1), MAX_BACKOFF_MS);
   }
 
+  /**
+   * Read a response body as text, never buffering more than maxResponseBytes.
+   *
+   * A compromised or buggy server could stream an unbounded body (and may lie
+   * about, or omit, Content-Length) to OOM the host. We reject early when the
+   * advertised Content-Length is over the cap, and defensively read the stream
+   * chunk-by-chunk, aborting the moment the accumulated size exceeds the cap.
+   */
+  private async readBodyBounded(res: Response): Promise<string> {
+    const limit = this.maxResponseBytes;
+
+    // Fast path: trust an honest Content-Length to reject before reading.
+    const lenHeader = res.headers.get("content-length");
+    if (lenHeader !== null) {
+      const len = Number(lenHeader);
+      if (Number.isFinite(len) && len > limit) {
+        // Free the socket; we're not going to consume this body.
+        try {
+          await res.body?.cancel();
+        } catch {
+          // best-effort
+        }
+        throw new NetworkError(
+          `Response body too large: ${len} bytes exceeds the ${limit}-byte limit ` +
+            `(raise PATRA_MAX_RESPONSE_BYTES if this is expected).`
+        );
+      }
+    }
+
+    const body = res.body;
+    // Some runtimes / mocked responses may not expose a stream; fall back to
+    // text() but still enforce the cap on the buffered result.
+    if (!body) {
+      const text = await res.text();
+      if (Buffer.byteLength(text, "utf-8") > limit) {
+        throw new NetworkError(
+          `Response body too large: exceeds the ${limit}-byte limit ` +
+            `(raise PATRA_MAX_RESPONSE_BYTES if this is expected).`
+        );
+      }
+      return text;
+    }
+
+    const reader = body.getReader();
+    const chunks: Uint8Array[] = [];
+    let total = 0;
+    try {
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        if (!value) continue;
+        total += value.byteLength;
+        if (total > limit) {
+          throw new NetworkError(
+            `Response body too large: exceeds the ${limit}-byte limit ` +
+              `(raise PATRA_MAX_RESPONSE_BYTES if this is expected).`
+          );
+        }
+        chunks.push(value);
+      }
+    } finally {
+      try {
+        await reader.cancel();
+      } catch {
+        // best-effort: stream may already be closed
+      }
+    }
+
+    return Buffer.concat(chunks.map((c) => Buffer.from(c))).toString("utf-8");
+  }
+
   private async parseSuccess<T>(res: Response): Promise<T> {
-    const text = await res.text();
+    const text = await this.readBodyBounded(res);
     if (!text) return undefined as T;
     try {
       return JSON.parse(text) as T;
@@ -251,9 +358,12 @@ export class ApiClient {
   private async throwForStatus(res: Response): Promise<never> {
     let errorBody: { error?: string; details?: unknown } = {};
     try {
-      errorBody = await res.json();
-    } catch {
-      // Response body may not be JSON
+      const text = await this.readBodyBounded(res);
+      if (text) errorBody = JSON.parse(text) as typeof errorBody;
+    } catch (err) {
+      // A too-large error body is still a network-level failure worth surfacing.
+      if (err instanceof NetworkError) throw err;
+      // Otherwise the response body may simply not be JSON — fall through.
     }
 
     const errorMessage =

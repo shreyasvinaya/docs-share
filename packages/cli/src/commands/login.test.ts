@@ -96,6 +96,17 @@ describe("login --token-stdin", () => {
     expect(res.code).not.toBe(0);
     expect(res.stderr).toMatch(/no token was read from stdin/);
   });
+
+  test("trims surrounding whitespace/newlines and exits cleanly (no hang)", async () => {
+    // Surrounding whitespace and a trailing newline must be trimmed, the read
+    // must settle, and the process must not hang on leftover/resumed stdin.
+    const res = await runCli(["login", "--token-stdin"], {
+      stdin: "  tok_padded  \n",
+    });
+    expect(res.code).toBe(0);
+    expect(receivedTokens).toContain("Bearer tok_padded");
+    expect(readSavedConfig().auth?.token).toBe("tok_padded");
+  });
 });
 
 describe("login env precedence", () => {

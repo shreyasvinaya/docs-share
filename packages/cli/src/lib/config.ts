@@ -3,6 +3,7 @@ import {
   existsSync,
   mkdirSync,
   readFileSync,
+  statSync,
   writeFileSync,
 } from "node:fs";
 import { join } from "node:path";
@@ -32,6 +33,7 @@ const DEFAULT_MAX_UPLOAD_BYTES = 200 * 1024 * 1024; // 200 MB
 const DEFAULT_MAX_UPLOAD_FILES = 2000;
 const DEFAULT_MAX_RETRIES = 3;
 const DEFAULT_RETRY_BASE_MS = 500;
+const DEFAULT_MAX_RESPONSE_BYTES = 32 * 1024 * 1024; // 32 MB
 
 /**
  * Read an env var preferring the PATRA_ name, falling back to the legacy
@@ -113,6 +115,34 @@ function validateConfigShape(value: unknown): CliConfig {
 }
 
 export function loadConfig(): CliConfig {
+  // Before trusting the token / apiUrl inside, verify the file is not writable
+  // by group or world. An attacker who can rewrite the config could swap in
+  // their own token or point apiUrl at a malicious server, so a relaxed-perms
+  // config must not be trusted.
+  try {
+    const mode = statSync(CONFIG_FILE).mode;
+    if (mode & 0o022) {
+      throw new CliError(
+        `${CONFIG_FILE_LABEL} is writable by group or others (mode ${(
+          mode & 0o777
+        ).toString(8)}); refusing to trust it. ` +
+          `Run \`chmod 600 ${CONFIG_FILE_LABEL}\` to restrict it.`,
+        EXIT_CODES.VALIDATION_ERROR
+      );
+    }
+  } catch (err) {
+    if (err instanceof CliError) throw err;
+    // A missing file simply means "not configured yet" — fall back to defaults.
+    const code = (err as NodeJS.ErrnoException).code;
+    if (code !== "ENOENT") {
+      const reason = err instanceof Error ? err.message : String(err);
+      throw new CliError(
+        `${CONFIG_FILE_LABEL} is corrupt or unreadable: ${reason}; fix or delete it.`,
+        EXIT_CODES.VALIDATION_ERROR
+      );
+    }
+  }
+
   let raw: string;
   try {
     raw = readFileSync(CONFIG_FILE, "utf-8");
@@ -168,8 +198,29 @@ export function getToken(): string {
 }
 
 /**
+ * Render a URL-ish string for inclusion in an error/warning message with any
+ * userinfo (user:pass@) stripped, so credentials embedded in a URL never leak
+ * to stderr or logs. Falls back to a regex strip when the value isn't a parsable
+ * URL (so partial/garbage input is still scrubbed).
+ */
+export function redactUrl(value: string): string {
+  try {
+    const url = new URL(value);
+    if (url.username || url.password) {
+      url.username = "";
+      url.password = "";
+    }
+    return url.toString();
+  } catch {
+    // Not a full URL — best-effort strip of any "scheme://user:pass@" prefix.
+    return value.replace(/(\b[a-z][a-z0-9+.-]*:\/\/)[^/@\s]*@/gi, "$1");
+  }
+}
+
+/**
  * Validate that a string is a usable http(s) API base URL. Throws a clear
- * ValidationError otherwise so garbage never reaches fetch().
+ * ValidationError otherwise so garbage never reaches fetch(). Any URL echoed
+ * back in the error message has its userinfo redacted.
  */
 export function validateApiUrl(value: string, source = "API URL"): string {
   let parsed: URL;
@@ -177,12 +228,12 @@ export function validateApiUrl(value: string, source = "API URL"): string {
     parsed = new URL(value);
   } catch {
     throw new ValidationError(
-      `Invalid ${source}: "${value}" is not a valid URL.`
+      `Invalid ${source}: "${redactUrl(value)}" is not a valid URL.`
     );
   }
   if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
     throw new ValidationError(
-      `Invalid ${source}: "${value}" must use http:// or https:// (got "${parsed.protocol}").`
+      `Invalid ${source}: "${redactUrl(value)}" must use http:// or https:// (got "${parsed.protocol}").`
     );
   }
   return value;
@@ -227,4 +278,13 @@ export function getMaxRetries(): number {
 /** Resolve the base backoff delay (ms) for retries. */
 export function getRetryBaseMs(): number {
   return readPositiveIntEnv("RETRY_BASE_MS", DEFAULT_RETRY_BASE_MS);
+}
+
+/**
+ * Resolve the max response-body size (bytes) the client will buffer. Guards
+ * against a malicious/compromised server OOMing the host by streaming an
+ * unbounded body.
+ */
+export function getMaxResponseBytes(): number {
+  return readPositiveIntEnv("MAX_RESPONSE_BYTES", DEFAULT_MAX_RESPONSE_BYTES);
 }

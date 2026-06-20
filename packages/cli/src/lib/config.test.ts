@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import {
+  chmodSync,
   mkdtempSync,
   mkdirSync,
   rmSync,
@@ -125,6 +126,116 @@ describe("loadConfig error handling", () => {
     `);
     expect(code).toBe(0);
     expect(stderr).toMatch(/corrupt or unreadable/);
+  });
+
+  test("REFUSES a world-writable config file (M1)", async () => {
+    home = mkdtempSync(join(tmpdir(), "ds-cli-perm-world-"));
+    mkdirSync(join(home, ".docs-share"), { recursive: true });
+    const file = join(home, ".docs-share", "config.json");
+    writeFileSync(
+      file,
+      JSON.stringify({
+        apiUrl: "https://evil.example.com",
+        auth: { token: "t", email: "a@b.c" },
+      })
+    );
+    // Relax perms: owner rw + world write (0606).
+    chmodSync(file, 0o606);
+
+    const { code, stderr } = await runChild(`
+      import { loadConfig } from ${configPath};
+      try {
+        loadConfig();
+        process.exit(2); // should have refused
+      } catch (err) {
+        process.stderr.write(String(err && err.message));
+        process.exit(0);
+      }
+    `);
+    expect(code).toBe(0);
+    expect(stderr).toMatch(/writable by group or others/);
+    expect(stderr).toMatch(/refusing to trust/i);
+  });
+
+  test("REFUSES a group-writable config file (M1)", async () => {
+    home = mkdtempSync(join(tmpdir(), "ds-cli-perm-group-"));
+    mkdirSync(join(home, ".docs-share"), { recursive: true });
+    const file = join(home, ".docs-share", "config.json");
+    writeFileSync(
+      file,
+      JSON.stringify({ apiUrl: "https://x.example.com" })
+    );
+    // owner rw + group write (0660).
+    chmodSync(file, 0o660);
+
+    const { code, stderr } = await runChild(`
+      import { loadConfig } from ${configPath};
+      try {
+        loadConfig();
+        process.exit(2);
+      } catch (err) {
+        process.stderr.write(String(err && err.message));
+        process.exit(0);
+      }
+    `);
+    expect(code).toBe(0);
+    expect(stderr).toMatch(/writable by group or others/);
+  });
+
+  test("ACCEPTS a 0600 config file (M1)", async () => {
+    home = mkdtempSync(join(tmpdir(), "ds-cli-perm-ok-"));
+    mkdirSync(join(home, ".docs-share"), { recursive: true });
+    const file = join(home, ".docs-share", "config.json");
+    writeFileSync(
+      file,
+      JSON.stringify({ apiUrl: "https://ok.example.com" })
+    );
+    chmodSync(file, 0o600);
+
+    const { code } = await runChild(`
+      import { loadConfig } from ${configPath};
+      const c = loadConfig();
+      if (c.apiUrl !== "https://ok.example.com") process.exit(2);
+      process.exit(0);
+    `);
+    expect(code).toBe(0);
+  });
+});
+
+describe("redactUrl (L2)", () => {
+  test("strips user:pass userinfo from a full URL", async () => {
+    const { redactUrl } = await import("./config.js");
+    const out = redactUrl("http://user:hunter2@host.example.com/path");
+    expect(out).not.toContain("hunter2");
+    expect(out).not.toContain("user:");
+    expect(out).toContain("host.example.com");
+  });
+
+  test("leaves a URL without userinfo unchanged in substance", async () => {
+    const { redactUrl } = await import("./config.js");
+    expect(redactUrl("https://host.example.com/x")).toContain(
+      "host.example.com"
+    );
+  });
+
+  test("best-effort strips creds from a non-parsable URL-ish value", async () => {
+    const { redactUrl } = await import("./config.js");
+    const out = redactUrl("http://bob:secretpw@");
+    expect(out).not.toContain("secretpw");
+  });
+
+  test("validateApiUrl error redacts embedded credentials", async () => {
+    const { validateApiUrl } = await import("./config.js");
+    let message = "";
+    try {
+      // ftp:// is rejected; the error echoes the URL — creds must be scrubbed.
+      validateApiUrl("ftp://alice:topsecret@host.example.com");
+    } catch (err) {
+      message = err instanceof Error ? err.message : String(err);
+    }
+    expect(message).toMatch(/must use http/);
+    expect(message).not.toContain("topsecret");
+    expect(message).not.toContain("alice");
   });
 });
 

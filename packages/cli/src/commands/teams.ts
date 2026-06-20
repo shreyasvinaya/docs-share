@@ -1,7 +1,6 @@
 import { Command } from "commander";
 import { getClient } from "../lib/api-client.js";
 import { output, success, formatTable, isInteractive } from "../lib/output.js";
-import { NotFoundError } from "../lib/errors.js";
 import type { Team, TeamMember } from "@patra/shared";
 
 export const teamsCommand = new Command("teams")
@@ -113,26 +112,29 @@ async function listTeams(): Promise<void> {
 
 /**
  * Resolve a team reference (slug or ID) to a team ID.
+ *
+ * Slugs may be up to 50 chars, so a length heuristic misroutes long slugs.
+ * Instead we always look up the user's teams and match by slug (then by id). If
+ * nothing matches, we treat the ref as a raw team ID and let the API be the
+ * authority — a stale/foreign ID will surface as a normal not-found from the
+ * endpoint that uses it.
  */
 async function resolveTeamId(
   client: ReturnType<typeof getClient>,
   ref: string
 ): Promise<string> {
-  // If it looks like a generated ID (long string), try it directly
-  if (ref.length > 20) {
-    return ref;
-  }
-
-  // Otherwise, treat as slug and look up
   const res = await client.get<{
     data: Array<Team & { role: string }>;
   }>("/api/teams");
 
-  const team = res.data.find((t) => t.slug === ref || t.id === ref);
-  if (!team) {
-    throw new NotFoundError(`Team "${ref}" not found.`);
+  const team = res.data.find((t) => t.slug === ref) ?? res.data.find((t) => t.id === ref);
+  if (team) {
+    return team.id;
   }
-  return team.id;
+
+  // No slug/id match among the user's teams — fall back to treating the ref as a
+  // raw ID rather than failing outright.
+  return ref;
 }
 
 function slugify(name: string): string {

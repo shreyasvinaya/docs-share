@@ -297,3 +297,195 @@ describe("ApiClient retries (idempotent only)", () => {
     expect(calls).toBe(1);
   });
 });
+
+describe("ApiClient response-size cap (H2)", () => {
+  test("rejects when Content-Length exceeds the limit (success path)", async () => {
+    mockFetch(async () => {
+      return new Response("x".repeat(1000), {
+        status: 200,
+        headers: { "content-length": "1000", "content-type": "application/json" },
+      });
+    });
+
+    const client = makeClient({ maxResponseBytes: 100 });
+    await expect(client.get("/big")).rejects.toThrow(/too large/i);
+  });
+
+  test("rejects early when Content-Length exceeds the limit (error path)", async () => {
+    mockFetch(async () => {
+      return new Response("x".repeat(50), {
+        status: 500,
+        headers: { "content-length": "5000" },
+      });
+    });
+
+    const client = makeClient({ maxResponseBytes: 100 });
+    await expect(client.get("/err")).rejects.toThrow(/too large/i);
+  });
+
+  test("aborts a body that streams past the cap even with no Content-Length", async () => {
+    let chunksSent = 0;
+    mockFetch(async () => {
+      // 10 chunks of 50 bytes = 500 bytes, no content-length header.
+      const stream = new ReadableStream<Uint8Array>({
+        pull(controller) {
+          if (chunksSent >= 10) {
+            controller.close();
+            return;
+          }
+          chunksSent++;
+          controller.enqueue(new Uint8Array(50));
+        },
+      });
+      return new Response(stream, {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    });
+
+    const client = makeClient({ maxResponseBytes: 120 });
+    await expect(client.get("/stream")).rejects.toThrow(/too large/i);
+    // The reader should have aborted well before draining all 10 chunks.
+    expect(chunksSent).toBeLessThan(10);
+  });
+
+  test("accepts a body within the cap", async () => {
+    mockFetch(async () => jsonResponse({ ok: true }));
+    const client = makeClient({ maxResponseBytes: 1024 });
+    const res = await client.get<{ ok: boolean }>("/small");
+    expect(res.ok).toBe(true);
+  });
+
+  test("error too-large surfaces even when error body is huge", async () => {
+    mockFetch(async () => {
+      const stream = new ReadableStream<Uint8Array>({
+        pull(controller) {
+          controller.enqueue(new Uint8Array(500));
+          controller.close();
+        },
+      });
+      return new Response(stream, { status: 500 });
+    });
+
+    const client = makeClient({ maxResponseBytes: 100 });
+    await expect(client.get("/err")).rejects.toThrow(/too large/i);
+  });
+});
+
+describe("ApiClient loopback detection (L1)", () => {
+  let warnings: string[];
+  let originalWrite: typeof process.stderr.write;
+
+  beforeEach(() => {
+    warnings = [];
+    originalWrite = process.stderr.write;
+    process.stderr.write = ((chunk: string | Uint8Array) => {
+      warnings.push(
+        typeof chunk === "string" ? chunk : Buffer.from(chunk).toString()
+      );
+      return true;
+    }) as typeof process.stderr.write;
+  });
+
+  afterEach(() => {
+    process.stderr.write = originalWrite;
+  });
+
+  async function warnsFor(apiUrl: string): Promise<boolean> {
+    mockFetch(async () => jsonResponse({ ok: true }));
+    const client = makeClient({ apiUrl });
+    await client.get("/x");
+    return /unencrypted/i.test(warnings.join(""));
+  }
+
+  test("does NOT warn for 127.0.0.5 (whole 127.0.0.0/8 is loopback)", async () => {
+    expect(await warnsFor("http://127.0.0.5:8080")).toBe(false);
+  });
+
+  test("does NOT warn for 127.255.255.254", async () => {
+    expect(await warnsFor("http://127.255.255.254")).toBe(false);
+  });
+
+  test("does NOT warn for ::1 (IPv6 loopback)", async () => {
+    expect(await warnsFor("http://[::1]:3000")).toBe(false);
+  });
+
+  test("does NOT warn for IPv4-mapped loopback ::ffff:127.0.0.1", async () => {
+    expect(await warnsFor("http://[::ffff:127.0.0.1]:3000")).toBe(false);
+  });
+
+  test("WARNS for a public IP over http", async () => {
+    expect(await warnsFor("http://8.8.8.8")).toBe(true);
+  });
+
+  test("WARNS for a near-but-not-loopback 128.0.0.1", async () => {
+    expect(await warnsFor("http://128.0.0.1")).toBe(true);
+  });
+});
+
+describe("ApiClient userinfo redaction in errors (L2)", () => {
+  // These clients use non-local http URLs, which also fire the plaintext-token
+  // warning to stderr. Swallow it so the test output stays clean.
+  let originalWrite: typeof process.stderr.write;
+  beforeEach(() => {
+    originalWrite = process.stderr.write;
+    process.stderr.write = (() => true) as typeof process.stderr.write;
+  });
+  afterEach(() => {
+    process.stderr.write = originalWrite;
+  });
+
+  test("redirect error does not leak url userinfo", async () => {
+    mockFetch(async () => {
+      return new Response(null, {
+        status: 302,
+        headers: { location: "https://user:secretpw@evil.example.com/" },
+      });
+    });
+
+    const client = new ApiClient({
+      apiUrl: "http://alice:hunter2@docs.example.com",
+      token: "t",
+      retryBaseMs: 1,
+    });
+    let message = "";
+    try {
+      await client.get("/x");
+    } catch (err) {
+      message = err instanceof Error ? err.message : String(err);
+    }
+    expect(message).toMatch(/Refusing to follow redirect/);
+    // Neither the request URL creds nor the redirect target creds leak.
+    expect(message).not.toContain("hunter2");
+    expect(message).not.toContain("alice");
+    expect(message).not.toContain("secretpw");
+  });
+
+  test("timeout error does not leak url userinfo", async () => {
+    mockFetch((_url, init) => {
+      return new Promise((_resolve, reject) => {
+        init.signal?.addEventListener("abort", () => {
+          const err = new Error("aborted");
+          err.name = "AbortError";
+          reject(err);
+        });
+      });
+    });
+
+    const client = new ApiClient({
+      apiUrl: "http://bob:topsecret@docs.example.com",
+      token: "t",
+      timeoutMs: 20,
+      maxRetries: 1,
+    });
+    let message = "";
+    try {
+      await client.get("/slow");
+    } catch (err) {
+      message = err instanceof Error ? err.message : String(err);
+    }
+    expect(message).toMatch(/timed out/);
+    expect(message).not.toContain("topsecret");
+    expect(message).not.toContain("bob");
+  });
+});

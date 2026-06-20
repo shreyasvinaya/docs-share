@@ -79,15 +79,35 @@ async function resolveLoginToken(opts: {
   return undefined;
 }
 
-/** Read all of stdin as a UTF-8 string. */
+/**
+ * Read all of stdin as a UTF-8 string. Listeners are attached once and removed
+ * on settle (success or error) so they don't leak across the process lifetime,
+ * and stdin is paused again afterwards so we never leave it resumed.
+ */
 async function readStdin(): Promise<string> {
   const chunks: Buffer[] = [];
+  const stdin = process.stdin;
   return new Promise<string>((resolve, reject) => {
-    process.stdin.on("data", (chunk: Buffer) => chunks.push(chunk));
-    process.stdin.on("end", () =>
-      resolve(Buffer.concat(chunks).toString("utf-8"))
-    );
-    process.stdin.on("error", reject);
+    const onData = (chunk: Buffer) => chunks.push(chunk);
+    const onEnd = () => {
+      cleanup();
+      resolve(Buffer.concat(chunks).toString("utf-8"));
+    };
+    const onError = (err: Error) => {
+      cleanup();
+      reject(err);
+    };
+    function cleanup(): void {
+      stdin.off("data", onData);
+      stdin.off("end", onEnd);
+      stdin.off("error", onError);
+      // Don't leave stdin flowing for the rest of the process.
+      stdin.pause();
+    }
+
+    stdin.on("data", onData);
+    stdin.on("end", onEnd);
+    stdin.on("error", onError);
   });
 }
 

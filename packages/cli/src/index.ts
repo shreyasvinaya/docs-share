@@ -79,29 +79,49 @@ function isVerbose(): boolean {
   }
 }
 
+// Re-entrancy guard: a second fatal (e.g. an unhandledRejection fired while the
+// first handler is already tearing down) must not double-print or call
+// process.exit twice. Once we've decided to exit, ignore any follow-ups.
+let exiting = false;
+
+/**
+ * Resolve the exit code for a fatal error. A CliError carries its own; anything
+ * else is UNKNOWN — UNLESS a non-zero process.exitCode was already set, in which
+ * case we preserve that intentional code rather than clobbering it.
+ */
+function resolveExitCode(err: unknown): number {
+  if (err instanceof CliError) return err.exitCode;
+  const pending = process.exitCode;
+  if (typeof pending === "number" && pending !== 0) return pending;
+  return EXIT_CODES.UNKNOWN;
+}
+
 /**
  * Print an error and exit. CliError carries its own exit code; anything else
- * exits with UNKNOWN. Full stack traces are only shown under --verbose.
+ * exits with UNKNOWN (or a previously-set non-zero process.exitCode). Full stack
+ * traces are only shown under --verbose. Safe to call more than once: the first
+ * call wins and subsequent calls are no-ops.
  */
 function handleFatal(err: unknown): never {
-  if (err instanceof CliError) {
+  if (exiting) {
+    // Already on our way out — don't print or exit again. Park forever; the
+    // in-flight process.exit() will terminate us.
+    return undefined as never;
+  }
+  exiting = true;
+
+  const exitCode = resolveExitCode(err);
+
+  if (err instanceof Error) {
     printError(err.message);
     if (isVerbose() && err.stack) {
       console.error(err.stack);
     }
-    process.exit(err.exitCode);
+  } else {
+    printError(String(err));
   }
 
-  if (err instanceof Error) {
-    printError(err.message);
-    if (isVerbose()) {
-      console.error(err.stack);
-    }
-    process.exit(EXIT_CODES.UNKNOWN);
-  }
-
-  printError(String(err));
-  process.exit(EXIT_CODES.UNKNOWN);
+  process.exit(exitCode);
 }
 
 // Last-resort safety nets: never let an unhandled rejection or thrown error
