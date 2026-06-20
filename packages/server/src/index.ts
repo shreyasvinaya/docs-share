@@ -12,6 +12,7 @@ import repoRoutes from "./routes/repos.js";
 import fileRoutes from "./routes/files.js";
 import draftRoutes, { renderDraftPage, serveDraftContent } from "./routes/drafts.js";
 import shareRoutes from "./routes/shares.js";
+import auditRoutes from "./routes/audit.js";
 import internalRoutes from "./routes/internal.js";
 import viewRoutes from "./routes/view.js";
 import setupRoutes from "./routes/setup.js";
@@ -41,6 +42,7 @@ app.route("/api/repos", repoRoutes);
 app.route("/api/files", fileRoutes);
 app.route("/api/drafts", draftRoutes);
 app.route("/api/shares", shareRoutes);
+app.route("/api/audit", auditRoutes);
 app.route("/api/setup", setupRoutes);
 
 app.route("/git", gitRoutes);
@@ -50,7 +52,7 @@ app.route("/view", viewRoutes);
 app.get("/d/:draftId", async (c) => {
   const userId = c.get("userId");
   if (!userId) return c.redirect(`/login?next=${encodeURIComponent(c.req.path)}`);
-  return renderDraftPage(c.req.param("draftId"), userId);
+  return renderDraftPage(c.req.param("draftId"), userId, c.req.raw);
 });
 
 app.get("/draft-content/:draftId", (c) =>

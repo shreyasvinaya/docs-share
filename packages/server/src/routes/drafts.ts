@@ -17,6 +17,10 @@ import {
   sha256Hex,
   validateDraftUpload,
 } from "../services/drafts.js";
+import {
+  aggregateViewStats,
+  recordViewFromRequest,
+} from "../services/analytics.js";
 import type { AppEnv } from "../lib/types.js";
 
 const app = new Hono<AppEnv>();
@@ -200,6 +204,32 @@ app.get("/:draftId", requireAuth, requireScope("draft:read"), async (c) => {
   return c.json({ data: draftResponse(draft) });
 });
 
+// Intentionally OWNER-ONLY: draft analytics are scoped to the draft owner and
+// are deliberately NOT widened to sysadmins. Sysadmins use the audit log for
+// oversight, not per-draft view metrics.
+app.get(
+  "/:draftId/analytics",
+  requireAuth,
+  requireScope("draft:read"),
+  async (c) => {
+    const userId = c.get("userId");
+    const draftId = c.req.param("draftId");
+    const draft = await db
+      .select()
+      .from(schema.drafts)
+      .where(eq(schema.drafts.id, draftId))
+      .get();
+
+    if (!draft) return c.json({ error: "Draft not found" }, 404);
+    // Owner-only gate (see handler doc): do not widen to sysadmins.
+    if (draft.ownerUserId !== userId)
+      return c.json({ error: "Access denied" }, 403);
+
+    const stats = await aggregateViewStats("draft", draft.id);
+    return c.json({ data: stats });
+  }
+);
+
 app.delete("/:draftId", requireAuth, requireScope("draft:write"), async (c) => {
   const userId = c.get("userId");
   const draftId = c.req.param("draftId");
@@ -226,7 +256,11 @@ app.delete("/:draftId", requireAuth, requireScope("draft:write"), async (c) => {
   return c.json({ data: { deleted: true } });
 });
 
-export async function renderDraftPage(draftId: string, userId: string): Promise<Response> {
+export async function renderDraftPage(
+  draftId: string,
+  userId: string,
+  req?: Request
+): Promise<Response> {
   const draft = await db
     .select()
     .from(schema.drafts)
@@ -235,6 +269,8 @@ export async function renderDraftPage(draftId: string, userId: string): Promise<
 
   if (!draft) return new Response("Draft not found", { status: 404 });
   if (draft.ownerUserId !== userId) return new Response("Access denied", { status: 403 });
+
+  if (req) recordViewFromRequest("draft", draft.id, req);
 
   const contentPath = buildSignedContentUrl(draft.id, draft.contentSha256);
   const html = buildDraftShellHtml({ title: draft.title, contentPath });

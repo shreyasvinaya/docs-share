@@ -2,6 +2,21 @@ import { useMemo, useState } from "react";
 import type { DraftListItem } from "@docs-share/shared";
 import { EmptyState } from "@/components/common/empty-state";
 import { useDeleteDraft, useDrafts } from "@/hooks/use-drafts";
+import { useDraftAnalytics } from "@/hooks/use-analytics";
+import { formatLastOpened, formatViewSummary } from "@/lib/view-analytics";
+
+function DraftViewStat({ draftId }: { draftId: string }) {
+  const { data: stats } = useDraftAnalytics(draftId);
+  if (!stats) return null;
+  return (
+    <span className="truncate">
+      {formatViewSummary(stats)}
+      {stats.lastViewedAt
+        ? ` · Last opened ${formatLastOpened(stats.lastViewedAt)}`
+        : ""}
+    </span>
+  );
+}
 
 function formatBytes(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
@@ -105,6 +120,7 @@ export function DraftsPage() {
                     <span className="truncate">{draft.sourceFilename}</span>
                     <span className="lg:hidden">{formatBytes(draft.sizeBytes)}</span>
                     <span className="lg:hidden">{formatDate(draft.createdAt)}</span>
+                    <DraftViewStat draftId={draft.id} />
                   </div>
                 </div>
 

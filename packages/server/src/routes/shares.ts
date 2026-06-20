@@ -10,6 +10,10 @@ import {
   sendShareEmailNotifications,
   sendSlackNotification,
 } from "../services/notifications.js";
+import {
+  aggregateViewStats,
+  recordAuditEntrySafe,
+} from "../services/analytics.js";
 import type { AppEnv } from "../lib/types.js";
 
 const app = new Hono<AppEnv>();
@@ -240,6 +244,19 @@ app.post("/", requireAuth, async (c) => {
       recipientEmails: emails,
     });
 
+    recordAuditEntrySafe({
+      actorUserId: userId,
+      action: "share.created",
+      targetType: "share",
+      targetId: shareId,
+      metadata: {
+        shareType: "email",
+        repoId,
+        path: path || null,
+        recipientCount: emails.length,
+      },
+    });
+
     return c.json({ data: { ...share, recipients } }, 201);
   }
 
@@ -324,6 +341,14 @@ app.post("/", requireAuth, async (c) => {
         path: path || null,
       });
 
+      recordAuditEntrySafe({
+        actorUserId: userId,
+        action: "share.updated",
+        targetType: "share",
+        targetId: existingShare.id,
+        metadata: { shareType: "public_link", repoId, path: path || null, linkAccess: access },
+      });
+
       return c.json({ data: { ...updated, publicToken: updated!.publicToken } });
     }
 
@@ -373,6 +398,14 @@ app.post("/", requireAuth, async (c) => {
       shareType: "public_link",
       permission: "read",
       path: path || null,
+    });
+
+    recordAuditEntrySafe({
+      actorUserId: userId,
+      action: "share.created",
+      targetType: "share",
+      targetId: shareId,
+      metadata: { shareType: "public_link", repoId, path: path || null, linkAccess: access },
     });
 
     return c.json({ data: { ...share, publicToken } }, 201);
@@ -454,6 +487,14 @@ app.post("/", requireAuth, async (c) => {
         path: path || null,
       });
 
+      recordAuditEntrySafe({
+        actorUserId: userId,
+        action: "share.updated",
+        targetType: "share",
+        targetId: existingShare.id,
+        metadata: { shareType: "team", repoId, path: path || null, teamId },
+      });
+
       return c.json({ data: share });
     }
 
@@ -483,6 +524,14 @@ app.post("/", requireAuth, async (c) => {
       shareType: "team",
       permission: sharePermission,
       path: path || null,
+    });
+
+    recordAuditEntrySafe({
+      actorUserId: userId,
+      action: "share.created",
+      targetType: "share",
+      targetId: shareId,
+      metadata: { shareType: "team", repoId, path: path || null, teamId },
     });
 
     return c.json({ data: share }, 201);
@@ -587,7 +636,49 @@ app.delete("/:shareId", requireAuth, async (c) => {
 
   await db.delete(schema.shares).where(eq(schema.shares.id, shareId)).run();
 
+  recordAuditEntrySafe({
+    actorUserId: userId,
+    action: "share.revoked",
+    targetType: "share",
+    targetId: shareId,
+    metadata: { shareType: share.shareType, repoId: share.repoId, path: share.path },
+  });
+
   return c.json({ data: { deleted: true } });
+});
+
+/**
+ * GET /:shareId/analytics — View metrics for a share, restricted to its creator.
+ *
+ * Intentionally OWNER-ONLY: per-share analytics are scoped to the share creator
+ * and are deliberately NOT widened to sysadmins. Sysadmins use the audit log
+ * (cross-actor, no per-visitor data) for oversight, not per-share view metrics.
+ */
+app.get("/:shareId/analytics", requireAuth, async (c) => {
+  const userId = c.get("userId");
+  const shareId = c.req.param("shareId");
+
+  const share = await db
+    .select()
+    .from(schema.shares)
+    .where(eq(schema.shares.id, shareId))
+    .get();
+
+  if (!share) {
+    return c.json({ error: "Share not found" }, 404);
+  }
+
+  // Owner-only gate (see handler doc): do not widen to sysadmins.
+  if (share.createdById !== userId) {
+    return c.json({ error: "Only the creator can view analytics" }, 403);
+  }
+
+  // public_link views are recorded under the "public" target type; all other
+  // share types are recorded under "share". Pick the matching bucket.
+  const targetType = share.shareType === "public_link" ? "public" : "share";
+  const stats = await aggregateViewStats(targetType, share.id);
+
+  return c.json({ data: stats });
 });
 
 /**
