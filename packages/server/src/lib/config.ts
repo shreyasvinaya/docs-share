@@ -11,6 +11,34 @@ function envRequired(key: string): string {
   return val;
 }
 
+function envBool(key: string, fallback: boolean): boolean {
+  const raw = process.env[key];
+  if (raw === undefined) return fallback;
+  return raw === "true" || raw === "1";
+}
+
+/**
+ * Parse a config value that MUST resolve to a finite, strictly positive
+ * integer. Bare `parseInt` happily yields `NaN` (or a negative/zero number)
+ * for malformed input, and a `NaN` limit would make the rate limiter fail
+ * open ("no limit"). To stay safe, any value that is not a finite positive
+ * integer falls back to the documented default rather than disabling the
+ * guard it controls.
+ *
+ * @param key - Environment variable name.
+ * @param fallback - Documented default used when the value is missing or
+ *   malformed. Must itself be a positive integer.
+ */
+export function requiredPositiveInt(key: string, fallback: number): number {
+  const raw = process.env[key];
+  if (raw === undefined || raw.trim() === "") return fallback;
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed) || !Number.isInteger(parsed) || parsed <= 0) {
+    return fallback;
+  }
+  return parsed;
+}
+
 export const config = {
   PORT: parseInt(env("PORT", "3000")),
   HOST: env("HOST", "0.0.0.0"),
@@ -25,9 +53,20 @@ export const config = {
   // Rate limiting (in-memory fixed window, keyed by IP / API token). Disable
   // when a shared limiter already lives at the reverse proxy.
   RATE_LIMIT_ENABLED: env("RATE_LIMIT_ENABLED", "true") !== "false",
-  RATE_LIMIT_WINDOW_MS: parseInt(env("RATE_LIMIT_WINDOW_MS", "60000")),
-  RATE_LIMIT_PUBLIC_MAX: parseInt(env("RATE_LIMIT_PUBLIC_MAX", "120")),
-  RATE_LIMIT_AUTH_MAX: parseInt(env("RATE_LIMIT_AUTH_MAX", "20")),
+  RATE_LIMIT_WINDOW_MS: requiredPositiveInt("RATE_LIMIT_WINDOW_MS", 60000),
+  RATE_LIMIT_PUBLIC_MAX: requiredPositiveInt("RATE_LIMIT_PUBLIC_MAX", 120),
+  RATE_LIMIT_AUTH_MAX: requiredPositiveInt("RATE_LIMIT_AUTH_MAX", 20),
+  // Hard cap on distinct rate-limit buckets held in memory. Prevents the
+  // in-memory store from growing without bound under a high-cardinality
+  // (e.g. spoofed-IP, untrusted) request mix.
+  RATE_LIMIT_MAX_ENTRIES: requiredPositiveInt("RATE_LIMIT_MAX_ENTRIES", 10000),
+
+  // Trust a reverse proxy to report the real client IP. Only enable this when
+  // the app sits behind a proxy that OVERWRITES `X-Real-IP` with the real
+  // socket address (e.g. nginx `proxy_set_header X-Real-IP $remote_addr;`).
+  // When false, forwarded headers are ignored entirely and the limiter keys
+  // on the actual socket peer address. See docs/self-hosting.md.
+  TRUST_PROXY: envBool("TRUST_PROXY", false),
 
   GOOGLE_CLIENT_ID: env("GOOGLE_CLIENT_ID", ""),
   GOOGLE_CLIENT_SECRET: env("GOOGLE_CLIENT_SECRET", ""),
@@ -66,18 +105,20 @@ export const config = {
   // set an individual interval to 0 to disable just that job.
   SCHEDULER_ENABLED: env("SCHEDULER_ENABLED", "true") !== "false",
   // Expired-share cleanup sweep interval (ms). Default: every 15 minutes.
-  EXPIRED_SHARE_SWEEP_INTERVAL_MS: parseInt(
-    env("EXPIRED_SHARE_SWEEP_INTERVAL_MS", "900000")
+  EXPIRED_SHARE_SWEEP_INTERVAL_MS: requiredPositiveInt(
+    "EXPIRED_SHARE_SWEEP_INTERVAL_MS",
+    900000
   ),
   // GitHub sync retry interval (ms). Default: every 10 minutes.
-  GITHUB_SYNC_RETRY_INTERVAL_MS: parseInt(
-    env("GITHUB_SYNC_RETRY_INTERVAL_MS", "600000")
+  GITHUB_SYNC_RETRY_INTERVAL_MS: requiredPositiveInt(
+    "GITHUB_SYNC_RETRY_INTERVAL_MS",
+    600000
   ),
   // Maximum number of failed syncs to retry per sweep.
-  GITHUB_SYNC_RETRY_BATCH: parseInt(env("GITHUB_SYNC_RETRY_BATCH", "5")),
+  GITHUB_SYNC_RETRY_BATCH: requiredPositiveInt("GITHUB_SYNC_RETRY_BATCH", 5),
   // Maximum number of retry attempts before a sync is marked terminally
   // `failed` and excluded from future retry sweeps.
-  GITHUB_SYNC_MAX_RETRIES: parseInt(env("GITHUB_SYNC_MAX_RETRIES", "5")),
+  GITHUB_SYNC_MAX_RETRIES: requiredPositiveInt("GITHUB_SYNC_MAX_RETRIES", 5),
 };
 
 assertProductionSecret("SESSION_SECRET", config.SESSION_SECRET);

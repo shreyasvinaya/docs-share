@@ -141,37 +141,48 @@ describe("admin routes (requireSysadmin)", () => {
     expect(stored?.role).toBe("user");
   });
 
-  test("sysadmin can promote and demote a user's role", async () => {
+  test("refuses to grant the sysadmin role via the API and leaves the DB untouched", async () => {
     const admin = await seedUser("sysadmin");
     makeSysadmin(admin.email);
     const target = await seedUser("user");
 
-    const promote = await app.request(`/api/admin/users/${target.userId}`, {
+    const res = await app.request(`/api/admin/users/${target.userId}`, {
       method: "PATCH",
       headers: authHeaders(admin.token),
       body: JSON.stringify({ role: "sysadmin" }),
     });
-    const afterPromote = await db
+
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { error: string };
+    expect(body.error).toBe(
+      "The sysadmin role is managed via the SYSADMIN_EMAILS environment variable, not the API."
+    );
+
+    // The DB role must NOT have changed — env is the source of truth.
+    const stored = await db
       .select({ role: schema.users.role })
       .from(schema.users)
       .where(eq(schema.users.id, target.userId))
       .get();
+    expect(stored?.role).toBe("user");
+  });
 
-    const demote = await app.request(`/api/admin/users/${target.userId}`, {
+  test("also refuses to set role back to user via the API", async () => {
+    const admin = await seedUser("sysadmin");
+    makeSysadmin(admin.email);
+    const target = await seedUser("user");
+
+    const res = await app.request(`/api/admin/users/${target.userId}`, {
       method: "PATCH",
       headers: authHeaders(admin.token),
       body: JSON.stringify({ role: "user" }),
     });
-    const afterDemote = await db
-      .select({ role: schema.users.role })
-      .from(schema.users)
-      .where(eq(schema.users.id, target.userId))
-      .get();
 
-    expect(promote.status).toBe(200);
-    expect(afterPromote?.role).toBe("sysadmin");
-    expect(demote.status).toBe(200);
-    expect(afterDemote?.role).toBe("user");
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { error: string };
+    expect(body.error).toBe(
+      "The sysadmin role is managed via the SYSADMIN_EMAILS environment variable, not the API."
+    );
   });
 
   test("rejects invalid role values", async () => {
@@ -186,19 +197,8 @@ describe("admin routes (requireSysadmin)", () => {
     });
 
     expect(res.status).toBe(400);
-  });
-
-  test("returns 404 when patching an unknown user", async () => {
-    const admin = await seedUser("sysadmin");
-    makeSysadmin(admin.email);
-
-    const res = await app.request("/api/admin/users/does-not-exist", {
-      method: "PATCH",
-      headers: authHeaders(admin.token),
-      body: JSON.stringify({ role: "sysadmin" }),
-    });
-
-    expect(res.status).toBe(404);
+    const body = (await res.json()) as { error: string };
+    expect(body.error).toBe("Invalid role");
   });
 
   test("exposes deployment branding to sysadmins", async () => {

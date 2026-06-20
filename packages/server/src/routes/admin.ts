@@ -1,5 +1,4 @@
 import { Hono } from "hono";
-import { eq } from "drizzle-orm";
 import { db, schema } from "../db/index.js";
 import { normalizeDeploymentName } from "../lib/deployment.js";
 import { requireAuth } from "../middleware/requireAuth.js";
@@ -29,12 +28,17 @@ app.get("/users", async (c) => {
   return c.json({ data: { users } });
 });
 
+const SYSADMIN_ENV_MESSAGE =
+  "The sysadmin role is managed via the SYSADMIN_EMAILS environment variable, not the API.";
+
 /**
- * PATCH /users/:userId — Update a user's deployment role.
+ * PATCH /users/:userId — Reserved; role changes are NOT performed here.
  *
- * Note: when SYSADMIN_EMAILS lists a user's email, that env var is the source
- * of truth and requireSysadmin will re-derive the role on the next privileged
- * request. This endpoint is the manual override for emails not pinned in env.
+ * The `sysadmin` role is authoritative-by-env: `requireSysadmin` recomputes it
+ * from `SYSADMIN_EMAILS` on every privileged request (that is the intended
+ * revocation model). A DB write here would be silently overwritten on the next
+ * request, so granting/revoking sysadmin via the API would be dishonest. We
+ * reject any such attempt and direct operators to `SYSADMIN_EMAILS` instead.
  */
 app.patch("/users/:userId", async (c) => {
   const userId = c.req.param("userId");
@@ -45,35 +49,9 @@ app.patch("/users/:userId", async (c) => {
     return c.json({ error: "Invalid role" }, 400);
   }
 
-  const existing = await db
-    .select({ id: schema.users.id })
-    .from(schema.users)
-    .where(eq(schema.users.id, userId))
-    .get();
-
-  if (!existing) {
-    return c.json({ error: "User not found" }, 404);
-  }
-
-  await db
-    .update(schema.users)
-    .set({ role, updatedAt: new Date().toISOString() })
-    .where(eq(schema.users.id, userId))
-    .run();
-
-  const user = await db
-    .select({
-      id: schema.users.id,
-      email: schema.users.email,
-      displayName: schema.users.displayName,
-      role: schema.users.role,
-      createdAt: schema.users.createdAt,
-    })
-    .from(schema.users)
-    .where(eq(schema.users.id, userId))
-    .get();
-
-  return c.json({ data: { user } });
+  // Any role mutation here would race the env-derived source of truth, so the
+  // endpoint refuses to pretend it can grant or revoke the sysadmin role.
+  return c.json({ error: SYSADMIN_ENV_MESSAGE }, 400);
 });
 
 /**

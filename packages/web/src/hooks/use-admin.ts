@@ -1,4 +1,4 @@
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
 import { api } from "@/lib/api-client";
 
 export interface AdminUser {
@@ -19,16 +19,6 @@ export function useAdminUsers() {
   });
 }
 
-export function useUpdateUserRole() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: ({
-      userId,
-      role,
-    }: {
-      userId: string;
-      role: AdminUser["role"];
-    }) => api.patch<{ user: AdminUser }>(`/api/admin/users/${userId}`, { role }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["admin-users"] }),
-  });
-}
+// NOTE: There is intentionally no role-mutation hook. The sysadmin role is
+// managed via the SYSADMIN_EMAILS environment variable (see the admin page
+// note and docs/self-hosting.md); the API rejects role changes with 400.

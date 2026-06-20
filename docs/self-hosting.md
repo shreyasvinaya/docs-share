@@ -33,6 +33,18 @@ Open `/setup` before or after login to review deployment configuration without
 exposing secret values. Users whose email appears in `SYSADMIN_EMAILS` also get
 a **Setup** tab under **Settings** after signing in.
 
+### Managing sysadmins
+
+`SYSADMIN_EMAILS` (comma-separated) is the single source of truth for the
+sysadmin role. The app re-derives each user's role from this variable on every
+privileged request, so removing an email **revokes** access immediately and
+adding one **grants** it on the next sign-in / request. To change who is a
+sysadmin, edit `SYSADMIN_EMAILS` and restart the deployment.
+
+The in-app **Users** admin page is read-only for roles, and the
+`PATCH /api/admin/users/:id` endpoint rejects role changes with `400` — the API
+will not pretend to grant or revoke sysadmin, because env is authoritative.
+
 ## OAuth
 
 Create a Google OAuth web application and add the callback URL:
@@ -67,13 +79,33 @@ Terminate TLS at your proxy and forward all paths to the app container:
 
 Make sure large request bodies are allowed if users upload large files.
 
-Forward the originating client IP so the built-in rate limiter can key on it.
-Most proxies do this automatically; otherwise set the standard headers:
+#### Trusted-proxy client IP (rate limiting)
+
+The built-in rate limiter keys anonymous traffic on the client IP. Because a
+client can forge `X-Forwarded-For`, the app does **not** trust forwarded
+headers by default — set `TRUST_PROXY` deliberately:
+
+- **`TRUST_PROXY=false` (default):** all forwarded headers are ignored. The
+  limiter keys on the real socket peer address (the proxy's connection). Use
+  this only when the app is exposed directly, or when you accept that all
+  traffic arriving through the proxy shares one bucket.
+- **`TRUST_PROXY=true`:** the client IP is read **only** from `X-Real-IP`,
+  which your proxy must set authoritatively from the real socket address.
+  Enable this **only** behind a proxy that **overwrites** `X-Real-IP` on every
+  request. The app intentionally ignores `X-Forwarded-For` for rate-limit
+  keying, since its first hop is client-controlled.
+
+With nginx, overwrite the header from the real peer address and make sure the
+proxy does **not** pass through any client-supplied `X-Real-IP` /
+`X-Forwarded-For`:
 
 ```nginx
-proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+# Overwrite, do not append. $remote_addr is the real socket peer.
 proxy_set_header X-Real-IP $remote_addr;
 ```
+
+Then start the app with `TRUST_PROXY=true`. If you cannot guarantee the proxy
+overwrites `X-Real-IP`, leave `TRUST_PROXY=false`.
 
 ### Custom Domains
 
@@ -123,9 +155,18 @@ generous; tune them with environment variables:
   read endpoints.
 - `RATE_LIMIT_AUTH_MAX` (default `20`) — requests per window for auth/token
   endpoints.
+- `RATE_LIMIT_MAX_ENTRIES` (default `10000`) — hard cap on distinct in-memory
+  buckets. Expired buckets are reclaimed automatically; when the cap is
+  exceeded the oldest buckets are evicted so the store cannot grow without
+  bound under a high-cardinality (e.g. spoofed-IP) request mix.
 
-The limiter is per-process. For horizontally scaled deployments, prefer a
-shared limiter at the reverse proxy and set `RATE_LIMIT_ENABLED=false`.
+Malformed numeric values (non-numeric, zero, or negative) fall back to the
+documented default rather than disabling the limit.
+
+The limiter keys anonymous traffic on the client IP. See **Trusted-proxy client
+IP** above and set `TRUST_PROXY` so the IP is derived from a non-spoofable
+source. The limiter is per-process. For horizontally scaled deployments, prefer
+a shared limiter at the reverse proxy and set `RATE_LIMIT_ENABLED=false`.
 
 ## Upgrades
 

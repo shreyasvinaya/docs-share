@@ -1,6 +1,6 @@
 import { Navigate } from "react-router";
 import { useSession } from "@/hooks/use-auth";
-import { useAdminUsers, useUpdateUserRole, type AdminUser } from "@/hooks/use-admin";
+import { useAdminUsers, type AdminUser } from "@/hooks/use-admin";
 import { cn } from "@/lib/utils";
 
 export function AdminPage() {
@@ -21,9 +21,17 @@ export function AdminPage() {
   return (
     <div className="mx-auto max-w-4xl p-6">
       <h1 className="mb-1 text-2xl font-bold">Users</h1>
-      <p className="mb-6 text-sm text-muted-foreground">
-        Manage deployment members and roles. Sysadmins can review setup and grant
-        admin access.
+      <p className="mb-4 text-sm text-muted-foreground">
+        Review deployment members and their roles.
+      </p>
+      <p className="mb-6 rounded-lg border border-border bg-muted/40 px-4 py-3 text-sm text-muted-foreground">
+        Sysadmin access is configured via the{" "}
+        <code className="rounded bg-muted px-1 py-0.5 font-mono text-xs">
+          SYSADMIN_EMAILS
+        </code>{" "}
+        environment variable, not from this page. To grant or revoke admin
+        access, update <code className="font-mono text-xs">SYSADMIN_EMAILS</code>{" "}
+        and restart the deployment.
       </p>
       <UsersTable currentUserId={session.user.id} />
     </div>
@@ -32,7 +40,6 @@ export function AdminPage() {
 
 function UsersTable({ currentUserId }: { currentUserId: string }) {
   const { data: users, isLoading, isError } = useAdminUsers();
-  const updateRole = useUpdateUserRole();
 
   if (isLoading) {
     return <p className="text-sm text-muted-foreground">Loading users...</p>;
@@ -54,7 +61,6 @@ function UsersTable({ currentUserId }: { currentUserId: string }) {
             <th className="px-4 py-3 font-medium">User</th>
             <th className="px-4 py-3 font-medium">Role</th>
             <th className="px-4 py-3 font-medium">Joined</th>
-            <th className="px-4 py-3 text-right font-medium">Actions</th>
           </tr>
         </thead>
         <tbody className="divide-y divide-border">
@@ -63,10 +69,6 @@ function UsersTable({ currentUserId }: { currentUserId: string }) {
               key={user.id}
               user={user}
               isSelf={user.id === currentUserId}
-              isPending={updateRole.isPending}
-              onChangeRole={(role) =>
-                updateRole.mutate({ userId: user.id, role })
-              }
             />
           ))}
         </tbody>
@@ -75,24 +77,16 @@ function UsersTable({ currentUserId }: { currentUserId: string }) {
   );
 }
 
-function UserRow({
-  user,
-  isSelf,
-  isPending,
-  onChangeRole,
-}: {
-  user: AdminUser;
-  isSelf: boolean;
-  isPending: boolean;
-  onChangeRole: (role: AdminUser["role"]) => void;
-}) {
-  const nextRole: AdminUser["role"] =
-    user.role === "sysadmin" ? "user" : "sysadmin";
-
+function UserRow({ user, isSelf }: { user: AdminUser; isSelf: boolean }) {
   return (
     <tr>
       <td className="px-4 py-3">
-        <p className="font-medium text-foreground">{user.displayName}</p>
+        <p className="font-medium text-foreground">
+          {user.displayName}
+          {isSelf ? (
+            <span className="ml-2 text-xs text-muted-foreground">(You)</span>
+          ) : null}
+        </p>
         <p className="text-xs text-muted-foreground">{user.email}</p>
       </td>
       <td className="px-4 py-3">
@@ -109,20 +103,6 @@ function UserRow({
       </td>
       <td className="px-4 py-3 text-muted-foreground">
         {new Date(user.createdAt).toLocaleDateString()}
-      </td>
-      <td className="px-4 py-3 text-right">
-        {isSelf ? (
-          <span className="text-xs text-muted-foreground">You</span>
-        ) : (
-          <button
-            type="button"
-            disabled={isPending}
-            onClick={() => onChangeRole(nextRole)}
-            className="rounded-lg border border-border px-3 py-1.5 text-xs font-medium transition-colors hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
-          >
-            {user.role === "sysadmin" ? "Revoke admin" : "Make admin"}
-          </button>
-        )}
       </td>
     </tr>
   );
