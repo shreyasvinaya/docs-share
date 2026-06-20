@@ -82,6 +82,38 @@ describe("normalizeRelativePath", () => {
     expect(normalizeRelativePath("docs/./report.html")).toBeNull();
     expect(normalizeRelativePath("docs\0/report.html")).toBeNull();
   });
+
+  test("rejects .git segments anywhere (case-insensitive)", () => {
+    expect(normalizeRelativePath(".git")).toBeNull();
+    expect(normalizeRelativePath(".git/config")).toBeNull();
+    expect(normalizeRelativePath("docs/.git/hooks/pre-commit")).toBeNull();
+    expect(normalizeRelativePath("docs/.GIT/config")).toBeNull();
+    expect(normalizeRelativePath("a/.Git/b")).toBeNull();
+    // A file merely named like ".gitignore" is still a normal file.
+    expect(normalizeRelativePath("docs/.gitignore")).toBe("docs/.gitignore");
+  });
+
+  test("rejects control characters and DEL", () => {
+    expect(
+      normalizeRelativePath("docs/" + String.fromCharCode(1) + "report.html")
+    ).toBeNull();
+    expect(
+      normalizeRelativePath("docs/" + String.fromCharCode(10) + "report.html")
+    ).toBeNull();
+    expect(
+      normalizeRelativePath("docs/" + String.fromCharCode(31) + "x")
+    ).toBeNull();
+    expect(
+      normalizeRelativePath("docs/" + String.fromCharCode(127) + "x")
+    ).toBeNull();
+  });
+
+  test("still accepts normal nested paths and dotfiles", () => {
+    expect(normalizeRelativePath("a/b/c/report.html")).toBe(
+      "a/b/c/report.html"
+    );
+    expect(normalizeRelativePath(".env.example")).toBe(".env.example");
+  });
 });
 
 describe("resolveInside", () => {

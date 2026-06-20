@@ -17,3 +17,12 @@ export function useDeleteDraft() {
     onSuccess: () => qc.invalidateQueries({ queryKey: ["drafts"] }),
   });
 }
+
+export function useDuplicateDraft() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (draftId: string) =>
+      api.post<DraftListItem>(`/api/drafts/${draftId}/duplicate`),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["drafts"] }),
+  });
+}
