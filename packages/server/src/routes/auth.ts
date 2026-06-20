@@ -6,6 +6,7 @@ import { db, schema } from "../db/index.js";
 import { config } from "../lib/config.js";
 import { generateId, generateApiToken } from "../lib/crypto.js";
 import { isProduction, safeNextPath } from "../lib/security.js";
+import { deploymentRoleForEmail, parseSysadminEmails } from "../lib/deployment.js";
 import { requireAuth } from "../middleware/requireAuth.js";
 import { createBareRepo } from "../git/repoManager.js";
 import type { AppEnv } from "../lib/types.js";
@@ -29,6 +30,7 @@ interface GoogleUserInfo {
 }
 
 const app = new Hono<AppEnv>();
+const sysadminEmails = () => parseSysadminEmails(config.SYSADMIN_EMAILS);
 
 // ---------------------------------------------------------------------------
 // GET /google — Redirect to Google OAuth consent screen
@@ -139,6 +141,7 @@ app.get("/google/callback", async (c) => {
       designation: googleDesignation,
       avatarUrl: userInfo.picture ?? null,
       googleId: userInfo.sub,
+      role: deploymentRoleForEmail(userInfo.email, sysadminEmails()),
       createdAt: now,
       updatedAt: now,
     });
@@ -157,6 +160,7 @@ app.get("/google/callback", async (c) => {
         displayName: userInfo.name,
         designation: user.designation ?? googleDesignation,
         avatarUrl: userInfo.picture ?? null,
+        role: deploymentRoleForEmail(userInfo.email, sysadminEmails()),
         updatedAt: new Date().toISOString(),
       })
       .where(eq(schema.users.id, user.id));
@@ -245,6 +249,7 @@ app.post("/dev-login", async (c) => {
       designation: null,
       avatarUrl: null,
       googleId,
+      role: deploymentRoleForEmail(email, sysadminEmails()),
       createdAt: now,
       updatedAt: now,
     });
@@ -267,6 +272,21 @@ app.post("/dev-login", async (c) => {
         diskPath,
       });
     }
+  } else {
+    await db
+      .update(schema.users)
+      .set({
+        role: deploymentRoleForEmail(email, sysadminEmails()),
+        updatedAt: new Date().toISOString(),
+      })
+      .where(eq(schema.users.id, user.id))
+      .run();
+
+    user = await db
+      .select()
+      .from(schema.users)
+      .where(eq(schema.users.id, user.id))
+      .get();
   }
 
   if (!user) {
@@ -318,13 +338,14 @@ app.post("/logout", async (c) => {
 app.get("/session", requireAuth, async (c) => {
   const userId = c.get("userId");
 
-  const user = await db
+  let user = await db
     .select({
       id: schema.users.id,
       email: schema.users.email,
       displayName: schema.users.displayName,
       designation: schema.users.designation,
       avatarUrl: schema.users.avatarUrl,
+      role: schema.users.role,
       createdAt: schema.users.createdAt,
     })
     .from(schema.users)
@@ -333,6 +354,19 @@ app.get("/session", requireAuth, async (c) => {
 
   if (!user) {
     return c.json({ error: "User not found" }, 404);
+  }
+
+  const deploymentRole = deploymentRoleForEmail(user.email, sysadminEmails());
+  if (user.role !== deploymentRole) {
+    await db
+      .update(schema.users)
+      .set({
+        role: deploymentRole,
+        updatedAt: new Date().toISOString(),
+      })
+      .where(eq(schema.users.id, user.id))
+      .run();
+    user = { ...user, role: deploymentRole };
   }
 
   return c.json({ user });

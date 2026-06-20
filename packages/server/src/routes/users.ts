@@ -1,12 +1,21 @@
 import { Hono } from "hono";
+import { deleteCookie, getCookie, setCookie } from "hono/cookie";
 import { eq } from "drizzle-orm";
 import { db, schema } from "../db/index.js";
 import { requireAuth } from "../middleware/requireAuth.js";
 import { config } from "../lib/config.js";
-import { decryptSecret, encryptSecret } from "../lib/crypto.js";
+import { decryptSecret, encryptSecret, generatePublicToken } from "../lib/crypto.js";
+import {
+  createGitHubAppInstallUrl,
+  createGitHubInstallationToken,
+  getGitHubInstallationAccount,
+  isGitHubAppConfigured,
+} from "../services/githubApp.js";
+import type { GitHubCredential } from "../services/githubSync.js";
 import type { AppEnv } from "../lib/types.js";
 
 const app = new Hono<AppEnv>();
+const GITHUB_APP_STATE_COOKIE = "github_app_state";
 
 app.use("*", requireAuth);
 
@@ -39,6 +48,7 @@ app.get("/me", async (c) => {
       displayName: user.displayName,
       designation: user.designation,
       avatarUrl: user.avatarUrl,
+      role: user.role,
       createdAt: user.createdAt,
       repo: repo
         ? {
@@ -115,6 +125,10 @@ app.get("/me/github-token", async (c) => {
     .select({
       githubTokenEncrypted: schema.users.githubTokenEncrypted,
       githubTokenUpdatedAt: schema.users.githubTokenUpdatedAt,
+      githubAppInstallationId: schema.users.githubAppInstallationId,
+      githubAppAccountLogin: schema.users.githubAppAccountLogin,
+      githubAppAccountType: schema.users.githubAppAccountType,
+      githubAppConnectedAt: schema.users.githubAppConnectedAt,
     })
     .from(schema.users)
     .where(eq(schema.users.id, userId))
@@ -122,12 +136,81 @@ app.get("/me/github-token", async (c) => {
 
   if (!user) return c.json({ error: "User not found" }, 404);
 
+  const hasGitHubApp = !!user.githubAppInstallationId;
+  const hasPat = !!user.githubTokenEncrypted;
+
   return c.json({
     data: {
-      connected: !!user.githubTokenEncrypted,
-      updatedAt: user.githubTokenUpdatedAt,
+      connected: hasGitHubApp || hasPat,
+      connectionType: hasGitHubApp ? "github_app" : hasPat ? "pat" : null,
+      configured: isGitHubAppConfigured(),
+      updatedAt: user.githubAppConnectedAt ?? user.githubTokenUpdatedAt,
+      installationId: user.githubAppInstallationId,
+      accountLogin: user.githubAppAccountLogin,
+      accountType: user.githubAppAccountType,
     },
   });
+});
+
+app.get("/me/github-app/install", async (c) => {
+  if (!isGitHubAppConfigured()) {
+    return c.json({ error: "GitHub App integration is not configured" }, 503);
+  }
+
+  const state = generatePublicToken();
+  setCookie(c, GITHUB_APP_STATE_COOKIE, state, {
+    httpOnly: true,
+    secure: config.APP_URL.startsWith("https"),
+    sameSite: "Lax",
+    path: "/api/users/me/github-app",
+    maxAge: 600,
+  });
+
+  return c.redirect(createGitHubAppInstallUrl(state));
+});
+
+app.get("/me/github-app/callback", async (c) => {
+  const userId = c.get("userId");
+  const { installation_id: installationId, state } = c.req.query();
+  const storedState = getCookie(c, GITHUB_APP_STATE_COOKIE);
+  deleteCookie(c, GITHUB_APP_STATE_COOKIE, {
+    path: "/api/users/me/github-app",
+  });
+
+  if (!state || !storedState || state !== storedState) {
+    return c.json({ error: "Invalid GitHub App state" }, 400);
+  }
+
+  if (!installationId || !/^\d+$/.test(installationId)) {
+    return c.json({ error: "Missing GitHub App installation" }, 400);
+  }
+
+  let account = { login: null as string | null, type: null as string | null };
+  if (isGitHubAppConfigured()) {
+    try {
+      account = await getGitHubInstallationAccount(installationId);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return c.json({ error: "GitHub App installation lookup failed", details: message }, 502);
+    }
+  }
+
+  const now = new Date().toISOString();
+  await db
+    .update(schema.users)
+    .set({
+      githubAppInstallationId: installationId,
+      githubAppAccountLogin: account.login,
+      githubAppAccountType: account.type,
+      githubAppConnectedAt: now,
+      githubTokenEncrypted: null,
+      githubTokenUpdatedAt: null,
+      updatedAt: now,
+    })
+    .where(eq(schema.users.id, userId))
+    .run();
+
+  return c.redirect("/settings?tab=integrations");
 });
 
 app.put("/me/github-token", async (c) => {
@@ -145,6 +228,10 @@ app.put("/me/github-token", async (c) => {
     .set({
       githubTokenEncrypted: encryptSecret(token, config.GITHUB_TOKEN_SECRET),
       githubTokenUpdatedAt: now,
+      githubAppInstallationId: null,
+      githubAppAccountLogin: null,
+      githubAppAccountType: null,
+      githubAppConnectedAt: null,
       updatedAt: now,
     })
     .where(eq(schema.users.id, userId))
@@ -160,6 +247,10 @@ app.delete("/me/github-token", async (c) => {
     .set({
       githubTokenEncrypted: null,
       githubTokenUpdatedAt: null,
+      githubAppInstallationId: null,
+      githubAppAccountLogin: null,
+      githubAppAccountType: null,
+      githubAppConnectedAt: null,
       updatedAt: new Date().toISOString(),
     })
     .where(eq(schema.users.id, userId))
@@ -169,14 +260,32 @@ app.delete("/me/github-token", async (c) => {
 });
 
 export async function getUserGitHubToken(userId: string): Promise<string> {
+  const credential = await getUserGitHubCredential(userId);
+  return credential.token;
+}
+
+export async function getUserGitHubCredential(userId: string): Promise<GitHubCredential> {
   const user = await db
-    .select({ githubTokenEncrypted: schema.users.githubTokenEncrypted })
+    .select({
+      githubTokenEncrypted: schema.users.githubTokenEncrypted,
+      githubAppInstallationId: schema.users.githubAppInstallationId,
+    })
     .from(schema.users)
     .where(eq(schema.users.id, userId))
     .get();
 
-  if (!user?.githubTokenEncrypted) return "";
-  return decryptSecret(user.githubTokenEncrypted, config.GITHUB_TOKEN_SECRET);
+  if (user?.githubAppInstallationId) {
+    const installationToken = await createGitHubInstallationToken(
+      user.githubAppInstallationId
+    );
+    return { token: installationToken.token, type: "github_app" };
+  }
+
+  if (!user?.githubTokenEncrypted) return { token: "", type: "pat" };
+  return {
+    token: decryptSecret(user.githubTokenEncrypted, config.GITHUB_TOKEN_SECRET),
+    type: "pat",
+  };
 }
 
 export default app;

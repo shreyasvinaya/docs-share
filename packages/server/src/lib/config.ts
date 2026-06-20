@@ -38,11 +38,16 @@ export const config = {
   HOOK_BASE_URL: env("HOOK_BASE_URL", `http://localhost:${env("PORT", "3000")}`),
 
   CONTENT_ORIGIN: env("CONTENT_ORIGIN", "http://localhost:3000"),
+  DEPLOYMENT_NAME: env("DEPLOYMENT_NAME", "Docs Share"),
+  SYSADMIN_EMAILS: env("SYSADMIN_EMAILS", ""),
 
   GITHUB_TOKEN_SECRET: env(
     "GITHUB_TOKEN_SECRET",
     "dev-github-token-secret-change-in-production"
   ),
+  GITHUB_APP_ID: env("GITHUB_APP_ID", ""),
+  GITHUB_APP_SLUG: env("GITHUB_APP_SLUG", ""),
+  GITHUB_APP_PRIVATE_KEY: env("GITHUB_APP_PRIVATE_KEY", ""),
 
   EMAIL_FROM: env("EMAIL_FROM", ""),
   RESEND_API_KEY: env("RESEND_API_KEY", ""),
