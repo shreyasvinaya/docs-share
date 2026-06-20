@@ -40,14 +40,28 @@ describe("deployment configuration", () => {
       ENABLE_DEV_LOGIN: "false",
       SYSADMIN_EMAILS: "admin@example.com",
       DEPLOYMENT_NAME: "Acme Docs",
+      EMAIL_FROM: "docs@example.com",
+      RESEND_API_KEY: "re_secret_key",
+      SLACK_WEBHOOK_URL: "https://hooks.slack.com/services/T/B/secret",
     });
 
     expect(status.deploymentName).toBe("Acme Docs");
     expect(status.sysadmin.configured).toBe(true);
     expect(status.authentication.googleOAuth.configured).toBe(true);
     expect(status.integrations.githubApp.configured).toBe(true);
+    expect(status.notifications.email.configured).toBe(true);
+    expect(status.notifications.slack.configured).toBe(true);
     expect(status.security.productionSecrets.configured).toBe(true);
     expect(JSON.stringify(status)).not.toContain("private-key");
     expect(JSON.stringify(status)).not.toContain("client-secret");
+    expect(JSON.stringify(status)).not.toContain("re_secret_key");
+    expect(JSON.stringify(status)).not.toContain("hooks.slack.com");
+  });
+
+  test("flags missing email and slack notification channels", () => {
+    const status = buildSetupStatus({});
+
+    expect(status.notifications.email.configured).toBe(false);
+    expect(status.notifications.slack.configured).toBe(false);
   });
 });

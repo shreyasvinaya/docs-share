@@ -17,6 +17,11 @@ import {
   sha256Hex,
   validateDraftUpload,
 } from "../services/drafts.js";
+import {
+  aggregateViewStats,
+  recordViewFromRequest,
+} from "../services/analytics.js";
+import { deleteSiteDataForTarget } from "../services/siteDataCleanup.js";
 import type { AppEnv } from "../lib/types.js";
 
 const app = new Hono<AppEnv>();
@@ -200,6 +205,82 @@ app.get("/:draftId", requireAuth, requireScope("draft:read"), async (c) => {
   return c.json({ data: draftResponse(draft) });
 });
 
+app.post("/:draftId/duplicate", requireAuth, requireScope("draft:write"), async (c) => {
+  const userId = c.get("userId");
+  const draftId = c.req.param("draftId");
+  const source = await db
+    .select()
+    .from(schema.drafts)
+    .where(eq(schema.drafts.id, draftId))
+    .get();
+
+  if (!source) return c.json({ error: "Draft not found" }, 404);
+  if (source.ownerUserId !== userId) return c.json({ error: "Access denied" }, 403);
+
+  const sourceAbsolute = draftStorageAbsolutePath(source.storagePath);
+  if (!sourceAbsolute) return c.json({ error: "Invalid draft path" }, 400);
+
+  let content: Buffer;
+  try {
+    content = await readFile(sourceAbsolute);
+  } catch {
+    return c.json({ error: "Draft content not found" }, 404);
+  }
+
+  const newDraftId = generateId();
+  const storagePath = buildDraftStoragePath(newDraftId);
+  const absolutePath = draftStorageAbsolutePath(storagePath);
+  if (!absolutePath) return c.json({ error: "Invalid draft path" }, 400);
+
+  await mkdir(dirname(absolutePath), { recursive: true });
+  await Bun.write(absolutePath, content);
+
+  const title = `${source.title} (copy)`.slice(0, 160);
+  const now = new Date().toISOString();
+  await db.insert(schema.drafts).values({
+    id: newDraftId,
+    ownerUserId: userId,
+    storagePath,
+    title,
+    sourceFilename: source.sourceFilename,
+    sizeBytes: content.byteLength,
+    contentSha256: sha256Hex(new Uint8Array(content).buffer as ArrayBuffer),
+    createdAt: now,
+    updatedAt: now,
+  });
+
+  return c.json(
+    { data: draftResponse({ id: newDraftId, title, createdAt: now }) },
+    201
+  );
+});
+
+// Intentionally OWNER-ONLY: draft analytics are scoped to the draft owner and
+// are deliberately NOT widened to sysadmins. Sysadmins use the audit log for
+// oversight, not per-draft view metrics.
+app.get(
+  "/:draftId/analytics",
+  requireAuth,
+  requireScope("draft:read"),
+  async (c) => {
+    const userId = c.get("userId");
+    const draftId = c.req.param("draftId");
+    const draft = await db
+      .select()
+      .from(schema.drafts)
+      .where(eq(schema.drafts.id, draftId))
+      .get();
+
+    if (!draft) return c.json({ error: "Draft not found" }, 404);
+    // Owner-only gate (see handler doc): do not widen to sysadmins.
+    if (draft.ownerUserId !== userId)
+      return c.json({ error: "Access denied" }, 403);
+
+    const stats = await aggregateViewStats("draft", draft.id);
+    return c.json({ data: stats });
+  }
+);
+
 app.delete("/:draftId", requireAuth, requireScope("draft:write"), async (c) => {
   const userId = c.get("userId");
   const draftId = c.req.param("draftId");
@@ -223,10 +304,18 @@ app.delete("/:draftId", requireAuth, requireScope("draft:write"), async (c) => {
 
   await db.delete(schema.drafts).where(eq(schema.drafts.id, draftId)).run();
 
+  // Cascade: remove orphaned site-data opt-ins/records so the public ingestion
+  // endpoint can't keep accepting writes against this now-deleted draft.
+  await deleteSiteDataForTarget("draft", draftId);
+
   return c.json({ data: { deleted: true } });
 });
 
-export async function renderDraftPage(draftId: string, userId: string): Promise<Response> {
+export async function renderDraftPage(
+  draftId: string,
+  userId: string,
+  req?: Request
+): Promise<Response> {
   const draft = await db
     .select()
     .from(schema.drafts)
@@ -235,6 +324,8 @@ export async function renderDraftPage(draftId: string, userId: string): Promise<
 
   if (!draft) return new Response("Draft not found", { status: 404 });
   if (draft.ownerUserId !== userId) return new Response("Access denied", { status: 403 });
+
+  if (req) recordViewFromRequest("draft", draft.id, req);
 
   const contentPath = buildSignedContentUrl(draft.id, draft.contentSha256);
   const html = buildDraftShellHtml({ title: draft.title, contentPath });
@@ -270,7 +361,7 @@ export async function serveDraftContent(
   try {
     const html = await readFile(absolutePath);
     return new Response(html, {
-      headers: draftContentSecurityHeaders(),
+      headers: draftContentSecurityHeaders(config.API_URL),
     });
   } catch {
     return new Response("Draft content not found", { status: 404 });

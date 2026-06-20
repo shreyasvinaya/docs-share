@@ -8,6 +8,7 @@ import { PublicHomePage } from "@/pages/public-home";
 import { SetupPage } from "@/pages/setup";
 import { DashboardPage } from "@/pages/dashboard";
 import { DraftsPage } from "@/pages/drafts";
+import { DraftFormsPage } from "@/pages/draft-forms";
 import { PersonalFilesPage } from "@/pages/personal-files";
 import { SharedWithMePage } from "@/pages/shared-with-me";
 import { FilePreviewPage } from "@/pages/file-preview";
@@ -15,6 +16,7 @@ import { TeamsIndexPage } from "@/pages/teams-index";
 import { TeamOverviewPage } from "@/pages/team-overview";
 import { TeamSettingsPage } from "@/pages/team-settings";
 import { SettingsPage } from "@/pages/settings";
+import { AdminPage } from "@/pages/admin";
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const { data, isLoading, isError } = useSession();
@@ -49,6 +51,7 @@ export function App() {
           <Route path="app" element={<DashboardPage />} />
           {/* Keep legacy app URLs stable while the public site owns `/`. */}
           <Route path="drafts" element={<DraftsPage />} />
+          <Route path="drafts/:draftId/forms" element={<DraftFormsPage />} />
           <Route path="files/*" element={<PersonalFilesPage />} />
           <Route path="shared" element={<SharedWithMePage />} />
           <Route path="preview/:repoId/*" element={<FilePreviewPage />} />
@@ -60,6 +63,7 @@ export function App() {
             element={<TeamSettingsPage />}
           />
           <Route path="settings" element={<SettingsPage />} />
+          <Route path="admin" element={<AdminPage />} />
         </Route>
       </Routes>
     </BrowserRouter>

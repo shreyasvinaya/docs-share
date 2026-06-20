@@ -1,4 +1,5 @@
 import { isAbsolute, relative, resolve } from "path";
+import { lookup as dnsLookup } from "dns/promises";
 
 const INSECURE_SECRET_VALUES = new Set([
   "dev-secret-change-in-production",
@@ -29,13 +30,28 @@ export function assertProductionSecret(
 
 export function normalizeRelativePath(input: string | null | undefined): string | null {
   if (!input) return "";
-  if (input.includes("\0")) return null;
+
+  // Reject NUL and any other control character (incl. DEL). These have no
+  // legitimate place in a repo path and can confuse downstream tooling.
+  for (let i = 0; i < input.length; i++) {
+    const code = input.charCodeAt(i);
+    if (code < 32 || code === 127) return null;
+  }
 
   const normalized = input.replaceAll("\\", "/");
   if (normalized.startsWith("/")) return null;
 
   const segments = normalized.split("/").filter(Boolean);
-  if (segments.some((segment) => segment === "." || segment === "..")) {
+  if (
+    segments.some(
+      (segment) =>
+        segment === "." ||
+        segment === ".." ||
+        // Block any `.git` segment (case-insensitive) to keep callers away from
+        // git internals regardless of where it appears in the path.
+        segment.toLowerCase() === ".git"
+    )
+  ) {
     return null;
   }
 
@@ -149,6 +165,70 @@ export function validateWebhookUrl(input: string | null | undefined): string | n
   if (isPrivateOrLoopbackHost(parsed.hostname)) return null;
 
   return parsed.toString();
+}
+
+/** A resolved IP address with its address family (4 or 6). */
+export interface ResolvedAddress {
+  address: string;
+  family: number;
+}
+
+/** Signature of a DNS resolver returning every address a hostname maps to. */
+export type DnsLookupAll = (hostname: string) => Promise<ResolvedAddress[]>;
+
+const defaultDnsLookupAll: DnsLookupAll = async (hostname) => {
+  const results = await dnsLookup(hostname, { all: true });
+  return results.map((r) => ({ address: r.address, family: r.family }));
+};
+
+/**
+ * Resolves `hostname` via DNS and validates EVERY returned address against the
+ * private/loopback/link-local guard. This is the anti-DNS-rebinding step for
+ * outbound webhooks: a public hostname that resolves (even partially) to an
+ * internal IP is rejected.
+ *
+ * Returns the list of resolved addresses when ALL are public/routable. Throws
+ * when any address is private/loopback, or when resolution yields nothing.
+ *
+ * The resolver is injectable so callers (and tests) can pin or stub DNS. The
+ * returned addresses should be used to PIN the subsequent connection so the
+ * same IPs that were validated here are the ones actually connected to,
+ * closing the validate-then-connect TOCTOU window.
+ */
+export async function resolveAndValidateHost(
+  hostname: string,
+  lookupAll: DnsLookupAll = defaultDnsLookupAll
+): Promise<ResolvedAddress[]> {
+  let host = hostname.trim();
+  if (host.startsWith("[") && host.endsWith("]")) {
+    host = host.slice(1, -1);
+  }
+
+  // IP literals skip DNS but are still validated directly.
+  if (isPrivateOrLoopbackHost(host)) {
+    throw new Error(`Host resolves to a non-routable address: ${hostname}`);
+  }
+
+  const ipv4 = parseIpv4(host);
+  const isIpLiteral = ipv4 !== null || host.includes(":");
+  if (isIpLiteral) {
+    return [{ address: host, family: host.includes(":") ? 6 : 4 }];
+  }
+
+  const addresses = await lookupAll(host);
+  if (!addresses.length) {
+    throw new Error(`Host did not resolve to any address: ${hostname}`);
+  }
+
+  for (const { address } of addresses) {
+    if (isPrivateOrLoopbackHost(address)) {
+      throw new Error(
+        `Host ${hostname} resolved to a non-routable address: ${address}`
+      );
+    }
+  }
+
+  return addresses;
 }
 
 /**

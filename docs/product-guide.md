@@ -64,6 +64,11 @@ API tokens default to `*` scope from the web UI. Draft upload and deletion
 accept tokens with `*`, `draft:*`, or `draft:write`; draft list and lookup
 accept tokens with `*`, `draft:*`, or `draft:read`.
 
+Revoking a token in **Settings -> API Tokens** is a soft-revoke: the token row
+is preserved for audit (shown with a **Revoked** badge and revocation date) but
+is immediately rejected for authentication. Revoked tokens cannot be revoked
+again and are never reactivated — create a new token instead.
+
 ## Publishing A Single Authenticated HTML Draft
 
 Draft publishing is optimized for agent output:
@@ -108,6 +113,48 @@ file tree, history, or share dialog.
 
 Open **Drafts** in the authenticated web app to search owner drafts, open a
 draft URL, copy its URL, or delete the draft record and stored HTML.
+
+## Collecting Form Responses From Hosted Pages
+
+Hosted drafts (and user-owned repos) can collect form submissions back into
+docs-share. Collection is **opt-in per collection name** — a draft only accepts
+submissions to a collection its owner has explicitly enabled.
+
+Workflow:
+
+1. Open **Drafts → Forms** for a draft in the authenticated web app.
+2. Enable a collection name (a safe slug such as `contact` or `rsvp`).
+3. Have the hosted page POST JSON to the public ingestion endpoint:
+
+   ```js
+   await fetch(
+     "https://docs.example.com/api/sites/draft:<draftId>/data/contact",
+     {
+       method: "POST",
+       headers: { "Content-Type": "application/json" },
+       body: JSON.stringify({ name: "Ada", email: "ada@example.com" }),
+     }
+   );
+   ```
+
+4. View, filter by collection, and soft-delete submissions on the same page.
+
+The ingestion endpoint is intentionally public (no auth) so a sandboxed hosted
+page can call it, but it is hardened:
+
+- The target (`draft:<id>` or `repo:<id>`) must exist and the named collection
+  must be enabled by its owner, otherwise the request is rejected with `404`.
+- Submissions must be a flat JSON object of scalar fields (string/number/
+  boolean/null). Nested objects, arrays, empty bodies, oversized fields, and
+  oversized payloads are rejected with `400`.
+- Per-visitor and global fixed-window rate limits return `429` on abuse.
+- Only a hashed visitor identifier (HMAC of IP + user agent) is stored — never
+  a raw IP or any PII beyond the fields the form itself submits.
+
+The draft viewer's sandbox CSP is tightened to permit `connect-src` only to the
+docs-share API origin (plus `'self'`), so an opted-in form can POST back to
+docs-share but a compromised page cannot exfiltrate to an arbitrary server. The
+iframe sandbox stays `allow-scripts` only (never `allow-same-origin`).
 
 ## Uploading Static HTML Bundles
 
@@ -166,6 +213,31 @@ docs-share push ./site --to personal/plans/migration --message "Update migration
 
 If the uploaded content has not changed, the server reports that no file changes
 were detected.
+
+## Restoring A Previous Version
+
+Repositories are Git-backed, so any earlier version of a file can be brought
+back without rewriting history.
+
+- Open a file on the preview page and click **History**.
+- On any older commit, click **Restore this version**. The server checks out the
+  file content from that commit and records it as a **new** commit on top of the
+  current history. Nothing is lost — the intervening versions remain in the log.
+
+The API endpoint is `POST /api/files/:repoId/restore` with body
+`{ "sha": "<commit>", "path": "<file path>" }`. Omit `path` to restore the whole
+repository tree to the chosen revision.
+
+## Duplicating Files And Drafts
+
+- **Repository file or folder**: `POST /api/files/:repoId/copy` with body
+  `{ "sourcePath": "a.html", "targetPath": "b.html" }`. The copy is committed as
+  a new commit and indexed as an independent blob. Pass `targetRepoId` to copy
+  into another repository you can write to.
+- **Draft**: in the **Drafts** view choose **Duplicate**, or run
+  `docs-share draft-duplicate <draftId>`. This copies the stored HTML into a new
+  draft titled `"<original> (copy)"`; the copy is fully independent of the
+  original.
 
 ## Deleting Files And Folders
 

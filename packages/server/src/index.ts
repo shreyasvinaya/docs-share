@@ -13,12 +13,19 @@ import fileRoutes from "./routes/files.js";
 import draftRoutes, { renderDraftPage, serveDraftContent } from "./routes/drafts.js";
 import shareRoutes from "./routes/shares.js";
 import webhookRoutes from "./routes/webhooks.js";
+import siteDataRoutes from "./routes/siteData.js";
+import auditRoutes from "./routes/audit.js";
 import internalRoutes from "./routes/internal.js";
 import viewRoutes from "./routes/view.js";
 import setupRoutes from "./routes/setup.js";
+import adminRoutes from "./routes/admin.js";
 import gitRoutes from "./git/smartHttp.js";
 import { ensureRepoDir } from "./git/repoManager.js";
+import { startScheduler } from "./services/scheduler.js";
+import { openApiSpec } from "./docs/openapi.js";
+import { buildLlmsTxt } from "./docs/llms.js";
 import { config } from "./lib/config.js";
+import { publicRateLimiter } from "./lib/rateLimiters.js";
 import { resolveInside } from "./lib/security.js";
 import type { AppEnv } from "./lib/types.js";
 
@@ -26,10 +33,25 @@ const app = new Hono<AppEnv>();
 
 app.use("*", logger());
 app.use("*", secureHeaders());
-app.use(
-  "/api/*",
-  cors({ origin: config.APP_URL, credentials: true })
-);
+// Public, opt-in form ingestion is callable from sandboxed hosted pages whose
+// iframe origin is opaque ("null"). Allow cross-origin POSTs WITHOUT
+// credentials for this single endpoint only; it stores no cookies/session and
+// is hardened by validation, rate limiting, and per-collection opt-in. The
+// general /api CORS (credentialed, APP_URL-only) is skipped for this path so
+// the two policies never collide.
+const ingestionCors = cors({
+  origin: "*",
+  allowMethods: ["POST", "OPTIONS"],
+  allowHeaders: ["Content-Type"],
+  credentials: false,
+});
+const ingestionPathRe = /^\/api\/sites\/[^/]+\/data\/[^/]+$/;
+const apiCors = cors({ origin: config.APP_URL, credentials: true });
+
+app.use("/api/*", (c, next) => {
+  if (ingestionPathRe.test(c.req.path)) return ingestionCors(c, next);
+  return apiCors(c, next);
+});
 app.use("*", sessionMiddleware);
 
 app.route("/api/auth", authRoutes);
@@ -41,19 +63,27 @@ app.route("/api/files", fileRoutes);
 app.route("/api/drafts", draftRoutes);
 app.route("/api/shares", shareRoutes);
 app.route("/api/webhooks", webhookRoutes);
+// Rate-limit the public, unauthenticated form-ingestion write specifically.
+// This matches only POST /api/sites/:target/data/:collection, so the
+// credentialed owner endpoints under /api/sites are unaffected. The route also
+// keeps its own per-visitor/global in-route limiter as defense in depth.
+app.post("/api/sites/:target/data/:collection", publicRateLimiter);
+app.route("/api/sites", siteDataRoutes);
+app.route("/api/audit", auditRoutes);
 app.route("/api/setup", setupRoutes);
+app.route("/api/admin", adminRoutes);
 
 app.route("/git", gitRoutes);
 app.route("/internal", internalRoutes);
 app.route("/view", viewRoutes);
 
-app.get("/d/:draftId", async (c) => {
+app.get("/d/:draftId", publicRateLimiter, async (c) => {
   const userId = c.get("userId");
   if (!userId) return c.redirect(`/login?next=${encodeURIComponent(c.req.path)}`);
-  return renderDraftPage(c.req.param("draftId"), userId);
+  return renderDraftPage(c.req.param("draftId"), userId, c.req.raw);
 });
 
-app.get("/draft-content/:draftId", (c) =>
+app.get("/draft-content/:draftId", publicRateLimiter, (c) =>
   serveDraftContent(
     c.req.param("draftId"),
     c.req.query("exp"),
@@ -62,6 +92,17 @@ app.get("/draft-content/:draftId", (c) =>
 );
 
 app.get("/health", (c) => c.json({ ok: true }));
+
+// Public API documentation. The OpenAPI spec covers every endpoint; llms.txt
+// is a concise machine-readable summary for LLMs and agents.
+app.get("/openapi.json", (c) => c.json(openApiSpec));
+
+app.get("/llms.txt", (c) =>
+  c.text(buildLlmsTxt({ appUrl: config.APP_URL, apiUrl: config.API_URL }), 200, {
+    "Content-Type": "text/plain; charset=utf-8",
+    "Cache-Control": "public, max-age=3600",
+  })
+);
 
 function staticContentType(path: string): string {
   const ext = path.split(".").pop()?.toLowerCase();
@@ -117,6 +158,13 @@ if (config.WEB_DIST_DIR) {
 }
 
 await ensureRepoDir();
+
+// Start background jobs only when running as the entrypoint, not when this
+// module is imported (e.g. by tests or tooling). `startScheduler` additionally
+// no-ops when SCHEDULER_ENABLED is false.
+if (import.meta.main) {
+  startScheduler();
+}
 
 export default {
   port: config.PORT,

@@ -1,8 +1,17 @@
 import { createHmac, randomBytes, timingSafeEqual } from "crypto";
+import { request as httpsRequest } from "https";
+import { request as httpRequest, type IncomingMessage } from "http";
+import type { LookupFunction } from "net";
 import { eq } from "drizzle-orm";
 import { db, schema } from "../db/index.js";
 import { generateId } from "../lib/crypto.js";
-import { validateWebhookUrl } from "../lib/security.js";
+import {
+  isProduction,
+  resolveAndValidateHost,
+  validateWebhookUrl,
+  type DnsLookupAll,
+  type ResolvedAddress,
+} from "../lib/security.js";
 import type { WebhookEvent } from "@docs-share/shared";
 
 const SIGNATURE_HEADER = "X-DocsShare-Signature";
@@ -63,16 +72,117 @@ interface DeliveryOutcome {
   error: string | null;
 }
 
+interface PinnedRequest {
+  url: URL;
+  /** The DNS-validated IP the socket MUST connect to (anti-rebinding pin). */
+  pinnedAddress: ResolvedAddress;
+  headers: Record<string, string>;
+  body: string;
+}
+
+interface PinnedResponse {
+  statusCode: number;
+}
+
+/**
+ * Low-level single HTTP(S) request that PINS the TCP connection to a
+ * pre-validated IP. We pass a custom `lookup` to node's http(s) agent options
+ * that ignores the hostname and always returns `pinnedAddress`. This guarantees
+ * the socket connects to the exact IP we validated against the SSRF guard, so
+ * DNS cannot be swapped between validation and connect (no TOCTOU). The original
+ * Host header and TLS SNI/servername are preserved (we do NOT rewrite the URL to
+ * the IP), so TLS certificate validation still happens against the real
+ * hostname. Injectable for tests.
+ */
+export type PinnedRequestSender = (
+  req: PinnedRequest
+) => Promise<PinnedResponse>;
+
+const defaultSendPinnedRequest: PinnedRequestSender = (req) => {
+  return new Promise<PinnedResponse>((resolvePromise, reject) => {
+    const isHttps = req.url.protocol === "https:";
+
+    // Custom lookup pins every connection attempt to the validated IP. node's
+    // http(s) agent calls this instead of dns.lookup; returning only the pinned
+    // address means the socket can never connect to a rebound/internal IP.
+    const pinnedLookup: LookupFunction = (_hostname, _options, callback) => {
+      // Signature matches dns.lookup's (err, address, family) callback.
+      (callback as (err: Error | null, address: string, family: number) => void)(
+        null,
+        req.pinnedAddress.address,
+        req.pinnedAddress.family
+      );
+    };
+
+    const options = {
+      method: "POST",
+      headers: req.headers,
+      // Preserve cert validation against the real hostname for TLS.
+      servername: isHttps ? req.url.hostname : undefined,
+      lookup: pinnedLookup,
+      timeout: REQUEST_TIMEOUT_MS,
+    };
+
+    const onResponse = (res: IncomingMessage) => {
+      // Reject redirects (parity with the previous redirect:"error").
+      const code = res.statusCode ?? 0;
+      if (code >= 300 && code < 400) {
+        res.resume();
+        reject(new Error(`Webhook redirect not allowed (status ${code})`));
+        return;
+      }
+      // Drain and discard the body; we only care about the status code.
+      res.resume();
+      res.on("end", () => resolvePromise({ statusCode: code }));
+      res.on("error", reject);
+    };
+
+    const clientReq = isHttps
+      ? httpsRequest(req.url, options, onResponse)
+      : httpRequest(req.url, options, onResponse);
+
+    clientReq.on("timeout", () => {
+      clientReq.destroy(new Error("Webhook request timed out"));
+    });
+    clientReq.on("error", reject);
+    clientReq.write(req.body);
+    clientReq.end();
+  });
+};
+
 /**
  * POSTs a signed payload to a single webhook URL with bounded retries and
- * exponential backoff. Returns the final delivery outcome. The URL is
- * re-validated for SSRF safety before each send.
+ * exponential backoff. Returns the final delivery outcome.
+ *
+ * SSRF / DNS-rebinding hardening before every send:
+ *  1. URL-shape validation (validateWebhookUrl) — http(s) only, no creds, and
+ *     no IP-literal internal hosts.
+ *  2. https-only is enforced in production; http is permitted in dev.
+ *  3. DNS is resolved and EVERY resolved address is checked against the
+ *     private/loopback guard (resolveAndValidateHost) — a public hostname that
+ *     resolves to an internal IP is rejected and no request is sent.
+ *  4. The connection is PINNED to a validated resolved IP via a custom agent
+ *     lookup, so the IP that was validated is the IP actually connected to
+ *     (closes the validate-then-connect TOCTOU). The Host header / TLS SNI is
+ *     preserved for certificate validation.
+ *
+ * `lookupAll` and `sendRequest` are injectable for testing.
  */
-export async function deliverWebhook(params: {
-  url: string;
-  secret: string;
-  body: string;
-}): Promise<DeliveryOutcome> {
+export async function deliverWebhook(
+  params: {
+    url: string;
+    secret: string;
+    body: string;
+  },
+  deps: {
+    lookupAll?: DnsLookupAll;
+    sendRequest?: PinnedRequestSender;
+    isProductionEnv?: boolean;
+  } = {}
+): Promise<DeliveryOutcome> {
+  const sendRequest = deps.sendRequest ?? defaultSendPinnedRequest;
+  const inProduction = deps.isProductionEnv ?? isProduction();
+
   const safeUrl = validateWebhookUrl(params.url);
   if (!safeUrl) {
     return {
@@ -83,29 +193,65 @@ export async function deliverWebhook(params: {
     };
   }
 
+  const parsedUrl = new URL(safeUrl);
+
+  // Enforce https in production; allow http only in dev.
+  if (inProduction && parsedUrl.protocol !== "https:") {
+    return {
+      status: "failed",
+      responseCode: null,
+      attempts: 0,
+      error: "Webhook URL must use https in production",
+    };
+  }
+
+  // Resolve DNS and validate ALL addresses, then pin to the first validated IP.
+  // Done before sending so a hostname that resolves to a private IP never gets
+  // a connection attempt.
+  let pinnedAddress: ResolvedAddress;
+  try {
+    const addresses = await resolveAndValidateHost(
+      parsedUrl.hostname,
+      deps.lookupAll
+    );
+    pinnedAddress = addresses[0];
+  } catch (error) {
+    return {
+      status: "failed",
+      responseCode: null,
+      attempts: 0,
+      error: error instanceof Error ? error.message : String(error),
+    };
+  }
+
   const signature = signWebhookPayload(params.body, params.secret);
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+    "User-Agent": "docs-share-webhooks",
+    [SIGNATURE_HEADER]: signature,
+  };
   let lastError: string | null = null;
   let lastCode: number | null = null;
 
   for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt += 1) {
     try {
-      const res = await fetch(safeUrl, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "User-Agent": "docs-share-webhooks",
-          [SIGNATURE_HEADER]: signature,
-        },
+      const res = await sendRequest({
+        url: parsedUrl,
+        pinnedAddress,
+        headers,
         body: params.body,
-        redirect: "error",
-        signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
       });
 
-      lastCode = res.status;
-      if (res.ok) {
-        return { status: "success", responseCode: res.status, attempts: attempt, error: null };
+      lastCode = res.statusCode;
+      if (res.statusCode >= 200 && res.statusCode < 300) {
+        return {
+          status: "success",
+          responseCode: res.statusCode,
+          attempts: attempt,
+          error: null,
+        };
       }
-      lastError = `Webhook responded with ${res.status}`;
+      lastError = `Webhook responded with ${res.statusCode}`;
     } catch (error) {
       lastError = error instanceof Error ? error.message : String(error);
     }

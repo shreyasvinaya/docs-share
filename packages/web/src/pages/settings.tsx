@@ -445,45 +445,67 @@ function TokensTab() {
           <p className="text-sm text-muted-foreground">Loading tokens...</p>
         ) : tokens && tokens.length > 0 ? (
           <div className="rounded-lg border border-border">
-            {tokens.map((token, i) => (
-              <div
-                key={token.id}
-                className={`flex items-center justify-between px-4 py-3 ${
-                  i < tokens.length - 1 ? "border-b border-border" : ""
-                }`}
-              >
-                <div>
-                  <p className="text-sm font-medium">{token.name}</p>
-                  <div className="mt-0.5 flex items-center gap-3 text-xs text-muted-foreground">
-                    <span className="font-mono">{token.tokenPrefix}...</span>
-                    <span>
-                      Created{" "}
-                      {new Date(token.createdAt).toLocaleDateString()}
-                    </span>
-                    {token.lastUsedAt && (
-                      <span>
-                        Last used{" "}
-                        {new Date(token.lastUsedAt).toLocaleDateString()}
-                      </span>
-                    )}
-                    {token.expiresAt && (
-                      <span>
-                        Expires{" "}
-                        {new Date(token.expiresAt).toLocaleDateString()}
-                      </span>
-                    )}
-                  </div>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => revokeToken.mutate(token.id)}
-                  disabled={revokeToken.isPending}
-                  className="text-sm text-destructive transition-colors hover:text-destructive/80"
+            {tokens.map((token, i) => {
+              const isRevoked = !!token.revokedAt;
+              return (
+                <div
+                  key={token.id}
+                  className={`flex items-center justify-between px-4 py-3 ${
+                    i < tokens.length - 1 ? "border-b border-border" : ""
+                  } ${isRevoked ? "opacity-60" : ""}`}
                 >
-                  Revoke
-                </button>
-              </div>
-            ))}
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <p className="text-sm font-medium">{token.name}</p>
+                      {isRevoked && (
+                        <span className="rounded-full bg-destructive/10 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-destructive">
+                          Revoked
+                        </span>
+                      )}
+                    </div>
+                    <div className="mt-0.5 flex items-center gap-3 text-xs text-muted-foreground">
+                      <span className="font-mono">{token.tokenPrefix}...</span>
+                      <span>
+                        Created{" "}
+                        {new Date(token.createdAt).toLocaleDateString()}
+                      </span>
+                      {token.lastUsedAt && (
+                        <span>
+                          Last used{" "}
+                          {new Date(token.lastUsedAt).toLocaleDateString()}
+                        </span>
+                      )}
+                      {token.expiresAt && (
+                        <span>
+                          Expires{" "}
+                          {new Date(token.expiresAt).toLocaleDateString()}
+                        </span>
+                      )}
+                      {isRevoked && token.revokedAt && (
+                        <span>
+                          Revoked{" "}
+                          {new Date(token.revokedAt).toLocaleDateString()}
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                  {isRevoked ? (
+                    <span className="text-sm text-muted-foreground">
+                      Revoked
+                    </span>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => revokeToken.mutate(token.id)}
+                      disabled={revokeToken.isPending}
+                      className="text-sm text-destructive transition-colors hover:text-destructive/80"
+                    >
+                      Revoke
+                    </button>
+                  )}
+                </div>
+              );
+            })}
           </div>
         ) : (
           <p className="rounded-lg border border-border px-4 py-8 text-center text-sm text-muted-foreground">

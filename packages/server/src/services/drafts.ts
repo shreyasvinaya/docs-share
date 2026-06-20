@@ -1,4 +1,5 @@
 import { basename, extname } from "path";
+import { siteDataConnectSrc } from "./siteData.js";
 
 export const DRAFT_PATH_PREFIX = "_drafts";
 export const MAX_DRAFT_UPLOAD_BYTES = 10 * 1024 * 1024;
@@ -118,12 +119,24 @@ export function buildDraftShellHtml(params: {
 </html>`;
 }
 
-export function draftContentSecurityHeaders(): Record<string, string> {
+/**
+ * CSP for sandboxed hosted draft content.
+ *
+ * The sandbox stays `allow-scripts` ONLY — never `allow-same-origin` — so the
+ * page runs with an opaque origin and cannot read host cookies/DOM. We add a
+ * tight `connect-src 'self' <apiOrigin>` so an opted-in form can POST back to
+ * the docs-share ingestion endpoint, but NOT to arbitrary attacker servers
+ * (no wildcard), preventing data exfiltration if the page is compromised.
+ */
+export function draftContentSecurityHeaders(
+  apiOrigin?: string
+): Record<string, string> {
+  const connectSrc = apiOrigin ? `${siteDataConnectSrc(apiOrigin)}; ` : "";
   return {
     "Content-Type": "text/html; charset=utf-8",
     "Cache-Control": "private, no-store",
     "Content-Security-Policy":
-      "sandbox allow-scripts; default-src 'self' data: blob:; script-src 'unsafe-inline' 'unsafe-eval' data: blob:; style-src 'unsafe-inline' data:; img-src 'self' data: blob:;",
+      `sandbox allow-scripts; default-src 'self' data: blob:; script-src 'unsafe-inline' 'unsafe-eval' data: blob:; style-src 'unsafe-inline' data:; img-src 'self' data: blob:; ${connectSrc}`.trimEnd(),
     "Referrer-Policy": "no-referrer",
     "X-Content-Type-Options": "nosniff",
   };

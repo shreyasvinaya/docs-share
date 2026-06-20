@@ -1,7 +1,8 @@
 import { Hono } from "hono";
-import { eq, and, isNull, inArray } from "drizzle-orm";
+import { eq, and, isNull, inArray, or } from "drizzle-orm";
 import { db, schema } from "../db/index.js";
 import { requireAuth } from "../middleware/requireAuth.js";
+import { publicRateLimiter } from "../lib/rateLimiters.js";
 import { generateId, generatePublicToken, hashToken } from "../lib/crypto.js";
 import { config } from "../lib/config.js";
 import {
@@ -11,6 +12,10 @@ import {
   sendSlackNotification,
 } from "../services/notifications.js";
 import { dispatchWebhookEvent } from "../services/webhooks.js";
+import {
+  aggregateViewStats,
+  recordAuditEntrySafe,
+} from "../services/analytics.js";
 import type { AppEnv } from "../lib/types.js";
 
 const app = new Hono<AppEnv>();
@@ -257,6 +262,19 @@ app.post("/", requireAuth, async (c) => {
       recipientEmails: emails,
     });
 
+    recordAuditEntrySafe({
+      actorUserId: userId,
+      action: "share.created",
+      targetType: "share",
+      targetId: shareId,
+      metadata: {
+        shareType: "email",
+        repoId,
+        path: path || null,
+        recipientCount: emails.length,
+      },
+    });
+
     return c.json({ data: { ...share, recipients } }, 201);
   }
 
@@ -343,6 +361,14 @@ app.post("/", requireAuth, async (c) => {
         path: path || null,
       });
 
+      recordAuditEntrySafe({
+        actorUserId: userId,
+        action: "share.updated",
+        targetType: "share",
+        targetId: existingShare.id,
+        metadata: { shareType: "public_link", repoId, path: path || null, linkAccess: access },
+      });
+
       return c.json({ data: { ...updated, publicToken: updated!.publicToken } });
     }
 
@@ -394,6 +420,14 @@ app.post("/", requireAuth, async (c) => {
       shareType: "public_link",
       permission: "read",
       path: path || null,
+    });
+
+    recordAuditEntrySafe({
+      actorUserId: userId,
+      action: "share.created",
+      targetType: "share",
+      targetId: shareId,
+      metadata: { shareType: "public_link", repoId, path: path || null, linkAccess: access },
     });
 
     return c.json({ data: { ...share, publicToken } }, 201);
@@ -477,6 +511,14 @@ app.post("/", requireAuth, async (c) => {
         path: path || null,
       });
 
+      recordAuditEntrySafe({
+        actorUserId: userId,
+        action: "share.updated",
+        targetType: "share",
+        targetId: existingShare.id,
+        metadata: { shareType: "team", repoId, path: path || null, teamId },
+      });
+
       return c.json({ data: share });
     }
 
@@ -508,6 +550,14 @@ app.post("/", requireAuth, async (c) => {
       shareType: "team",
       permission: sharePermission,
       path: path || null,
+    });
+
+    recordAuditEntrySafe({
+      actorUserId: userId,
+      action: "share.created",
+      targetType: "share",
+      targetId: shareId,
+      metadata: { shareType: "team", repoId, path: path || null, teamId },
     });
 
     return c.json({ data: share }, 201);
@@ -590,6 +640,73 @@ app.get("/incoming", requireAuth, async (c) => {
 });
 
 /**
+ * POST /:shareId/accept — Accept an email share addressed to the current user.
+ * Stamps `acceptedAt` on the matching recipient row and links the recipient to
+ * the user account. Idempotent: re-accepting keeps the original timestamp.
+ */
+app.post("/:shareId/accept", requireAuth, async (c) => {
+  const userId = c.get("userId");
+  const shareId = c.req.param("shareId");
+
+  const user = await db
+    .select()
+    .from(schema.users)
+    .where(eq(schema.users.id, userId))
+    .get();
+  if (!user) {
+    return c.json({ error: "User not found" }, 404);
+  }
+
+  // Only match a recipient row that is either unclaimed or already claimed by
+  // this same user. A row claimed by a different user (userId set to someone
+  // else) must not be matched, so it can't be re-updated/hijacked.
+  const recipient = await db
+    .select()
+    .from(schema.shareRecipients)
+    .where(
+      and(
+        eq(schema.shareRecipients.shareId, shareId),
+        eq(schema.shareRecipients.email, user.email),
+        or(
+          isNull(schema.shareRecipients.userId),
+          eq(schema.shareRecipients.userId, userId)
+        )
+      )
+    )
+    .get();
+
+  if (!recipient) {
+    return c.json({ error: "Share recipient not found" }, 404);
+  }
+
+  if (!recipient.acceptedAt) {
+    // Re-assert the unclaimed/own-claim guard at write time so a concurrent
+    // accept can't clobber a row another user just claimed.
+    await db
+      .update(schema.shareRecipients)
+      .set({ acceptedAt: new Date().toISOString(), userId })
+      .where(
+        and(
+          eq(schema.shareRecipients.id, recipient.id),
+          or(
+            isNull(schema.shareRecipients.userId),
+            eq(schema.shareRecipients.userId, userId)
+          )
+        )
+      )
+      .run();
+  }
+
+  const updated = await db
+    .select()
+    .from(schema.shareRecipients)
+    .where(eq(schema.shareRecipients.id, recipient.id))
+    .get();
+
+  return c.json({ data: updated });
+});
+
+/**
  * DELETE /:shareId — Revoke share. Requires auth + must be creator.
  */
 app.delete("/:shareId", requireAuth, async (c) => {
@@ -623,13 +740,55 @@ app.delete("/:shareId", requireAuth, async (c) => {
     },
   });
 
+  recordAuditEntrySafe({
+    actorUserId: userId,
+    action: "share.revoked",
+    targetType: "share",
+    targetId: shareId,
+    metadata: { shareType: share.shareType, repoId: share.repoId, path: share.path },
+  });
+
   return c.json({ data: { deleted: true } });
+});
+
+/**
+ * GET /:shareId/analytics — View metrics for a share, restricted to its creator.
+ *
+ * Intentionally OWNER-ONLY: per-share analytics are scoped to the share creator
+ * and are deliberately NOT widened to sysadmins. Sysadmins use the audit log
+ * (cross-actor, no per-visitor data) for oversight, not per-share view metrics.
+ */
+app.get("/:shareId/analytics", requireAuth, async (c) => {
+  const userId = c.get("userId");
+  const shareId = c.req.param("shareId");
+
+  const share = await db
+    .select()
+    .from(schema.shares)
+    .where(eq(schema.shares.id, shareId))
+    .get();
+
+  if (!share) {
+    return c.json({ error: "Share not found" }, 404);
+  }
+
+  // Owner-only gate (see handler doc): do not widen to sysadmins.
+  if (share.createdById !== userId) {
+    return c.json({ error: "Only the creator can view analytics" }, 403);
+  }
+
+  // public_link views are recorded under the "public" target type; all other
+  // share types are recorded under "share". Pick the matching bucket.
+  const targetType = share.shareType === "public_link" ? "public" : "share";
+  const stats = await aggregateViewStats(targetType, share.id);
+
+  return c.json({ data: stats });
 });
 
 /**
  * GET /public/:token — Resolve public share link metadata. No auth required.
  */
-app.get("/public/:token", async (c) => {
+app.get("/public/:token", publicRateLimiter, async (c) => {
   const token = c.req.param("token");
 
   const share = await db

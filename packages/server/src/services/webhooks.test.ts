@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { createHmac } from "crypto";
 import {
   buildWebhookPayload,
+  deliverWebhook,
   generateWebhookSecret,
   signWebhookPayload,
   verifyWebhookSignature,
@@ -55,5 +56,155 @@ describe("webhook payload shape", () => {
     expect(parsed.data).toEqual({ shareId: "sh_1", shareType: "email" });
     expect(typeof parsed.deliveredAt).toBe("string");
     expect(Number.isNaN(Date.parse(parsed.deliveredAt))).toBe(false);
+  });
+});
+
+describe("deliverWebhook SSRF / DNS-rebinding guard", () => {
+  const baseParams = {
+    url: "https://hooks.example.com/in",
+    secret: "whsec_test_secret",
+    body: JSON.stringify({ event: "share.created" }),
+  };
+
+  test("rejects a hostname that resolves to a private IP without sending", async () => {
+    let requestSent = false;
+
+    const outcome = await deliverWebhook(baseParams, {
+      // Public-looking host that resolves to an internal IP (DNS rebinding).
+      lookupAll: async () => [{ address: "169.254.169.254", family: 4 }],
+      sendRequest: async () => {
+        requestSent = true;
+        return { statusCode: 200 };
+      },
+      isProductionEnv: false,
+    });
+
+    expect(requestSent).toBe(false);
+    expect(outcome.status).toBe("failed");
+    expect(outcome.responseCode).toBeNull();
+    expect(outcome.attempts).toBe(0);
+    expect(outcome.error).toContain("non-routable");
+  });
+
+  test("rejects when ANY resolved address is private (mixed result)", async () => {
+    let requestSent = false;
+
+    const outcome = await deliverWebhook(baseParams, {
+      lookupAll: async () => [
+        { address: "93.184.216.34", family: 4 },
+        { address: "10.0.0.5", family: 4 },
+      ],
+      sendRequest: async () => {
+        requestSent = true;
+        return { statusCode: 200 };
+      },
+      isProductionEnv: false,
+    });
+
+    expect(requestSent).toBe(false);
+    expect(outcome.status).toBe("failed");
+    expect(outcome.error).toContain("non-routable");
+  });
+
+  test("accepts a public-resolving host and pins the connection to the validated IP", async () => {
+    let pinnedAddress = "";
+    let requestedHost = "";
+
+    const outcome = await deliverWebhook(baseParams, {
+      lookupAll: async () => [{ address: "93.184.216.34", family: 4 }],
+      sendRequest: async (req) => {
+        // The sender receives the pre-validated IP to pin the socket to, while
+        // the URL/Host stays the original hostname for TLS cert validation.
+        pinnedAddress = req.pinnedAddress.address;
+        requestedHost = req.url.hostname;
+        return { statusCode: 200 };
+      },
+      isProductionEnv: false,
+    });
+
+    expect(outcome.status).toBe("success");
+    expect(outcome.responseCode).toBe(200);
+    expect(outcome.attempts).toBe(1);
+    expect(pinnedAddress).toBe("93.184.216.34");
+    expect(requestedHost).toBe("hooks.example.com");
+  });
+
+  test("signs the delivered body with the webhook secret", async () => {
+    let sentSignature: string | undefined;
+
+    await deliverWebhook(baseParams, {
+      lookupAll: async () => [{ address: "93.184.216.34", family: 4 }],
+      sendRequest: async (req) => {
+        sentSignature = req.headers["X-DocsShare-Signature"];
+        return { statusCode: 200 };
+      },
+      isProductionEnv: false,
+    });
+
+    expect(sentSignature).toBe(signWebhookPayload(baseParams.body, baseParams.secret));
+  });
+
+  test("enforces https-only in production", async () => {
+    let requestSent = false;
+
+    const outcome = await deliverWebhook(
+      { ...baseParams, url: "http://hooks.example.com/in" },
+      {
+        lookupAll: async () => [{ address: "93.184.216.34", family: 4 }],
+        sendRequest: async () => {
+          requestSent = true;
+          return { statusCode: 200 };
+        },
+        isProductionEnv: true,
+      }
+    );
+
+    expect(requestSent).toBe(false);
+    expect(outcome.status).toBe("failed");
+    expect(outcome.error).toContain("https");
+  });
+
+  test("allows http in development", async () => {
+    let requestSent = false;
+
+    const outcome = await deliverWebhook(
+      { ...baseParams, url: "http://hooks.example.com/in" },
+      {
+        lookupAll: async () => [{ address: "93.184.216.34", family: 4 }],
+        sendRequest: async () => {
+          requestSent = true;
+          return { statusCode: 200 };
+        },
+        isProductionEnv: false,
+      }
+    );
+
+    expect(requestSent).toBe(true);
+    expect(outcome.status).toBe("success");
+  });
+
+  test("rejects an IP-literal internal URL at validation (no DNS, no send)", async () => {
+    let lookupCalled = false;
+    let requestSent = false;
+
+    const outcome = await deliverWebhook(
+      { ...baseParams, url: "http://127.0.0.1/hook" },
+      {
+        lookupAll: async () => {
+          lookupCalled = true;
+          return [{ address: "8.8.8.8", family: 4 }];
+        },
+        sendRequest: async () => {
+          requestSent = true;
+          return { statusCode: 200 };
+        },
+        isProductionEnv: false,
+      }
+    );
+
+    expect(lookupCalled).toBe(false);
+    expect(requestSent).toBe(false);
+    expect(outcome.status).toBe("failed");
+    expect(outcome.error).toContain("validation");
   });
 });

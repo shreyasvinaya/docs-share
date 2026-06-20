@@ -1,7 +1,27 @@
 import { useMemo, useState } from "react";
+import { Link } from "react-router";
 import type { DraftListItem } from "@docs-share/shared";
 import { EmptyState } from "@/components/common/empty-state";
-import { useDeleteDraft, useDrafts } from "@/hooks/use-drafts";
+import {
+  useDeleteDraft,
+  useDrafts,
+  useDuplicateDraft,
+} from "@/hooks/use-drafts";
+import { useDraftAnalytics } from "@/hooks/use-analytics";
+import { formatLastOpened, formatViewSummary } from "@/lib/view-analytics";
+
+function DraftViewStat({ draftId }: { draftId: string }) {
+  const { data: stats } = useDraftAnalytics(draftId);
+  if (!stats) return null;
+  return (
+    <span className="truncate">
+      {formatViewSummary(stats)}
+      {stats.lastViewedAt
+        ? ` · Last opened ${formatLastOpened(stats.lastViewedAt)}`
+        : ""}
+    </span>
+  );
+}
 
 function formatBytes(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
@@ -29,6 +49,7 @@ function matchesDraft(draft: DraftListItem, query: string): boolean {
 export function DraftsPage() {
   const { data: drafts, isLoading, isError } = useDrafts();
   const deleteDraft = useDeleteDraft();
+  const duplicateDraft = useDuplicateDraft();
   const [query, setQuery] = useState("");
   const [copiedDraftId, setCopiedDraftId] = useState<string | null>(null);
 
@@ -46,6 +67,10 @@ export function DraftsPage() {
   const handleDelete = (draft: DraftListItem) => {
     if (!window.confirm(`Delete "${draft.title}"?`)) return;
     deleteDraft.mutate(draft.id);
+  };
+
+  const handleDuplicate = (draft: DraftListItem) => {
+    duplicateDraft.mutate(draft.id);
   };
 
   return (
@@ -105,6 +130,7 @@ export function DraftsPage() {
                     <span className="truncate">{draft.sourceFilename}</span>
                     <span className="lg:hidden">{formatBytes(draft.sizeBytes)}</span>
                     <span className="lg:hidden">{formatDate(draft.createdAt)}</span>
+                    <DraftViewStat draftId={draft.id} />
                   </div>
                 </div>
 
@@ -130,6 +156,20 @@ export function DraftsPage() {
                     className="rounded-lg border border-border px-3 py-1.5 text-sm font-medium transition-colors hover:bg-muted"
                   >
                     {copiedDraftId === draft.id ? "Copied" : "Copy URL"}
+                  </button>
+                  <Link
+                    to={`/drafts/${draft.id}/forms`}
+                    className="rounded-lg border border-border px-3 py-1.5 text-sm font-medium transition-colors hover:bg-muted"
+                  >
+                    Forms
+                  </Link>
+                  <button
+                    type="button"
+                    onClick={() => handleDuplicate(draft)}
+                    disabled={duplicateDraft.isPending}
+                    className="rounded-lg border border-border px-3 py-1.5 text-sm font-medium transition-colors hover:bg-muted disabled:opacity-50"
+                  >
+                    Duplicate
                   </button>
                   <button
                     type="button"
