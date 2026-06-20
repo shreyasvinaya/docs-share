@@ -61,18 +61,26 @@ export function AppSidebar() {
   return (
     <aside
       className={cn(
-        "flex h-full flex-col border-r border-border bg-background transition-all duration-200",
-        collapsed ? "w-16" : "w-60",
+        "flex h-full flex-col border-r border-border bg-[#f7f4eb]/95 shadow-xl shadow-teal-950/5 transition-all duration-200 dark:bg-[#0b1c19]/95",
+        collapsed ? "w-16" : "w-64",
       )}
     >
       <div className="flex h-14 items-center gap-2 border-b border-border px-4">
-        <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-primary text-primary-foreground">
-          <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor">
-            <path strokeLinecap="round" strokeLinejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 00-3.375-3.375h-1.5A1.125 1.125 0 0113.5 7.125v-1.5a3.375 3.375 0 00-3.375-3.375H8.25m0 12.75h7.5m-7.5 3H12M10.5 2.25H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 00-9-9z" />
+        <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-[#0f766e] text-[#fef3c7] shadow-sm">
+          <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" strokeWidth={1.8} stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" d="M12 20c4.5-3.1 7-7.2 7-11.1 0-2.7-2-5.4-7-6.9-5 1.5-7 4.2-7 6.9C5 12.8 7.5 16.9 12 20Z" />
+            <path strokeLinecap="round" strokeLinejoin="round" d="M12 6.5v10M9 9.5c1 .7 2 1 3 1s2-.3 3-1M8.6 13c1.1.8 2.2 1.2 3.4 1.2s2.3-.4 3.4-1.2" />
           </svg>
         </div>
         {!collapsed && (
-          <span className="truncate text-sm font-semibold">{deploymentName}</span>
+          <div className="min-w-0">
+            <span className="block truncate text-sm font-semibold">
+              {deploymentName}
+            </span>
+            <span className="block truncate text-xs text-muted-foreground">
+              docs, drafts, sites
+            </span>
+          </div>
         )}
       </div>
 
@@ -85,10 +93,10 @@ export function AppSidebar() {
                 end={item.to === "/app"}
                 className={({ isActive }) =>
                   cn(
-                    "flex items-center gap-3 rounded-lg px-3 py-2 text-sm transition-colors",
+                    "flex items-center gap-3 rounded-lg border border-transparent px-3 py-2 text-sm transition-colors",
                     isActive
-                      ? "bg-muted font-medium text-foreground"
-                      : "text-muted-foreground hover:bg-muted/50 hover:text-foreground",
+                      ? "border-[#0f766e]/25 bg-[#0f766e] font-medium text-white shadow-sm"
+                      : "text-muted-foreground hover:border-border hover:bg-background/75 hover:text-foreground",
                     collapsed && "justify-center px-0",
                   )
                 }
@@ -116,15 +124,15 @@ export function AppSidebar() {
             title={collapsed ? (user?.displayName ?? "My files") : undefined}
             className={({ isActive }) =>
               cn(
-                "flex items-center gap-3 rounded-lg px-3 py-2 text-sm transition-colors",
+                "flex items-center gap-3 rounded-lg border border-transparent px-3 py-2 text-sm transition-colors",
                 isActive
-                  ? "bg-muted font-medium text-foreground"
-                  : "text-muted-foreground hover:bg-muted/50 hover:text-foreground",
+                  ? "border-[#0f766e]/25 bg-[#0f766e] font-medium text-white shadow-sm"
+                  : "text-muted-foreground hover:border-border hover:bg-background/75 hover:text-foreground",
                 collapsed && "justify-center px-0",
               )
             }
           >
-            <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded bg-muted text-[10px] font-bold uppercase">
+            <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded bg-[#d7a82f]/20 text-[10px] font-bold uppercase text-[#7a5a16] dark:text-[#fde68a]">
               {user?.displayName?.[0] ?? "U"}
             </span>
             {!collapsed && (
@@ -161,15 +169,15 @@ export function AppSidebar() {
                     title={collapsed ? team.name : undefined}
                     className={({ isActive }) =>
                       cn(
-                        "flex items-center gap-3 rounded-lg px-3 py-2 text-sm transition-colors",
+                        "flex items-center gap-3 rounded-lg border border-transparent px-3 py-2 text-sm transition-colors",
                         isActive
-                          ? "bg-muted font-medium text-foreground"
-                          : "text-muted-foreground hover:bg-muted/50 hover:text-foreground",
+                          ? "border-[#0f766e]/25 bg-[#0f766e] font-medium text-white shadow-sm"
+                          : "text-muted-foreground hover:border-border hover:bg-background/75 hover:text-foreground",
                         collapsed && "justify-center px-0",
                       )
                     }
                   >
-                    <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded bg-muted text-[10px] font-bold uppercase">
+                    <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded bg-accent text-[10px] font-bold uppercase text-accent-foreground">
                       {team.name[0]}
                     </span>
                     {!collapsed && <span className="truncate">{team.name}</span>}
@@ -202,10 +210,10 @@ export function AppSidebar() {
                     title={collapsed ? item.label : undefined}
                     className={({ isActive }) =>
                       cn(
-                        "flex items-center gap-3 rounded-lg px-3 py-2 text-sm transition-colors",
+                        "flex items-center gap-3 rounded-lg border border-transparent px-3 py-2 text-sm transition-colors",
                         isActive
-                          ? "bg-muted font-medium text-foreground"
-                          : "text-muted-foreground hover:bg-muted/50 hover:text-foreground",
+                          ? "border-[#0f766e]/25 bg-[#0f766e] font-medium text-white shadow-sm"
+                          : "text-muted-foreground hover:border-border hover:bg-background/75 hover:text-foreground",
                         collapsed && "justify-center px-0",
                       )
                     }
@@ -227,10 +235,10 @@ export function AppSidebar() {
           to="/settings"
           className={({ isActive }) =>
             cn(
-              "flex items-center gap-3 rounded-lg px-3 py-2 text-sm transition-colors",
+              "flex items-center gap-3 rounded-lg border border-transparent px-3 py-2 text-sm transition-colors",
               isActive
-                ? "bg-muted font-medium text-foreground"
-                : "text-muted-foreground hover:bg-muted/50 hover:text-foreground",
+                ? "border-[#0f766e]/25 bg-[#0f766e] font-medium text-white shadow-sm"
+                : "text-muted-foreground hover:border-border hover:bg-background/75 hover:text-foreground",
               collapsed && "justify-center px-0",
             )
           }

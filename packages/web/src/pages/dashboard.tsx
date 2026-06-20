@@ -21,58 +21,80 @@ export function DashboardPage() {
   const recentFiles = (files ?? []).slice(0, 8);
   const recentDrafts = (drafts ?? []).slice(0, 5);
   const recentShared = (incoming ?? []).slice(0, 5);
+  const totalFiles = files?.length ?? 0;
+  const totalDrafts = drafts?.length ?? 0;
+  const totalTeams = teams?.length ?? 0;
+  const totalShared = incoming?.length ?? 0;
 
   return (
-    <div className="mx-auto max-w-5xl p-6">
-      <h1 className="mb-6 text-2xl font-bold">Dashboard</h1>
+    <div className="mx-auto max-w-7xl space-y-8 p-6 lg:p-8">
+      <section className="overflow-hidden rounded-lg border border-border bg-background shadow-xl shadow-teal-950/5">
+        <div className="grid gap-6 bg-[radial-gradient(circle_at_top_right,rgba(20,184,166,0.22),transparent_34%),linear-gradient(135deg,rgba(15,118,110,0.12),rgba(215,168,47,0.10))] p-6 lg:grid-cols-[1fr_360px] lg:p-8">
+          <div>
+            <p className="text-sm font-semibold uppercase tracking-[0.18em] text-[#0f766e] dark:text-[#5eead4]">
+              Workspace
+            </p>
+            <h1 className="mt-3 max-w-3xl text-3xl font-semibold leading-tight sm:text-4xl">
+              Publish, review, and govern every shared artifact from one place.
+            </h1>
+            <p className="mt-4 max-w-2xl text-sm leading-6 text-muted-foreground">
+              Upload static files, inspect private drafts, manage team spaces, and keep API tokens close to the publishing workflow.
+            </p>
+            <div className="mt-6 flex flex-wrap gap-3">
+              <button
+                type="button"
+                onClick={() => navigate("/files")}
+                className="rounded-lg bg-primary px-4 py-2.5 text-sm font-medium text-primary-foreground transition-colors hover:bg-[#115e59]"
+              >
+                Upload HTML
+              </button>
+              <button
+                type="button"
+                onClick={() => navigate("/drafts")}
+                className="rounded-lg border border-border bg-background/80 px-4 py-2.5 text-sm font-medium transition-colors hover:bg-muted"
+              >
+                Review drafts
+              </button>
+              <button
+                type="button"
+                onClick={() => setShowCreateTeam(true)}
+                className="rounded-lg border border-border bg-background/80 px-4 py-2.5 text-sm font-medium transition-colors hover:bg-muted"
+              >
+                Create team
+              </button>
+              <Link
+                to="/settings"
+                className="rounded-lg border border-border bg-background/80 px-4 py-2.5 text-sm font-medium transition-colors hover:bg-muted"
+              >
+                API tokens
+              </Link>
+            </div>
+          </div>
 
-      {/* Quick actions */}
-      <div className="mb-8 flex flex-wrap gap-3">
-        <button
-          type="button"
-          onClick={() => navigate("/files")}
-          className="flex items-center gap-2 rounded-lg border border-border px-4 py-2.5 text-sm font-medium transition-colors hover:bg-muted"
-        >
-          <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
-            <path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5m-13.5-9L12 3m0 0l4.5 4.5M12 3v13.5" />
-          </svg>
-          Upload HTML
-        </button>
-        <button
-          type="button"
-          onClick={() => navigate("/drafts")}
-          className="flex items-center gap-2 rounded-lg border border-border px-4 py-2.5 text-sm font-medium transition-colors hover:bg-muted"
-        >
-          <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
-            <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 4.875c0-.621.504-1.125 1.125-1.125h8.25c.298 0 .585.119.795.33l6 6c.211.21.33.497.33.795v8.25c0 .621-.504 1.125-1.125 1.125H4.875a1.125 1.125 0 01-1.125-1.125V4.875z" />
-            <path strokeLinecap="round" strokeLinejoin="round" d="M13.5 3.75v6.75H20.25M8.25 15h7.5M8.25 17.25h4.5" />
-          </svg>
-          Drafts
-        </button>
-        <button
-          type="button"
-          onClick={() => setShowCreateTeam(true)}
-          className="flex items-center gap-2 rounded-lg border border-border px-4 py-2.5 text-sm font-medium transition-colors hover:bg-muted"
-        >
-          <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
-            <path strokeLinecap="round" strokeLinejoin="round" d="M18 18.72a9.094 9.094 0 003.741-.479 3 3 0 00-4.682-2.72m.94 3.198l.001.031c0 .225-.012.447-.037.666A11.944 11.944 0 0112 21c-2.17 0-4.207-.576-5.963-1.584A6.062 6.062 0 016 18.719m12 0a5.971 5.971 0 00-.941-3.197m0 0A5.995 5.995 0 0012 12.75a5.995 5.995 0 00-5.058 2.772m0 0a3 3 0 00-4.681 2.72 8.986 8.986 0 003.74.477m.94-3.197a5.971 5.971 0 00-.94 3.197M15 6.75a3 3 0 11-6 0 3 3 0 016 0zm6 3a2.25 2.25 0 11-4.5 0 2.25 2.25 0 014.5 0zm-13.5 0a2.25 2.25 0 11-4.5 0 2.25 2.25 0 014.5 0z" />
-          </svg>
-          Create Team
-        </button>
-        <Link
-          to="/settings"
-          className="flex items-center gap-2 rounded-lg border border-border px-4 py-2.5 text-sm font-medium transition-colors hover:bg-muted"
-        >
-          <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
-            <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 5.25a3 3 0 013 3m3 0a6 6 0 01-7.029 5.912c-.563-.097-1.159.026-1.563.43L10.5 17.25H8.25v2.25H6v2.25H2.25v-2.818c0-.597.237-1.17.659-1.591l6.499-6.499c.404-.404.527-1 .43-1.563A6 6 0 1121.75 8.25z" />
-          </svg>
-          API Tokens
-        </Link>
-      </div>
+          <dl className="grid grid-cols-2 gap-3">
+            {[
+              ["Files", totalFiles],
+              ["Drafts", totalDrafts],
+              ["Teams", totalTeams],
+              ["Shared", totalShared],
+            ].map(([label, value]) => (
+              <div
+                key={label}
+                className="rounded-lg border border-border bg-background/80 p-4"
+              >
+                <dt className="text-xs font-medium uppercase tracking-[0.14em] text-muted-foreground">
+                  {label}
+                </dt>
+                <dd className="mt-2 text-3xl font-semibold">{value}</dd>
+              </div>
+            ))}
+          </dl>
+        </div>
+      </section>
 
       {/* Recent files */}
-      <section className="mb-8">
-        <div className="mb-3 flex items-center justify-between">
+      <section className="rounded-lg border border-border bg-background p-5 shadow-sm">
+        <div className="mb-4 flex items-center justify-between">
           <h2 className="text-lg font-semibold">Recent Files</h2>
           <Link
             to="/files"
@@ -91,7 +113,7 @@ export function DashboardPage() {
                     ? `/files/${file.path}`
                     : `/preview/${repoId}/${file.path}`
                 }
-                className="group rounded-lg border border-border p-4 transition-colors hover:bg-muted/50"
+                className="group rounded-lg border border-border bg-muted/20 p-4 transition-colors hover:border-[#0f766e]/30 hover:bg-accent/55"
               >
                 <div className="mb-2">
                   {file.type === "directory" ? (
@@ -132,8 +154,8 @@ export function DashboardPage() {
       </section>
 
       {/* Recent drafts */}
-      <section className="mb-8">
-        <div className="mb-3 flex items-center justify-between">
+      <section className="rounded-lg border border-border bg-background p-5 shadow-sm">
+        <div className="mb-4 flex items-center justify-between">
           <h2 className="text-lg font-semibold">Recent Drafts</h2>
           <Link
             to="/drafts"
@@ -143,7 +165,7 @@ export function DashboardPage() {
           </Link>
         </div>
         {recentDrafts.length > 0 ? (
-          <div className="rounded-lg border border-border">
+          <div className="overflow-hidden rounded-lg border border-border bg-muted/15">
             {recentDrafts.map((draft, i) => (
               <a
                 key={draft.id}
@@ -183,8 +205,8 @@ export function DashboardPage() {
       </section>
 
       {/* Your teams */}
-      <section className="mb-8">
-        <div className="mb-3 flex items-center justify-between">
+      <section className="rounded-lg border border-border bg-background p-5 shadow-sm">
+        <div className="mb-4 flex items-center justify-between">
           <h2 className="text-lg font-semibold">Your Teams</h2>
           <Link
             to="/teams"
@@ -199,7 +221,7 @@ export function DashboardPage() {
               <Link
                 key={team.id}
                 to={`/teams/${team.id}`}
-                className="group rounded-lg border border-border p-4 transition-colors hover:bg-muted/50"
+                className="group rounded-lg border border-border bg-muted/20 p-4 transition-colors hover:border-[#0f766e]/30 hover:bg-accent/55"
               >
                 <div className="mb-2 flex h-8 w-8 items-center justify-center rounded-lg bg-primary text-sm font-bold text-primary-foreground">
                   {team.name[0].toUpperCase()}
@@ -231,8 +253,8 @@ export function DashboardPage() {
       </section>
 
       {/* Shared with me */}
-      <section>
-        <div className="mb-3 flex items-center justify-between">
+      <section className="rounded-lg border border-border bg-background p-5 shadow-sm">
+        <div className="mb-4 flex items-center justify-between">
           <h2 className="text-lg font-semibold">Shared with Me</h2>
           <Link
             to="/shared"
@@ -242,7 +264,7 @@ export function DashboardPage() {
           </Link>
         </div>
         {recentShared.length > 0 ? (
-          <div className="rounded-lg border border-border">
+          <div className="overflow-hidden rounded-lg border border-border bg-muted/15">
             {recentShared.map((item, i) => (
               <Link
                 key={item.share.id}
@@ -262,7 +284,7 @@ export function DashboardPage() {
                     </p>
                   </div>
                 </div>
-                <span className="rounded-full bg-muted px-2 py-0.5 text-xs text-muted-foreground">
+                <span className="rounded-full bg-accent px-2 py-0.5 text-xs font-medium text-accent-foreground">
                   {item.share.permission}
                 </span>
               </Link>

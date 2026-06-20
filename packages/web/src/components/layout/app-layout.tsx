@@ -79,36 +79,37 @@ export function AppLayout() {
   const breadcrumbs = useBreadcrumbs(location.pathname);
 
   return (
-    <div className="flex h-screen overflow-hidden bg-background">
+    <div className="flex h-screen overflow-hidden bg-background text-foreground">
       <AppSidebar />
 
       <div className="flex flex-1 flex-col overflow-hidden">
-        <header className="flex h-14 shrink-0 items-center justify-between border-b border-border px-4">
-          <div className="flex items-center gap-3">
+        <header className="flex h-14 shrink-0 items-center justify-between border-b border-border bg-background/90 px-4 backdrop-blur">
+          <div className="flex min-w-0 items-center gap-3">
             <button
               type="button"
               onClick={toggleSidebar}
-              className="rounded-lg p-1.5 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+              className="rounded-lg border border-transparent p-1.5 text-muted-foreground transition-colors hover:border-border hover:bg-muted hover:text-foreground"
+              aria-label="Toggle navigation"
             >
               <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
                 <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 6.75h16.5M3.75 12h16.5m-16.5 5.25h16.5" />
               </svg>
             </button>
 
-            <nav className="flex items-center gap-1 text-sm">
+            <nav className="flex min-w-0 items-center gap-1 overflow-hidden text-sm">
               <Link
                 to="/app"
-                className="text-muted-foreground transition-colors hover:text-foreground"
+                className="shrink-0 font-medium text-muted-foreground transition-colors hover:text-foreground"
               >
                 App
               </Link>
               {breadcrumbs.map((crumb) => (
-                <span key={crumb.key} className="flex items-center gap-1">
+                <span key={crumb.key} className="flex min-w-0 items-center gap-1">
                   <span className="text-muted-foreground">/</span>
                   {crumb.to ? (
                     <Link
                       to={crumb.to}
-                      className="text-muted-foreground transition-colors hover:text-foreground last:font-medium last:text-foreground"
+                      className="truncate text-muted-foreground transition-colors hover:text-foreground last:font-medium last:text-foreground"
                     >
                       {crumb.label}
                     </Link>
@@ -127,7 +128,7 @@ export function AppLayout() {
               <button
                 type="button"
                 onClick={() => setDropdownOpen(!dropdownOpen)}
-                className="flex items-center gap-2 rounded-lg p-1.5 transition-colors hover:bg-muted"
+                className="flex items-center gap-2 rounded-lg border border-transparent p-1.5 transition-colors hover:border-border hover:bg-muted"
               >
                 <UserAvatar
                   displayName={user.displayName}
@@ -149,7 +150,7 @@ export function AppLayout() {
                     tabIndex={-1}
                     aria-label="Close menu"
                   />
-                  <div className="absolute right-0 z-50 mt-1 w-48 rounded-lg border border-border bg-background py-1 shadow-lg">
+                  <div className="absolute right-0 z-50 mt-1 w-56 overflow-hidden rounded-lg border border-border bg-background py-1 shadow-xl shadow-teal-950/10">
                     <div className="border-b border-border px-3 py-2">
                       <p className="text-sm font-medium">{user.displayName}</p>
                       <p className="text-xs text-muted-foreground">
@@ -200,7 +201,7 @@ export function AppLayout() {
           )}
         </header>
 
-        <main className="flex-1 overflow-y-auto">
+        <main className="flex-1 overflow-y-auto bg-[radial-gradient(circle_at_top_left,rgba(20,184,166,0.10),transparent_30%),linear-gradient(180deg,rgba(255,255,255,0.42),transparent_220px)] dark:bg-[radial-gradient(circle_at_top_left,rgba(45,212,191,0.12),transparent_30%),linear-gradient(180deg,rgba(19,37,34,0.64),transparent_220px)]">
           <Outlet />
         </main>
       </div>

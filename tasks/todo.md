@@ -1,3 +1,16 @@
+# Authenticated UI Redesign Follow-up
+
+**Goal:** Expand the visual refresh beyond README/public docs into the main authenticated app UI and fix README logo clipping.
+
+- [x] Reproduce and fix README SVG text cutoff.
+- [x] Refresh global Patra theme tokens.
+- [x] Polish authenticated app shell and sidebar.
+- [x] Polish dashboard and drafts pages.
+- [x] Verify typecheck, tests, and build.
+- [ ] Commit and push scoped UI follow-up.
+
+---
+
 # README Branding Asset Pass
 
 **Goal:** Add a polished Patra logo and README image while preserving existing behavior and unrelated local changes.
