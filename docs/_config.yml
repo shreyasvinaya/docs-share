@@ -1,0 +1,16 @@
+title: Patra
+description: >-
+  Self-hostable, Git-backed publishing and sharing of docs, sites, and drafts
+  to shareable links, with an agent-friendly CLI.
+theme: jekyll-theme-cayman
+
+# These docs are plain Markdown. Exclude repo/build files that may end up
+# alongside the docs so Jekyll does not try to process or publish them.
+exclude:
+  - vendor
+  - Gemfile
+  - Gemfile.lock
+  - node_modules
+  - .sass-cache
+  - .jekyll-cache
+  - .jekyll-metadata

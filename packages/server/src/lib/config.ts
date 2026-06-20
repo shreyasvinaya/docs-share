@@ -103,7 +103,7 @@ export const config = {
   HOOK_BASE_URL: env("HOOK_BASE_URL", `http://localhost:${env("PORT", "3000")}`),
 
   CONTENT_ORIGIN: env("CONTENT_ORIGIN", "http://localhost:3000"),
-  DEPLOYMENT_NAME: env("DEPLOYMENT_NAME", "Docs Share"),
+  DEPLOYMENT_NAME: env("DEPLOYMENT_NAME", "Patra"),
   SYSADMIN_EMAILS: env("SYSADMIN_EMAILS", ""),
 
   GITHUB_TOKEN_SECRET: env(

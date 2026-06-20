@@ -85,7 +85,7 @@ describe("setup routes", () => {
     const body = (await res.json()) as { data: { deploymentName: string } };
 
     expect(res.status).toBe(200);
-    expect(body.data.deploymentName).toBe("Docs Share");
+    expect(body.data.deploymentName).toBe("Patra");
   });
 
   test("rejects setup status without a session", async () => {

@@ -61,9 +61,9 @@ Set `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, and `GOOGLE_REDIRECT_URI`.
 
 ## GitHub Sync
 
-Users can connect the GitHub App in **Settings -> Integrations**, choose which repositories Docs Share can access in GitHub, narrow the picker to one organization, or enter another GitHub repository URL from the file page. If the GitHub App is not configured, users can enter a personal access token as a fallback. Repository options are ordered by last updated. Branch options appear after a repository URL is selected, with common branch names prioritized in the picker. Sync imports the selected branch into the same Git-backed repo tree used by uploads, so interlinked HTML pages and assets resolve by relative path without rewriting.
+Users can connect the GitHub App in **Settings -> Integrations**, choose which repositories Patra can access in GitHub, narrow the picker to one organization, or enter another GitHub repository URL from the file page. If the GitHub App is not configured, users can enter a personal access token as a fallback. Repository options are ordered by last updated. Branch options appear after a repository URL is selected, with common branch names prioritized in the picker. Sync imports the selected branch into the same Git-backed repo tree used by uploads, so interlinked HTML pages and assets resolve by relative path without rewriting.
 
-Private repositories work best with a GitHub App configured with read-only **Contents** repository permission. Set the app callback URL to `https://your-domain/api/users/me/github-app/callback`, then configure `GITHUB_APP_ID`, `GITHUB_APP_SLUG`, and `GITHUB_APP_PRIVATE_KEY`. Docs Share stores the selected installation ID and generates one-hour installation access tokens on demand. If those app settings are empty, users can save a fine-grained personal access token instead; tokens are encrypted at rest with `GITHUB_TOKEN_SECRET`. The web picker can browse the remote tree and select the whole repository, one folder, or one file before sync.
+Private repositories work best with a GitHub App configured with read-only **Contents** repository permission. Set the app callback URL to `https://your-domain/api/users/me/github-app/callback`, then configure `GITHUB_APP_ID`, `GITHUB_APP_SLUG`, and `GITHUB_APP_PRIVATE_KEY`. Patra stores the selected installation ID and generates one-hour installation access tokens on demand. If those app settings are empty, users can save a fine-grained personal access token instead; tokens are encrypted at rest with `GITHUB_TOKEN_SECRET`. The web picker can browse the remote tree and select the whole repository, one folder, or one file before sync.
 
 ## Reverse Proxy
 
@@ -115,7 +115,7 @@ and let the proxy terminate TLS for that hostname. The app itself does not need
 to know about the domain beyond the `APP_URL` / `API_URL` / `CONTENT_ORIGIN`
 values it was started with.
 
-To serve Docs Share on `docs.example.com`:
+To serve Patra on `docs.example.com`:
 
 1. Add a DNS `A`/`AAAA` (or `CNAME`) record for `docs.example.com` pointing at
    the host running your reverse proxy.

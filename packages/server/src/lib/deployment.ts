@@ -1,4 +1,4 @@
-const DEFAULT_DEPLOYMENT_NAME = "Docs Share";
+const DEFAULT_DEPLOYMENT_NAME = "Patra";
 const DEFAULT_SECRETS = new Set([
   "dev-secret-change-in-production",
   "dev-draft-content-secret-change-in-production",
