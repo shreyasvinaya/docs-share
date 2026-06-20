@@ -60,8 +60,13 @@ export function error(message: string): void {
 }
 
 export function warn(message: string): void {
-  if (isInteractive()) {
+  // Warnings are always written to stderr (even non-interactively) so security
+  // notices — plaintext token, --token visibility — never get silently dropped
+  // in scripts/CI. Color is only added when attached to a TTY.
+  if (process.stderr.isTTY === true) {
     process.stderr.write(`\x1b[33m!\x1b[0m ${message}\n`);
+  } else {
+    process.stderr.write(`WARNING: ${message}\n`);
   }
 }
 

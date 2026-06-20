@@ -5,7 +5,10 @@ import { getClient } from "../lib/api-client.js";
 import { resolveTarget } from "../lib/target.js";
 import { output, success, info, error } from "../lib/output.js";
 import { FileNotFoundError, CliError, EXIT_CODES } from "../lib/errors.js";
-import { getApiUrl } from "../lib/config.js";
+import { getApiUrl, getMaxUploadBytes, getMaxUploadFiles } from "../lib/config.js";
+
+/** Directory names that should never be uploaded by a `push .`. */
+const SKIPPED_DIRS = new Set(["node_modules", ".git"]);
 
 export const pushCommand = new Command("push")
   .description("Upload files to a Patra target")
@@ -37,6 +40,10 @@ export const pushCommand = new Command("push")
     if (filesToUpload.length === 0) {
       throw new CliError("No files found to upload.", EXIT_CODES.FILE_NOT_FOUND);
     }
+
+    // Guard against accidentally uploading an entire project: cap the file count
+    // and total byte size before reading anything into memory.
+    enforceUploadLimits(filesToUpload, getMaxUploadFiles(), getMaxUploadBytes());
 
     // Build multipart form
     const formData = new FormData();
@@ -143,17 +150,19 @@ export const pushCommand = new Command("push")
     });
   });
 
-interface FileEntry {
+export interface FileEntry {
   absolutePath: string;
   relativeName: string;
+  sizeBytes: number;
 }
 
-function collectFiles(localPath: string, isDirectory: boolean): FileEntry[] {
+export function collectFiles(localPath: string, isDirectory: boolean): FileEntry[] {
   if (!isDirectory) {
     return [
       {
         absolutePath: localPath,
         relativeName: basename(localPath),
+        sizeBytes: safeSize(localPath),
       },
     ];
   }
@@ -163,14 +172,24 @@ function collectFiles(localPath: string, isDirectory: boolean): FileEntry[] {
   return entries;
 }
 
+function safeSize(path: string): number {
+  try {
+    return statSync(path).size;
+  } catch {
+    return 0;
+  }
+}
+
 function walkDir(rootDir: string, currentDir: string, entries: FileEntry[]): void {
   const items = readdirSync(currentDir, { withFileTypes: true });
 
   for (const item of items) {
     const fullPath = join(currentDir, item.name);
 
-    // Skip hidden files/dirs
+    // Skip hidden files/dirs (dotfiles) and well-known heavy directories so a
+    // stray `patra push .` doesn't upload an entire project tree.
     if (item.name.startsWith(".")) continue;
+    if (item.isDirectory() && SKIPPED_DIRS.has(item.name)) continue;
 
     if (item.isDirectory()) {
       walkDir(rootDir, fullPath, entries);
@@ -178,7 +197,42 @@ function walkDir(rootDir: string, currentDir: string, entries: FileEntry[]): voi
       entries.push({
         absolutePath: fullPath,
         relativeName: relative(rootDir, fullPath),
+        sizeBytes: safeSize(fullPath),
       });
     }
+  }
+}
+
+function formatBytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GB`;
+}
+
+/**
+ * Throw a clear, actionable error if the set of files to upload exceeds the
+ * configured file-count or total-byte limits.
+ */
+export function enforceUploadLimits(
+  files: FileEntry[],
+  maxFiles: number,
+  maxBytes: number
+): void {
+  if (files.length > maxFiles) {
+    throw new CliError(
+      `Refusing to upload ${files.length} files (limit ${maxFiles}). ` +
+        `Narrow the path or raise PATRA_MAX_UPLOAD_FILES.`,
+      EXIT_CODES.VALIDATION_ERROR
+    );
+  }
+
+  const totalBytes = files.reduce((sum, f) => sum + f.sizeBytes, 0);
+  if (totalBytes > maxBytes) {
+    throw new CliError(
+      `Refusing to upload ${formatBytes(totalBytes)} total (limit ${formatBytes(maxBytes)}). ` +
+        `Narrow the path or raise PATRA_MAX_UPLOAD_BYTES.`,
+      EXIT_CODES.VALIDATION_ERROR
+    );
   }
 }

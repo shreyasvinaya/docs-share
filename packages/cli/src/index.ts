@@ -25,11 +25,14 @@ program
   .option("--verbose", "Enable verbose logging");
 
 // Store global options so commands can access them
-program.hook("preAction", (_thisCommand, actionCommand) => {
+program.hook("preAction", (_thisCommand, _actionCommand) => {
   const globalOpts = program.opts();
 
-  // Set API URL override via env var so config.ts picks it up
+  // Set API URL override via env var so config.ts picks it up. Write both the
+  // new PATRA_ name and the legacy DOCS_SHARE_ name so either resolver path
+  // sees it.
   if (globalOpts.apiUrl) {
+    process.env.PATRA_API_URL = globalOpts.apiUrl;
     process.env.DOCS_SHARE_API_URL = globalOpts.apiUrl;
   }
 
@@ -40,11 +43,18 @@ program.hook("preAction", (_thisCommand, actionCommand) => {
 
   // Store format preference for output.ts
   if (globalOpts.format) {
+    process.env.PATRA_FORMAT = globalOpts.format;
     process.env.DOCS_SHARE_FORMAT = globalOpts.format;
   }
 
   if (globalOpts.quiet) {
+    process.env.PATRA_QUIET = "1";
     process.env.DOCS_SHARE_QUIET = "1";
+  }
+
+  if (globalOpts.verbose) {
+    process.env.PATRA_VERBOSE = "1";
+    process.env.DOCS_SHARE_VERBOSE = "1";
   }
 });
 
@@ -58,27 +68,54 @@ program.addCommand(shareCommand);
 program.addCommand(teamsCommand);
 program.addCommand(whoamiCommand);
 
-// Global error handler
-async function main(): Promise<void> {
+function isVerbose(): boolean {
+  if (process.env.PATRA_VERBOSE === "1" || process.env.DOCS_SHARE_VERBOSE === "1") {
+    return true;
+  }
   try {
-    await program.parseAsync(process.argv);
-  } catch (err) {
-    if (err instanceof CliError) {
-      printError(err.message);
-      process.exit(err.exitCode);
-    }
-
-    if (err instanceof Error) {
-      printError(err.message);
-      if (process.env.DOCS_SHARE_VERBOSE === "1" || program.opts().verbose) {
-        console.error(err.stack);
-      }
-      process.exit(EXIT_CODES.UNKNOWN);
-    }
-
-    printError(String(err));
-    process.exit(EXIT_CODES.UNKNOWN);
+    return program.opts().verbose === true;
+  } catch {
+    return false;
   }
 }
 
-main();
+/**
+ * Print an error and exit. CliError carries its own exit code; anything else
+ * exits with UNKNOWN. Full stack traces are only shown under --verbose.
+ */
+function handleFatal(err: unknown): never {
+  if (err instanceof CliError) {
+    printError(err.message);
+    if (isVerbose() && err.stack) {
+      console.error(err.stack);
+    }
+    process.exit(err.exitCode);
+  }
+
+  if (err instanceof Error) {
+    printError(err.message);
+    if (isVerbose()) {
+      console.error(err.stack);
+    }
+    process.exit(EXIT_CODES.UNKNOWN);
+  }
+
+  printError(String(err));
+  process.exit(EXIT_CODES.UNKNOWN);
+}
+
+// Last-resort safety nets: never let an unhandled rejection or thrown error
+// crash with an ugly Node stack trace (and a confusing exit code).
+process.on("unhandledRejection", (reason) => {
+  handleFatal(reason);
+});
+process.on("uncaughtException", (err) => {
+  handleFatal(err);
+});
+
+// Global error handler
+async function main(): Promise<void> {
+  await program.parseAsync(process.argv);
+}
+
+main().catch(handleFatal);
