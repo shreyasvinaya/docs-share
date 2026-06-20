@@ -1,5 +1,5 @@
 import { Hono } from "hono";
-import { and, desc, eq, isNull } from "drizzle-orm";
+import { and, desc, eq, isNull, sql } from "drizzle-orm";
 import { db, schema } from "../db/index.js";
 import { requireAuth } from "../middleware/requireAuth.js";
 import { requireScope } from "../middleware/requireScope.js";
@@ -207,6 +207,30 @@ app.post("/:target/data/:collection", async (c) => {
   const target = await resolveTarget(parsed.targetType, parsed.targetId);
   if (!target || target.ownerUserId !== optIn.ownerUserId) {
     return c.json({ error: "This form is not accepting submissions" }, 404);
+  }
+
+  // Per-collection storage cap. The endpoint is unauthenticated, so without a
+  // ceiling a victim's enabled form could be flooded to exhaust disk. Count
+  // only LIVE (not soft-deleted) records for this (target_type,target_id,
+  // collection) and reject once at/over the configured maximum.
+  const liveCount = await db
+    .select({ count: sql<number>`count(*)` })
+    .from(schema.siteDataRecords)
+    .where(
+      and(
+        eq(schema.siteDataRecords.targetType, parsed.targetType),
+        eq(schema.siteDataRecords.targetId, parsed.targetId),
+        eq(schema.siteDataRecords.collection, collection),
+        isNull(schema.siteDataRecords.deletedAt)
+      )
+    )
+    .get();
+
+  if ((liveCount?.count ?? 0) >= config.SITE_DATA_MAX_RECORDS_PER_COLLECTION) {
+    return c.json(
+      { error: "This form has reached its submission storage limit" },
+      429
+    );
   }
 
   const now = new Date().toISOString();

@@ -4,6 +4,7 @@ import { eq, inArray } from "drizzle-orm";
 import { mkdir, rm, writeFile } from "fs/promises";
 import { db, schema } from "../db/index.js";
 import { config } from "../lib/config.js";
+import { hashToken } from "../lib/crypto.js";
 import { viewAwareSecureHeaders } from "../middleware/securityHeaders.js";
 import type { AppEnv } from "../lib/types.js";
 import viewRoutes from "./view.js";
@@ -151,6 +152,54 @@ async function seedPublicShareWithFiles(): Promise<{
   await mkdir(worktreeBase, { recursive: true });
   await writeFile(`${worktreeBase}/index.html`, "<html><body>hi</body></html>");
   await writeFile(`${worktreeBase}/styles.css`, "body { color: red; }");
+
+  cleanup.userIds.push(userId);
+  cleanup.repoIds.push(repoId);
+  cleanup.shareIds.push(shareId);
+  cleanup.viewTargets.push(shareId);
+  cleanup.worktreeDirs.push(worktreeBase);
+  return { token, shareId };
+}
+
+/**
+ * Seed a password-protected public file share (single index.html). The provided
+ * `password` is stored hashed; callers pass `X-Share-Password` to authenticate.
+ */
+async function seedPasswordShare(password: string): Promise<{
+  token: string;
+  shareId: string;
+}> {
+  const userId = testId("user");
+  const repoId = testId("repo");
+  const shareId = testId("share");
+  const token = testId("tok");
+
+  await db.insert(schema.users).values({
+    id: userId,
+    email: `${userId}@example.com`,
+    displayName: "Owner",
+    googleId: `g_${userId}`,
+  });
+  await db.insert(schema.repos).values({
+    id: repoId,
+    ownerType: "user",
+    ownerUserId: userId,
+    diskPath: `/tmp/${repoId}.git`,
+  });
+  await db.insert(schema.shares).values({
+    id: shareId,
+    repoId,
+    path: "index.html",
+    createdById: userId,
+    shareType: "public_link",
+    publicToken: token,
+    linkAccess: "public",
+    passwordHash: hashToken(password),
+  });
+
+  const worktreeBase = `${config.DATA_DIR}/worktrees/${repoId}`;
+  await mkdir(worktreeBase, { recursive: true });
+  await writeFile(`${worktreeBase}/index.html`, "<html><body>secret</body></html>");
 
   cleanup.userIds.push(userId);
   cleanup.repoIds.push(repoId);
@@ -394,6 +443,58 @@ describe("public view recording", () => {
     await anonApp.request(`/view/public/${token}/index.html`);
     await new Promise((r) => setTimeout(r, 60));
     expect(await countViews(shareId)).toBe(1);
+  });
+
+  test("spoofed X-Forwarded-For does not create distinct view buckets when TRUST_PROXY=false", async () => {
+    const original = config.TRUST_PROXY;
+    config.TRUST_PROXY = false;
+    try {
+      const { token, shareId } = await seedPublicShareWithFiles();
+
+      // First view from a forged client IP.
+      await anonApp.request(`/view/public/${token}/index.html`, {
+        headers: { "x-forwarded-for": "1.1.1.1", "user-agent": "A" },
+      });
+      expect(await viewCountAfterSettle(shareId)).toBe(1);
+
+      // Same source rotating ONLY the spoofable X-Forwarded-For (and UA). With
+      // TRUST_PROXY=false the forwarded header is ignored and both resolve to
+      // the same (socket / "unknown") bucket, so dedupe must suppress these.
+      await anonApp.request(`/view/public/${token}/index.html`, {
+        headers: { "x-forwarded-for": "2.2.2.2", "user-agent": "B" },
+      });
+      await anonApp.request(`/view/public/${token}/index.html`, {
+        headers: { "x-forwarded-for": "3.3.3.3", "user-agent": "C" },
+      });
+      await new Promise((r) => setTimeout(r, 60));
+      expect(await countViews(shareId)).toBe(1);
+    } finally {
+      config.TRUST_PROXY = original;
+    }
+  });
+});
+
+describe("protected public share caching", () => {
+  test("password-protected content carries no-store + Vary", async () => {
+    const { token } = await seedPasswordShare("hunter2");
+
+    const res = await anonApp.request(`/view/public/${token}`, {
+      headers: { "X-Share-Password": "hunter2" },
+    });
+    expect(res.status).toBe(200);
+    expect(res.headers.get("cache-control")).toBe("private, no-store");
+    const vary = res.headers.get("vary") ?? "";
+    expect(vary).toContain("X-Share-Password");
+    expect(vary).toContain("Cookie");
+  });
+
+  test("public (unprotected) content is not forced no-store by the gate", async () => {
+    const { token } = await seedPublicShareWithFiles();
+
+    const res = await anonApp.request(`/view/public/${token}/index.html`);
+    expect(res.status).toBe(200);
+    // No password/org gate → the protected-share no-store override must NOT fire.
+    expect(res.headers.get("cache-control")).not.toBe("private, no-store");
   });
 });
 
