@@ -1,9 +1,9 @@
 import { Hono } from "hono";
 import { cors } from "hono/cors";
-import { secureHeaders } from "hono/secure-headers";
 import { logger } from "hono/logger";
 import { existsSync, statSync } from "fs";
 import { sessionMiddleware } from "./middleware/session.js";
+import { viewAwareSecureHeaders } from "./middleware/securityHeaders.js";
 import authRoutes from "./routes/auth.js";
 import userRoutes from "./routes/users.js";
 import teamRoutes from "./routes/teams.js";
@@ -32,7 +32,11 @@ import type { AppEnv } from "./lib/types.js";
 const app = new Hono<AppEnv>();
 
 app.use("*", logger());
-app.use("*", secureHeaders());
+// Global security headers. `/view/*` gets a CORP `cross-origin` override so the
+// opaque-origin sandboxed documents served there can still load their own
+// sibling assets; everything else keeps the `same-origin` default. See
+// `viewAwareSecureHeaders` for the full rationale.
+app.use("*", viewAwareSecureHeaders());
 // Public, opt-in form ingestion is callable from sandboxed hosted pages whose
 // iframe origin is opaque ("null"). Allow cross-origin POSTs WITHOUT
 // credentials for this single endpoint only; it stores no cookies/session and

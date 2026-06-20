@@ -68,8 +68,10 @@ function isActiveDocumentContentType(contentType: string): boolean {
  * The critical control is `sandbox allow-scripts` (and NEVER `allow-same-origin`):
  * the document runs in an OPAQUE ORIGIN, so even though it is byte-for-byte
  * served from the same host as `/api/*`, its inline scripts cannot read the
- * host `ds_session` cookie, reach the parent window, or issue credentialed
- * `fetch('/api/...')` calls as the victim. `connect-src 'none'` additionally
+ * host `ds_session` cookie, SAME-ORIGIN access the parent window (it may still
+ * `postMessage` to it with origin `null`, but the app registers no `message`
+ * listeners so nothing acts on it), or issue credentialed `fetch('/api/...')`
+ * calls as the victim. `connect-src 'none'` additionally
  * forbids the document from making any network request at all (no
  * exfiltration). `script-src`/`style-src` keep `'self'` so a legitimate
  * multi-file bundle can still load its OWN sibling .js/.css assets (those
@@ -98,6 +100,13 @@ function securityHeaders(contentType?: string): Record<string, string> {
     "X-Frame-Options": "SAMEORIGIN",
     "X-Content-Type-Options": "nosniff",
     "Referrer-Policy": "strict-origin-when-cross-origin",
+    // NOTE on Cross-Origin-Resource-Policy: `/view/*` responses MUST carry CORP
+    // `cross-origin` (NOT the global `same-origin` default) so the opaque-origin
+    // sandboxed documents served here can still load their OWN sibling assets.
+    // That override lives in the global `viewAwareSecureHeaders()` middleware,
+    // NOT here: Hono's `secureHeaders()` rewrites every managed header AFTER the
+    // handler returns, so any CORP set on this Response would be clobbered. See
+    // middleware/securityHeaders.ts for the full rationale.
   };
 }
 
@@ -106,6 +115,8 @@ function resolveContentType(filePath: string): string {
   const mimeMap: Record<string, string> = {
     html: "text/html; charset=utf-8",
     htm: "text/html; charset=utf-8",
+    xhtml: "application/xhtml+xml; charset=utf-8",
+    xht: "application/xhtml+xml; charset=utf-8",
     css: "text/css; charset=utf-8",
     js: "application/javascript; charset=utf-8",
     mjs: "application/javascript; charset=utf-8",
@@ -186,20 +197,23 @@ async function serveFile(
         return Response.redirect(`${requestPath}/`, 308);
       }
 
-      const indexPath = await resolveRealPathInside(
-        worktreeBase,
-        relativePath ? `${relativePath}/index.html` : "index.html"
-      );
-
-      if (!indexPath) {
-        return new Response(JSON.stringify({ error: "Directory index not found" }), {
-          status: 404,
-          headers: { "Content-Type": "application/json" },
-        });
+      // Prefer index.html, then index.xhtml. Both are active documents that
+      // must be served sandboxed (xhtml is in ACTIVE_DOCUMENT_CONTENT_TYPES).
+      let indexPath: string | null = null;
+      for (const indexName of ["index.html", "index.xhtml"]) {
+        const candidate = await resolveRealPathInside(
+          worktreeBase,
+          relativePath ? `${relativePath}/${indexName}` : indexName
+        );
+        if (!candidate) continue;
+        const candidateStat = await stat(candidate).catch(() => null);
+        if (candidateStat?.isFile()) {
+          indexPath = candidate;
+          break;
+        }
       }
 
-      const indexStat = await stat(indexPath).catch(() => null);
-      if (!indexStat?.isFile()) {
+      if (!indexPath) {
         return new Response(JSON.stringify({ error: "Directory index not found" }), {
           status: 404,
           headers: { "Content-Type": "application/json" },

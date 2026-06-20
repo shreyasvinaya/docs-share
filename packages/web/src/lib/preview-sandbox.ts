@@ -5,11 +5,13 @@
  * SECURITY INVARIANT: this MUST stay `allow-scripts` only and MUST NEVER
  * include `allow-same-origin`. Granting `allow-same-origin` would re-privilege
  * the framed document to the app's real origin, letting its scripts read the
- * host `ds_session` cookie, reach `window.parent`, and issue credentialed
- * `fetch('/api/...')` calls as the victim. With `allow-scripts` alone the
- * document runs in an opaque origin: its own scripts still execute, but it is
- * fully isolated from the host session. The server CSP sandboxes the same
- * response as defense in depth (see routes/view.ts).
+ * host `ds_session` cookie, SAME-ORIGIN access `window.parent`, and issue
+ * credentialed `fetch('/api/...')` calls as the victim. With `allow-scripts`
+ * alone the document runs in an opaque origin: its own scripts still execute
+ * and it can still `postMessage` to the parent with origin `null` (the app
+ * registers no `message` listeners, so nothing acts on it), but it is fully
+ * isolated from the host session. The server CSP sandboxes the same response
+ * as defense in depth (see routes/view.ts).
  */
 export const PREVIEW_IFRAME_SANDBOX = "allow-scripts";
 
