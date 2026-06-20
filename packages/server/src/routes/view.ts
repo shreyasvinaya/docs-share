@@ -39,10 +39,62 @@ function recordServedView(
   recordViewFromRequest(targetType, targetId, req);
 }
 
-function securityHeaders(): Record<string, string> {
+/**
+ * Content types that a browser may interpret as an active (script-capable)
+ * document. These are the responses that MUST be served into an opaque origin
+ * via a `sandbox` CSP so their inline scripts can never reach the host session
+ * cookie or call `/api` with the victim's credentials. Anything else (plain
+ * text, raster images, pdf, fonts) is inert and the sandbox is merely harmless.
+ */
+const ACTIVE_DOCUMENT_CONTENT_TYPES = [
+  "text/html",
+  "image/svg+xml",
+  "application/xhtml+xml",
+];
+
+/**
+ * Whether a resolved content-type can execute script as a top-level document
+ * (HTML / SVG / XHTML). Such responses are served sandboxed (opaque origin).
+ */
+function isActiveDocumentContentType(contentType: string): boolean {
+  const lowered = contentType.trim().toLowerCase();
+  return ACTIVE_DOCUMENT_CONTENT_TYPES.some((type) => lowered.startsWith(type));
+}
+
+/**
+ * CSP applied to user-uploaded documents that can execute script (HTML / SVG /
+ * XHTML) served from a repo worktree or a public share.
+ *
+ * The critical control is `sandbox allow-scripts` (and NEVER `allow-same-origin`):
+ * the document runs in an OPAQUE ORIGIN, so even though it is byte-for-byte
+ * served from the same host as `/api/*`, its inline scripts cannot read the
+ * host `ds_session` cookie, reach the parent window, or issue credentialed
+ * `fetch('/api/...')` calls as the victim. `connect-src 'none'` additionally
+ * forbids the document from making any network request at all (no
+ * exfiltration). `script-src`/`style-src` keep `'self'` so a legitimate
+ * multi-file bundle can still load its OWN sibling .js/.css assets (those
+ * sub-resource loads are performed by the browser, not by privileged
+ * same-origin script, so they continue to work under the sandbox).
+ */
+const SANDBOXED_DOCUMENT_CSP =
+  "sandbox allow-scripts; " +
+  "default-src 'none'; " +
+  "script-src 'self' 'unsafe-inline'; " +
+  "style-src 'self' 'unsafe-inline'; " +
+  "img-src 'self' data:; " +
+  "font-src 'self' data:; " +
+  "connect-src 'none'; " +
+  "base-uri 'none'; " +
+  "form-action 'none'";
+
+function securityHeaders(contentType?: string): Record<string, string> {
+  const csp =
+    contentType && isActiveDocumentContentType(contentType)
+      ? SANDBOXED_DOCUMENT_CSP
+      : "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:;";
+
   return {
-    "Content-Security-Policy":
-      "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:;",
+    "Content-Security-Policy": csp,
     "X-Frame-Options": "SAMEORIGIN",
     "X-Content-Type-Options": "nosniff",
     "Referrer-Policy": "strict-origin-when-cross-origin",
@@ -154,8 +206,9 @@ async function serveFile(
         });
       }
 
-      const headers = securityHeaders();
-      headers["Content-Type"] = resolveContentType(indexPath);
+      const indexContentType = resolveContentType(indexPath);
+      const headers = securityHeaders(indexContentType);
+      headers["Content-Type"] = indexContentType;
       return new Response(Bun.file(indexPath), { headers });
     }
 
@@ -168,7 +221,7 @@ async function serveFile(
 
     const file = Bun.file(resolvedPath);
     const contentType = resolveContentType(resolvedPath);
-    const headers = securityHeaders();
+    const headers = securityHeaders(contentType);
     headers["Content-Type"] = contentType;
 
     return new Response(file, { headers });

@@ -7,6 +7,7 @@ import {
 import { useEffect, useState } from "react";
 import { ShareDialog } from "@/components/sharing/share-dialog";
 import { FileTree } from "@/components/files/file-tree";
+import { PREVIEW_IFRAME_SANDBOX } from "@/lib/preview-sandbox";
 
 export function FilePreviewPage() {
   const { repoId, "*": wildcard } = useParams();
@@ -124,10 +125,19 @@ export function FilePreviewPage() {
       <div className="flex flex-1 overflow-hidden">
         {filePath ? (
           <div className="flex-1">
+            {/*
+              The framed document is untrusted user-uploaded content served from
+              the same host as /api. The sandbox MUST stay `allow-scripts` only
+              and NEVER include `allow-same-origin`, so the document runs in an
+              opaque origin: its scripts cannot reach `window.parent`/the app or
+              read/send the host `ds_session` cookie. The server CSP sandboxes it
+              too (defense in depth); this attribute closes the case where a
+              `allow-same-origin` grant would otherwise re-privilege it.
+            */}
             <iframe
               src={viewUrl}
               title={fileName}
-              sandbox="allow-scripts allow-same-origin"
+              sandbox={PREVIEW_IFRAME_SANDBOX}
               className="h-full w-full border-0"
             />
           </div>
