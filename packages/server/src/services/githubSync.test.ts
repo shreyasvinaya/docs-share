@@ -10,7 +10,7 @@ import {
   symlink,
   writeFile,
 } from "fs/promises";
-import { join } from "path";
+import { join, sep } from "path";
 import { tmpdir } from "os";
 import { config } from "../lib/config.js";
 import {
@@ -625,6 +625,91 @@ describe("prepareSelectedImport (symlink containment)", () => {
       const info = await lstat(join(importPath, f));
       expect(info.isSymbolicLink()).toBe(false);
     }
+  });
+
+  test("strips symlinks on a WHOLE-REPO (root, empty sourcePath) import", async () => {
+    // SEC-6: a whole-repo import must be symlink-stripping too. Previously the
+    // root case pushed the checked-out clone directly (pushPath = clonePath),
+    // bypassing copyWithoutSymlinks, so a malicious repo could bring a symlink
+    // (pointing at a host file) into the user's bare repo. The root case now
+    // flows through prepareSelectedImport with an empty sourcePath.
+    const root = await scratch("ds-sym-rootimport-");
+    const clonePath = join(root, "source");
+    const importPath = join(root, "import");
+    const outside = await scratch("ds-sym-rootimport-outside-");
+    await writeFile(join(outside, "secret.txt"), "HOST SECRET");
+
+    // A real `git` clone so prepareSelectedImport's `.git` exclusion is exercised
+    // exactly as syncGitHubRepo produces it.
+    await mkdir(join(clonePath, "docs"), { recursive: true });
+    await writeFile(join(clonePath, "index.html"), "<p>root ok</p>");
+    await writeFile(join(clonePath, "docs", "ok.html"), "<p>nested ok</p>");
+    // Symlink at the repo root pointing OUTSIDE the clone (at the host secret).
+    await symlink(join(outside, "secret.txt"), join(clonePath, "escape.txt"));
+    // Symlink nested in a subdir pointing IN-clone — must also be skipped.
+    await symlink(join(clonePath, "index.html"), join(clonePath, "docs", "alias.html"));
+    await $`git -C ${clonePath} init`.quiet();
+    await $`git -C ${clonePath} config user.email t@t.local`.quiet();
+    await $`git -C ${clonePath} config user.name tester`.quiet();
+    await $`git -C ${clonePath} add .`.quiet();
+    await $`git -C ${clonePath} commit -m init`.quiet();
+
+    // Empty sourcePath == whole-repo (root) import.
+    const pushPath = await prepareSelectedImport(clonePath, importPath, "");
+
+    const files = await importedFiles(pushPath);
+    // Regular files (root + nested) came across.
+    expect(files).toContain("index.html");
+    expect(files).toContain(join("docs", "ok.html"));
+    // No symlink — root-level or nested — was materialized.
+    expect(files).not.toContain("escape.txt");
+    expect(files).not.toContain(join("docs", "alias.html"));
+    // The .git directory was NOT copied into the import (it is not content).
+    expect(files.some((f) => f === ".git" || f.startsWith(`.git${sep}`))).toBe(false);
+    // Nothing in the import tree is a symlink, and the host secret content was
+    // never materialized into the import.
+    for (const f of files) {
+      const info = await lstat(join(pushPath, f));
+      expect(info.isSymbolicLink()).toBe(false);
+      if (info.isFile()) {
+        const contents = await readFile(join(pushPath, f), "utf-8");
+        expect(contents).not.toContain("HOST SECRET");
+      }
+    }
+  });
+
+  test("imports a normal whole-repo (root) of regular files end-to-end", async () => {
+    // A clean root import with no symlinks must still copy, commit, and be
+    // pushable exactly as before.
+    const root = await scratch("ds-rootimport-clean-");
+    const clonePath = join(root, "source");
+    const importPath = join(root, "import");
+
+    await mkdir(join(clonePath, "guide"), { recursive: true });
+    await writeFile(join(clonePath, "README.md"), "# hello root");
+    await writeFile(join(clonePath, "guide", "intro.html"), "<p>intro</p>");
+    await $`git -C ${clonePath} init`.quiet();
+    await $`git -C ${clonePath} config user.email t@t.local`.quiet();
+    await $`git -C ${clonePath} config user.name tester`.quiet();
+    await $`git -C ${clonePath} add .`.quiet();
+    await $`git -C ${clonePath} commit -m init`.quiet();
+
+    const pushPath = await prepareSelectedImport(clonePath, importPath, "");
+
+    const readme = await readFile(join(pushPath, "README.md"), "utf-8");
+    expect(readme).toContain("hello root");
+    const intro = await readFile(join(pushPath, "guide", "intro.html"), "utf-8");
+    expect(intro).toContain("intro");
+
+    // The import is a committed git repo whose HEAD is resolvable (pushable).
+    const headSha = (await $`git -C ${pushPath} rev-parse HEAD`.text()).trim();
+    expect(headSha).toMatch(/^[0-9a-f]{40}$/);
+    // The committed tree contains the imported files and no .git artifacts.
+    const tracked = (await $`git -C ${pushPath} ls-files`.text())
+      .trim()
+      .split("\n")
+      .sort();
+    expect(tracked).toEqual([join("README.md"), join("guide", "intro.html")].sort());
   });
 });
 

@@ -551,9 +551,16 @@ export async function syncGitHubRepo(
     // validated path (or the whole tree for a root import) into the work tree.
     await checkoutImportPath(clonePath, normalizedSourcePath);
 
-    const pushPath = normalizedSourcePath
-      ? await prepareSelectedImport(clonePath, importPath, normalizedSourcePath)
-      : clonePath;
+    // Always route through the symlink-stripping copy — for BOTH a sub-path and a
+    // whole-repo (root, empty sourcePath) import. This rebuilds a clean import
+    // tree via copyWithoutSymlinks, which rejects/skips every symlink entry, so a
+    // malicious repo can never bring a symlink into the user's bare repo. The
+    // `.git` directory is excluded by the copy (it is not importable content).
+    const pushPath = await prepareSelectedImport(
+      clonePath,
+      importPath,
+      normalizedSourcePath
+    );
     const commitSha = await gitOutput(["-C", pushPath, "rev-parse", "HEAD"]);
 
     await runGit([
@@ -584,6 +591,14 @@ export async function syncGitHubRepo(
   }
 }
 
+/**
+ * Build a clean, symlink-free import tree from the checked-out clone and commit
+ * it, returning the path to push from. Handles BOTH a sub-path import and a
+ * whole-repo import (empty `sourcePath`, meaning the clone root): in either case
+ * the tree is rebuilt with {@link copyWithoutSymlinks}, which rejects/skips every
+ * symlink entry and excludes the `.git` directory, so no symlink from the cloned
+ * repo is ever copied, committed, or pushed into the user's bare repo.
+ */
 export async function prepareSelectedImport(
   clonePath: string,
   importPath: string,
@@ -595,7 +610,9 @@ export async function prepareSelectedImport(
   // another tenant's worktree). We therefore `lstat` the ORIGINAL selected path
   // and every component leading to it BEFORE resolving any realpath, and reject
   // the moment a symlink is seen. Only after the original path is proven
-  // symlink-free do we realpath it to confirm containment.
+  // symlink-free do we realpath it to confirm containment. An empty `sourcePath`
+  // resolves to the clone root (a real directory), so the whole-repo case flows
+  // through the same symlink-stripping directory copy below.
   const realCloneRoot = await realpath(clonePath);
   const source = join(realCloneRoot, sourcePath);
 
@@ -647,7 +664,13 @@ export async function prepareSelectedImport(
   await runGit(["-C", importPath, "config", "user.email", "github-sync@docs-share.local"]);
   await runGit(["-C", importPath, "config", "user.name", "docs-share GitHub sync"]);
   await runGit(["-C", importPath, "add", "."]);
-  await runGit(["-C", importPath, "commit", "-m", `Import ${sourcePath}`]);
+  await runGit([
+    "-C",
+    importPath,
+    "commit",
+    "-m",
+    `Import ${sourcePath || "repository root"}`,
+  ]);
   return importPath;
 }
 
