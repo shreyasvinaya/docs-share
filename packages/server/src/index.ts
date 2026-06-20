@@ -201,4 +201,4 @@ export default {
   ),
 };
 
-console.log(`docs-share server running on ${config.HOST}:${config.PORT}`);
+console.log(`Patra server running on ${config.HOST}:${config.PORT}`);

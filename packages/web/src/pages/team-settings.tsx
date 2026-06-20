@@ -11,7 +11,7 @@ import { useSession } from "@/hooks/use-auth";
 import { UserAvatar } from "@/components/common/user-avatar";
 import { canRemoveMember } from "@/lib/team-members";
 import { api } from "@/lib/api-client";
-import type { TeamRole } from "@docs-share/shared";
+import type { TeamRole } from "@patra/shared";
 
 export function TeamSettingsPage() {
   const { teamId } = useParams();

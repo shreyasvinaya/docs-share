@@ -1,9 +1,9 @@
 {
-  "name": "docs-share",
+  "name": "patra",
   "version": "0.1.0",
   "type": "module",
   "bin": {
-    "docs-share": "./dist/index.js"
+    "patra": "./dist/index.js"
   },
   "scripts": {
     "build": "tsup src/index.ts --format esm --dts --clean",
@@ -13,7 +13,7 @@
     "test": "bun test --pass-with-no-tests"
   },
   "dependencies": {
-    "@docs-share/shared": "workspace:*",
+    "@patra/shared": "workspace:*",
     "commander": "^13"
   },
   "devDependencies": {

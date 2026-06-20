@@ -27,7 +27,7 @@ import { dirname, join } from "path";
 import { mkdir, mkdtemp, rm } from "fs/promises";
 import { tmpdir } from "os";
 
-import type { FileNode } from "@docs-share/shared";
+import type { FileNode } from "@patra/shared";
 import type { AppEnv } from "../lib/types.js";
 
 const app = new Hono<AppEnv>();

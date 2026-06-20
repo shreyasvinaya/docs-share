@@ -1,6 +1,6 @@
 import { ApiClient } from "./api-client.js";
 import { NotFoundError } from "./errors.js";
-import type { Team } from "@docs-share/shared";
+import type { Team } from "@patra/shared";
 
 export interface ResolvedTarget {
   repoId: string;
@@ -59,7 +59,7 @@ export async function resolveTarget(
   const team = teamsRes.data.find((t) => t.slug === owner);
   if (!team) {
     throw new NotFoundError(
-      `Team "${owner}" not found. Use "personal" for your personal repo, or check team slugs with \`docs-share teams\`.`
+      `Team "${owner}" not found. Use "personal" for your personal repo, or check team slugs with \`patra teams\`.`
     );
   }
 

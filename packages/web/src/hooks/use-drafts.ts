@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/api-client";
-import type { DraftListItem } from "@docs-share/shared";
+import type { DraftListItem } from "@patra/shared";
 
 export function useDrafts() {
   return useQuery({

@@ -11,9 +11,9 @@ import {
   type DnsLookupAll,
   type ResolvedAddress,
 } from "../lib/security.js";
-import type { WebhookEvent } from "@docs-share/shared";
+import type { WebhookEvent } from "@patra/shared";
 
-const SIGNATURE_HEADER = "X-DocsShare-Signature";
+const SIGNATURE_HEADER = "X-Patra-Signature";
 const MAX_ATTEMPTS = 3;
 const BACKOFF_BASE_MS = 500;
 const REQUEST_TIMEOUT_MS = 10_000;
@@ -25,7 +25,7 @@ export function generateWebhookSecret(): string {
 
 /**
  * Computes the `sha256=<hex>` HMAC signature of a serialized webhook body using
- * the webhook secret. Sent in the X-DocsShare-Signature header.
+ * the webhook secret. Sent in the X-Patra-Signature header.
  */
 export function signWebhookPayload(body: string, secret: string): string {
   const digest = createHmac("sha256", secret).update(body).digest("hex");
@@ -241,7 +241,7 @@ export async function deliverWebhook(
   const signature = signWebhookPayload(params.body, params.secret);
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
-    "User-Agent": "docs-share-webhooks",
+    "User-Agent": "patra-webhooks",
     [SIGNATURE_HEADER]: signature,
   };
   let lastError: string | null = null;

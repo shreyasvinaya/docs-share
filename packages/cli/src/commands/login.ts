@@ -3,10 +3,10 @@ import { loadConfig, saveConfig, getApiUrl } from "../lib/config.js";
 import { ApiClient } from "../lib/api-client.js";
 import { output, success, error } from "../lib/output.js";
 import { CliError, EXIT_CODES } from "../lib/errors.js";
-import type { AuthResponse } from "@docs-share/shared";
+import type { AuthResponse } from "@patra/shared";
 
 export const loginCommand = new Command("login")
-  .description("Authenticate with the docs-share server")
+  .description("Authenticate with the Patra server")
   .option("--token <token>", "API token for authentication")
   .option("--status", "Check current authentication status")
   .action(async (opts: { token?: string; status?: boolean }) => {
@@ -17,7 +17,7 @@ export const loginCommand = new Command("login")
 
     if (!opts.token) {
       throw new CliError(
-        "Token is required. Usage: docs-share login --token <TOKEN>",
+        "Token is required. Usage: patra login --token <TOKEN>",
         EXIT_CODES.VALIDATION_ERROR
       );
     }
@@ -51,7 +51,7 @@ async function checkStatus(): Promise<void> {
   const config = loadConfig();
 
   if (!config.auth?.token) {
-    error("Not authenticated. Run `docs-share login --token <TOKEN>` to log in.");
+    error("Not authenticated. Run `patra login --token <TOKEN>` to log in.");
     output({ authenticated: false });
     process.exitCode = EXIT_CODES.AUTH_ERROR;
     return;
@@ -72,7 +72,7 @@ async function checkStatus(): Promise<void> {
       apiUrl,
     });
   } catch {
-    error("Token is invalid or expired. Run `docs-share login --token <TOKEN>` to re-authenticate.");
+    error("Token is invalid or expired. Run `patra login --token <TOKEN>` to re-authenticate.");
     output({ authenticated: false });
     process.exitCode = EXIT_CODES.AUTH_ERROR;
   }

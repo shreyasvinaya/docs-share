@@ -153,9 +153,9 @@ export function PublicHomePage() {
           <p className="mt-3 max-w-3xl text-sm leading-6 text-muted-foreground">
             Use the CLI from scripts, local agents, or CI jobs. The draft command prints one URL by default, while the broader push command preserves multi-file static sites.
           </p>
-          <pre className="mt-5 overflow-x-auto rounded-lg bg-foreground p-4 text-sm text-background"><code>{`docs-share login --token ds_...
-docs-share draft ./plan.html
-docs-share push ./site --to personal --message "Publish linked draft"`}</code></pre>
+          <pre className="mt-5 overflow-x-auto rounded-lg bg-foreground p-4 text-sm text-background"><code>{`patra login --token pat_...
+patra draft ./plan.html
+patra push ./site --to personal --message "Publish linked draft"`}</code></pre>
         </div>
       </section>
     </main>

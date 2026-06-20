@@ -1,5 +1,5 @@
 /**
- * Hand-authored OpenAPI 3.1 specification for the docs-share HTTP API.
+ * Hand-authored OpenAPI 3.1 specification for the Patra HTTP API.
  *
  * This document enumerates every server endpoint exposed by the Hono app
  * (see `src/index.ts` and `src/routes/*.ts`). It is served verbatim at
@@ -8,7 +8,7 @@
  *
  * Endpoints fall into a few authentication categories:
  *  - Cookie session (`ds_session`) — used by the web app.
- *  - Bearer API token (`Authorization: Bearer ds_...`) — used by the CLI and
+ *  - Bearer API token (`Authorization: Bearer pat_...`) — used by the CLI and
  *    automation. Tokens carry scopes enforced on every authenticated endpoint:
  *    `repo:*`, `project:*`, `share:*`, `team:*`, `user:*`, `admin:*`,
  *    `audit:read`, `draft:*`, `git:*`, `site-data:*`, `webhook:*` (each
@@ -44,15 +44,15 @@ const errorResponse = (description: string) => ({
 export const openApiSpec: OpenApiSpec = {
   openapi: "3.1.0",
   info: {
-    title: "docs-share API",
+    title: "Patra API",
     version: "0.1.0",
     summary: "Self-hostable team document sharing.",
     description:
-      "HTTP API for docs-share — a self-hostable app for sharing documents, " +
+      "HTTP API for Patra — a self-hostable app for sharing documents, " +
       "static HTML drafts, and git-backed repositories across teams. " +
       "Most JSON endpoints wrap their payload in a `{ \"data\": ... }` envelope. " +
       "Authenticate web requests with the `ds_session` cookie, and automation " +
-      "with a `ds_` API token sent as `Authorization: Bearer ds_...`.",
+      "with a `pat_` API token sent as `Authorization: Bearer pat_...`.",
     license: { name: "Apache-2.0", url: "https://www.apache.org/licenses/LICENSE-2.0" },
   },
   servers: [
@@ -260,7 +260,7 @@ export const openApiSpec: OpenApiSpec = {
         tags: ["auth"],
         summary: "Create an API token",
         description:
-          "Returns the plaintext `ds_` token exactly once. Session-only: an " +
+          "Returns the plaintext `pat_` token exactly once. Session-only: an " +
           "API token cannot mint tokens (returns 403), preventing privilege " +
           "escalation.",
         security: sessionAuth,
@@ -1479,7 +1479,7 @@ export const openApiSpec: OpenApiSpec = {
       get: {
         tags: ["git"],
         summary: "Git reference discovery (smart-HTTP)",
-        description: "Authenticate with HTTP Basic where the password is a `ds_` API token with `git:read`/`git:write` scope.",
+        description: "Authenticate with HTTP Basic where the password is a `pat_` API token with `git:read`/`git:write` scope.",
         security: [{ basicAuth: [] }],
         parameters: [
           { $ref: "#/components/parameters/OwnerType" },
@@ -1898,7 +1898,7 @@ export const openApiSpec: OpenApiSpec = {
         description:
           "Registers an outbound webhook. The `secret` is returned EXACTLY ONCE " +
           "in this response and never again — store it to verify the " +
-          "`X-DocsShare-Signature` (`sha256=<hex>` HMAC-SHA256 of the raw body) " +
+          "`X-Patra-Signature` (`sha256=<hex>` HMAC-SHA256 of the raw body) " +
           "header on deliveries. `url` must be a public http(s) URL " +
           "(private/loopback hosts are rejected). Requires the `webhook:write` " +
           "scope when using an API token.",
@@ -2000,10 +2000,10 @@ export const openApiSpec: OpenApiSpec = {
       bearerAuth: {
         type: "http",
         scheme: "bearer",
-        bearerFormat: "ds_<token>",
-        description: "API token created via POST /api/auth/tokens. Send as `Authorization: Bearer ds_...`.",
+        bearerFormat: "pat_<token>",
+        description: "API token created via POST /api/auth/tokens. Send as `Authorization: Bearer pat_...`.",
       },
-      basicAuth: { type: "http", scheme: "basic", description: "Git smart-HTTP: any username, password is a `ds_` token." },
+      basicAuth: { type: "http", scheme: "basic", description: "Git smart-HTTP: any username, password is a `pat_` token." },
     },
     parameters: {
       RepoId: { name: "repoId", in: "path", required: true, schema: { type: "string" } },
@@ -2171,7 +2171,7 @@ export const openApiSpec: OpenApiSpec = {
         properties: {
           id: { type: "string" },
           name: { type: "string" },
-          token: { type: "string", description: "Plaintext `ds_` token, shown only once." },
+          token: { type: "string", description: "Plaintext `pat_` token, shown only once." },
           prefix: { type: "string" },
           scopes: { type: "string" },
           expiresAt: { type: ["string", "null"] },

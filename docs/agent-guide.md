@@ -1,16 +1,16 @@
 # Agent Guide
 
-This guide is for coding agents and automation that need to use docs-share or
+This guide is for coding agents and automation that need to use Patra or
 modify it safely. For product behavior, read the [Product Guide](product-guide.md).
 
 ## Fast Path For Publishing Agent HTML
 
-Use `docs-share draft` when you have exactly one static HTML file and need to
+Use `patra draft` when you have exactly one static HTML file and need to
 return a private authenticated URL.
 
 ```bash
-docs-share login --token ds_...
-docs-share draft ./plan.html
+patra login --token pat_...
+patra draft ./plan.html
 ```
 
 Default output is intentionally URL-only. This is the best shape for agent
@@ -23,7 +23,7 @@ https://docs.example.com/d/<draft-id>
 Use JSON for machine consumption:
 
 ```bash
-docs-share draft ./plan.html --json
+patra draft ./plan.html --json
 ```
 
 Expected JSON fields:
@@ -40,15 +40,15 @@ Expected JSON fields:
 Use `--title` when the generated HTML title is generic:
 
 ```bash
-docs-share draft ./plan.html --title "Checkout Refactor Plan"
+patra draft ./plan.html --title "Checkout Refactor Plan"
 ```
 
 ## When Not To Use Drafts
 
-Do not use `docs-share draft` for multi-file output. It accepts one `.html` or
+Do not use `patra draft` for multi-file output. It accepts one `.html` or
 `.htm` file only.
 
-Use `docs-share push` instead when the output includes:
+Use `patra push` instead when the output includes:
 
 - External CSS files.
 - Linked pages.
@@ -59,7 +59,7 @@ Use `docs-share push` instead when the output includes:
 Example:
 
 ```bash
-docs-share push ./site --to personal/agent-output --message "Publish agent output"
+patra push ./site --to personal/agent-output --message "Publish agent output"
 ```
 
 ## CLI Commands Agents Commonly Need
@@ -67,43 +67,43 @@ docs-share push ./site --to personal/agent-output --message "Publish agent outpu
 Build the CLI after source changes:
 
 ```bash
-bun run --filter docs-share build
+bun run --filter patra build
 ```
 
 Authenticate:
 
 ```bash
-docs-share login --token ds_...
-docs-share whoami
+patra login --token pat_...
+patra whoami
 ```
 
 Publish one private draft:
 
 ```bash
-docs-share draft ./report.html
+patra draft ./report.html
 ```
 
 Publish a folder and preserve relative paths:
 
 ```bash
-docs-share push ./site --to personal/run-123 --message "Publish run 123"
+patra push ./site --to personal/run-123 --message "Publish run 123"
 ```
 
 Share a repository file or folder:
 
 ```bash
-docs-share share personal/run-123 --public
-docs-share share personal/run-123 --with reviewer@example.com
-docs-share share personal/run-123 --with reviewer@example.com --write
+patra share personal/run-123 --public
+patra share personal/run-123 --with reviewer@example.com
+patra share personal/run-123 --with reviewer@example.com --write
 ```
 
 List useful context:
 
 ```bash
-docs-share ls personal
-docs-share ls --teams
-docs-share ls --shared
-docs-share teams
+patra ls personal
+patra ls --teams
+patra ls --shared
+patra teams
 ```
 
 ## API Surfaces
@@ -276,7 +276,7 @@ Also run a markdown/link sanity check if a local markdown tool is available.
 ## Common Failure Modes
 
 - `Draft uploads must be .html or .htm files`: use a single HTML file or switch
-  to `docs-share push` for a folder.
+  to `patra push` for a folder.
 - `Draft upload exceeds the 10 MB limit`: reduce or split the file. Linked asset
   bundles should use repository upload instead.
 - `Token scope does not allow this action`: token scopes are enforced on every

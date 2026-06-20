@@ -1,4 +1,4 @@
-import type { User } from "@docs-share/shared";
+import type { User } from "@patra/shared";
 
 export interface AdminNavItem {
   label: string;

@@ -1,4 +1,4 @@
-import type { TeamMember, TeamRole } from "@docs-share/shared";
+import type { TeamMember, TeamRole } from "@patra/shared";
 
 /**
  * Whether the current viewer may remove `member` from the team.

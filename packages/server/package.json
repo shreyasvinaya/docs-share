@@ -1,5 +1,5 @@
 {
-  "name": "@docs-share/server",
+  "name": "@patra/server",
   "version": "0.1.0",
   "type": "module",
   "scripts": {
@@ -13,7 +13,7 @@
     "db:studio": "bunx drizzle-kit studio"
   },
   "dependencies": {
-    "@docs-share/shared": "workspace:*",
+    "@patra/shared": "workspace:*",
     "@paralleldrive/cuid2": "^2.2",
     "arctic": "^3",
     "drizzle-orm": "^0.45.2",

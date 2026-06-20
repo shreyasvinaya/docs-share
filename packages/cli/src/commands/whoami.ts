@@ -1,7 +1,7 @@
 import { Command } from "commander";
 import { getClient } from "../lib/api-client.js";
 import { output, success } from "../lib/output.js";
-import type { AuthResponse } from "@docs-share/shared";
+import type { AuthResponse } from "@patra/shared";
 
 export const whoamiCommand = new Command("whoami")
   .description("Print current user info")

@@ -1,6 +1,6 @@
 /**
  * Builds the `/llms.txt` document — a concise, machine-readable summary of
- * docs-share for LLMs and agents, following the llms.txt convention
+ * Patra for LLMs and agents, following the llms.txt convention
  * (https://llmstxt.org). It points at the human docs, the OpenAPI spec, the
  * core concepts, the API base + auth, key endpoints, and the CLI commands.
  */
@@ -16,9 +16,9 @@ export function buildLlmsTxt({ appUrl, apiUrl }: LlmsTxtOptions): string {
   const app = appUrl.replace(/\/+$/, "");
   const api = apiUrl.replace(/\/+$/, "");
 
-  return `# docs-share
+  return `# Patra
 
-> docs-share is a self-hostable app for sharing documents across a team:
+> Patra is a self-hostable app for sharing documents across a team:
 > upload files into git-backed repositories, publish single static HTML
 > "drafts" as private authenticated URLs, and share content by email, with a
 > team, or via public/org-restricted links. It ships a Hono + Bun server, a
@@ -37,7 +37,7 @@ export function buildLlmsTxt({ appUrl, apiUrl }: LlmsTxtOptions): string {
 - Teams: groups of users with roles \`owner\`, \`admin\`, \`member\`, \`viewer\`.
   Team repos are addressed by team slug over git.
 - Projects: lightweight metadata describing a subfolder of a repo.
-- API tokens: \`ds_\`-prefixed bearer tokens with space/comma-separated scopes
+- API tokens: \`pat_\`-prefixed bearer tokens with space/comma-separated scopes
   enforced on every authenticated endpoint: \`repo:read|write\`,
   \`project:read|write\`, \`share:read|write\`, \`team:read|write\`,
   \`user:read|write\`, \`admin:read|write\`, \`audit:read\`, \`draft:read|write\`,
@@ -52,7 +52,7 @@ export function buildLlmsTxt({ appUrl, apiUrl }: LlmsTxtOptions): string {
   actor activity (sysadmins can read the whole install).
 - Site data: targets (\`draft:<id>\` / \`repo:<id>\`) can opt into named form
   collections that accept PUBLIC, unauthenticated, rate-limited submissions.
-- Webhooks: outbound, HMAC-signed event deliveries (\`X-DocsShare-Signature:
+- Webhooks: outbound, HMAC-signed event deliveries (\`X-Patra-Signature:
   sha256=<hex>\`) for \`share.created\`, \`share.revoked\`,
   \`github_sync.completed\`. The signing secret is shown only once at creation.
 
@@ -63,8 +63,8 @@ export function buildLlmsTxt({ appUrl, apiUrl }: LlmsTxtOptions): string {
 - Envelope: JSON endpoints return \`{ "data": ... }\`; errors return
   \`{ "error": ..., "details"?: ... }\`.
 - Auth (web): \`ds_session\` cookie set by Google OAuth sign-in.
-- Auth (automation): \`Authorization: Bearer ds_<token>\`.
-- Auth (git): HTTP Basic over smart-HTTP; password is a \`ds_\` token.
+- Auth (automation): \`Authorization: Bearer pat_<token>\`.
+- Auth (git): HTTP Basic over smart-HTTP; password is a \`pat_\` token.
 - Full machine-readable contract: ${api}/openapi.json
 
 ## Key endpoints
@@ -108,15 +108,15 @@ export function buildLlmsTxt({ appUrl, apiUrl }: LlmsTxtOptions): string {
 
 ## CLI commands
 
-The \`docs-share\` CLI wraps the API for agents and humans.
+The \`patra\` CLI wraps the API for agents and humans.
 
-- docs-share login --token ds_... — store credentials
-- docs-share whoami — print the current user
-- docs-share push <files...> — upload files to a repo target
-- docs-share draft <file.html> [--title T] [--json] — publish a draft URL
-- docs-share ls — list files, teams, or shared items
-- docs-share share — share files or create public links
-- docs-share teams (create|members|invite) — manage teams
+- patra login --token pat_... — store credentials
+- patra whoami — print the current user
+- patra push <files...> — upload files to a repo target
+- patra draft <file.html> [--title T] [--json] — publish a draft URL
+- patra ls — list files, teams, or shared items
+- patra share — share files or create public links
+- patra teams (create|members|invite) — manage teams
 
 ## Docs
 

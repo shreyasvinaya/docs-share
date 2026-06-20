@@ -15,8 +15,8 @@ import { error as printError } from "./lib/output.js";
 const program = new Command();
 
 program
-  .name("docs-share")
-  .description("CLI for the docs-share platform — optimized for AI agent usage")
+  .name("patra")
+  .description("CLI for the Patra platform — optimized for AI agent usage")
   .version("0.1.0")
   .option("--format <format>", "Output format: json, text, table")
   .option("--quiet", "Suppress non-essential output")

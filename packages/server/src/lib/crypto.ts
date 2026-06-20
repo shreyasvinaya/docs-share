@@ -19,7 +19,7 @@ export function generateApiToken(): {
 } {
   const randomBytes = crypto.getRandomValues(new Uint8Array(30));
   const raw = Buffer.from(randomBytes).toString("base64url");
-  const token = `ds_${raw}`;
+  const token = `pat_${raw}`;
   const prefix = token.slice(0, 8);
   const hash = hashToken(token);
   return { token, hash, prefix };

@@ -1,5 +1,5 @@
 import { Command } from "commander";
-import type { Draft } from "@docs-share/shared";
+import type { Draft } from "@patra/shared";
 import { getClient } from "../lib/api-client.js";
 import { output } from "../lib/output.js";
 import {

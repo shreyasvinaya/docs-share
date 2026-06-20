@@ -5,7 +5,7 @@ import type {
   TeamMember,
   CreateTeam,
   InviteMember,
-} from "@docs-share/shared";
+} from "@patra/shared";
 
 export function useTeams() {
   return useQuery({

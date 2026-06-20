@@ -6,7 +6,7 @@ import type {
   CreateEmailShare,
   CreatePublicLink,
   CreateTeamShare,
-} from "@docs-share/shared";
+} from "@patra/shared";
 
 export function useMyShares() {
   return useQuery({

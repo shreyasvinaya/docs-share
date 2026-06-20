@@ -1,8 +1,8 @@
-# docs-share — Engineering Handoff
+# Patra — Engineering Handoff
 
 _Last updated: 2026-06-12_
 
-This document explains what docs-share is, why it exists, how it's built, and the current
+This document explains what Patra is, why it exists, how it's built, and the current
 state of every feature. It's meant to get a new engineer productive without reading the
 whole tree first.
 
@@ -19,7 +19,7 @@ dropped into Slack, where they:
 - have no version history,
 - have no real access control.
 
-**Solution.** docs-share is a self-hostable platform for **hosting, previewing, versioning,
+**Solution.** Patra is a self-hostable platform for **hosting, previewing, versioning,
 and sharing HTML files**, with a workflow optimized for *agents pushing files* rather than
 humans clicking upload buttons. Think "a simpler Google Drive, specialized for HTML, with a
 git backbone and a non-interactive CLI."
@@ -69,7 +69,7 @@ A team is like a Google Group: a named set of users sharing one repo.
 | Frontend     | **React + Vite + Tailwind v4**          | SPA behind auth, class-based dark mode |
 | Server state | **TanStack React Query**                | |
 | UI state     | **Zustand** (persisted)                 | theme, sidebar, etc. |
-| CLI          | **Commander.js**                        | `docs-share` binary |
+| CLI          | **Commander.js**                        | `patra` binary |
 | Monorepo     | **Bun workspaces + Turborepo**          | shared types package |
 | IDs          | CUID2-style via `lib/crypto.ts`         | URL-safe, non-guessable |
 
@@ -77,7 +77,7 @@ Monorepo layout (`packages/*`):
 - `shared` — Zod schemas + TS types, the single source of truth shared by all packages.
 - `server` — Hono API, Drizzle schema, git infra, file extraction, routes.
 - `web` — React SPA.
-- `cli` — `docs-share` command-line client.
+- `cli` — `patra` command-line client.
 
 ---
 
@@ -112,8 +112,8 @@ Two parallel mechanisms, unified by `requireAuth` middleware:
 1. **Web UI — Google OAuth → DB session → HttpOnly cookie (`ds_session`).**
    `sessionMiddleware` runs on every request and *optionally* populates `userId` (it never
    rejects). `requireAuth` enforces presence.
-2. **CLI / agents / git — API tokens.** Format `ds_` + random. Stored only as SHA-256 hash;
-   shown once at creation. Sent as `Authorization: Bearer ds_…`. Git uses HTTP Basic where
+2. **CLI / agents / git — API tokens.** Format `pat_` + random. Stored only as SHA-256 hash;
+   shown once at creation. Sent as `Authorization: Bearer pat_…`. Git uses HTTP Basic where
    the password is the token.
 
 **Dev login.** With `ENABLE_DEV_LOGIN=true`, `POST /api/auth/dev-login` lets you sign in with
@@ -149,7 +149,7 @@ without configuring Google OAuth.
 
 **Drafts / Postplan-style HTML plan publishing**
 - API-token/session upload (`POST /api/drafts`) for a single `.html`/`.htm` draft.
-- CLI command `docs-share draft <plan.html>` publishes one draft and prints the hosted URL.
+- CLI command `patra draft <plan.html>` publishes one draft and prints the hosted URL.
 - Authenticated web listing (`/drafts`) shows owner drafts with search, open, copy URL,
   and delete actions.
 - Draft metadata is first-class in SQLite (`drafts` table); content is stored under

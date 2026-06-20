@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import type { TeamRole } from "@docs-share/shared";
+import type { TeamRole } from "@patra/shared";
 import { canRemoveMember } from "./team-members";
 
 const member = (userId: string, role: TeamRole) => ({ userId, role });

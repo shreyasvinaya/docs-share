@@ -11,7 +11,7 @@ import {
   useUpdateProfile,
 } from "@/hooks/use-auth";
 import { UserAvatar } from "@/components/common/user-avatar";
-import { API_TOKEN_SCOPES } from "@docs-share/shared";
+import { API_TOKEN_SCOPES } from "@patra/shared";
 import { cn } from "@/lib/utils";
 import { getGitHubIntegrationView } from "@/lib/github-integration-status";
 import { SetupChecklist } from "@/components/setup/setup-checklist";

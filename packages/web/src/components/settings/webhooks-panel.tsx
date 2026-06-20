@@ -5,7 +5,7 @@ import {
   useUpdateWebhook,
   useWebhooks,
 } from "@/hooks/use-webhooks";
-import { webhookEvents, type WebhookEvent } from "@docs-share/shared";
+import { webhookEvents, type WebhookEvent } from "@patra/shared";
 
 const EVENT_LABELS: Record<WebhookEvent, string> = {
   "share.created": "Share created",
@@ -64,7 +64,7 @@ export function WebhooksPanel() {
           Receive a signed POST when your shares change or a GitHub sync
           completes. Each request includes an{" "}
           <code className="rounded bg-muted px-1 py-0.5 text-xs">
-            X-DocsShare-Signature
+            X-Patra-Signature
           </code>{" "}
           HMAC-SHA256 header you can verify with your endpoint secret.
         </p>
@@ -80,7 +80,7 @@ export function WebhooksPanel() {
             <input
               id="webhook-url"
               type="url"
-              placeholder="https://hooks.example.com/docs-share"
+              placeholder="https://hooks.example.com/patra"
               value={url}
               onChange={(e) => setUrl(e.target.value)}
               className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm outline-none focus:border-primary focus:ring-1 focus:ring-primary"

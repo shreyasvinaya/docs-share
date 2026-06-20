@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { getAdminNavItems } from "./app-navigation";
-import type { User } from "@docs-share/shared";
+import type { User } from "@patra/shared";
 
 function user(role: User["role"]): User {
   return {

@@ -20,7 +20,7 @@ export class CliError extends Error {
 }
 
 export class AuthError extends CliError {
-  constructor(message = "Not authenticated. Run `docs-share login --token <TOKEN>` first.") {
+  constructor(message = "Not authenticated. Run `patra login --token <TOKEN>` first.") {
     super(message, EXIT_CODES.AUTH_ERROR);
     this.name = "AuthError";
   }

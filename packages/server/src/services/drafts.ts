@@ -125,7 +125,7 @@ export function buildDraftShellHtml(params: {
  * The sandbox stays `allow-scripts` ONLY — never `allow-same-origin` — so the
  * page runs with an opaque origin and cannot read host cookies/DOM. We add a
  * tight `connect-src 'self' <apiOrigin>` so an opted-in form can POST back to
- * the docs-share ingestion endpoint, but NOT to arbitrary attacker servers
+ * the Patra ingestion endpoint, but NOT to arbitrary attacker servers
  * (no wildcard), preventing data exfiltration if the page is compromised.
  */
 export function draftContentSecurityHeaders(

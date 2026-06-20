@@ -1,6 +1,6 @@
 # API Reference
 
-This is a per-endpoint reference for the docs-share HTTP API. The complete,
+This is a per-endpoint reference for the Patra HTTP API. The complete,
 machine-readable contract lives at `GET /openapi.json` (OpenAPI 3.1). A concise
 agent-oriented summary is served at `GET /llms.txt`.
 
@@ -16,7 +16,7 @@ Set a base URL and token for the examples:
 
 ```bash
 export API="https://docs.example.com"
-export TOKEN="ds_your_api_token_here"
+export TOKEN="pat_your_api_token_here"
 ```
 
 ## Authentication
@@ -24,10 +24,10 @@ export TOKEN="ds_your_api_token_here"
 Three mechanisms exist:
 
 - **Session cookie** (`ds_session`) — set by Google OAuth, used by the web app.
-- **Bearer API token** — `Authorization: Bearer ds_...`, used by the CLI and
+- **Bearer API token** — `Authorization: Bearer pat_...`, used by the CLI and
   automation. Create one with `POST /api/auth/tokens`.
 - **HTTP Basic over git** — for the smart-HTTP transport, use any username and
-  your `ds_` token as the password.
+  your `pat_` token as the password.
 
 API tokens carry **scopes** (space- or comma-separated) that are enforced on
 **every** authenticated endpoint (not just drafts). A token granted a narrow
@@ -576,7 +576,7 @@ token with access. Token scope: `repo:read`. Codes: `200`, `403`, `404`.
 
 ## Git smart-HTTP
 
-Authenticate with HTTP Basic: any username, password is a `ds_` token with
+Authenticate with HTTP Basic: any username, password is a `pat_` token with
 `git:read` (fetch) or `git:write` (push). `ownerId` is a user id (for user
 repos) or a team slug (for team repos).
 
@@ -737,7 +737,7 @@ Soft-delete one record (owner; `site-data:write`). Idempotent. Returns `{ "data"
 
 Outbound, HMAC-signed event deliveries. Event types: `share.created`,
 `share.revoked`, `github_sync.completed`. Each delivery POSTs a JSON envelope
-`{ event, deliveredAt, data }` and includes an `X-DocsShare-Signature:
+`{ event, deliveredAt, data }` and includes an `X-Patra-Signature:
 sha256=<hex>` header — the HMAC-SHA256 of the raw request body computed with the
 webhook's secret. Verify it with a constant-time comparison. The signing secret
 (`whsec_...`) is returned **only once, at creation**, and never again.

@@ -29,7 +29,7 @@ export async function exchangeGitHubUserCode(code: string): Promise<string> {
     headers: {
       Accept: "application/json",
       "Content-Type": "application/json",
-      "User-Agent": "docs-share",
+      "User-Agent": "patra",
     },
     body: JSON.stringify({
       client_id: config.GITHUB_APP_CLIENT_ID,
@@ -63,7 +63,7 @@ export async function userCanAccessInstallation(
         headers: {
           Accept: "application/vnd.github+json",
           Authorization: `Bearer ${userToken}`,
-          "User-Agent": "docs-share",
+          "User-Agent": "patra",
           "X-GitHub-Api-Version": "2022-11-28",
         },
       }
@@ -166,7 +166,7 @@ function githubAppHeaders(jwt: string): Record<string, string> {
   return {
     Accept: "application/vnd.github+json",
     Authorization: `Bearer ${jwt}`,
-    "User-Agent": "docs-share",
+    "User-Agent": "patra",
     "X-GitHub-Api-Version": "2022-11-28",
   };
 }

@@ -1,6 +1,6 @@
 # Deployment Guide
 
-This guide covers practical deployment paths for docs-share. The app is a single
+This guide covers practical deployment paths for Patra. The app is a single
 Bun server in production: it serves the API, Git endpoints, preview routes, and
 the built React app from one process. Persistent data lives in `DATA_DIR`.
 
@@ -62,7 +62,7 @@ GITHUB_TOKEN_SECRET=replace-with-32-plus-random-characters
 GITHUB_APP_ID=
 GITHUB_APP_SLUG=
 GITHUB_APP_PRIVATE_KEY=
-EMAIL_FROM="docs-share <notifications@docs.example.com>"
+EMAIL_FROM="Patra <notifications@docs.example.com>"
 RESEND_API_KEY=
 SLACK_WEBHOOK_URL=
 ```
@@ -137,7 +137,7 @@ Health check path:
 Recommended shape: one Fly app plus a volume.
 
 ```bash
-fly launch --dockerfile Dockerfile --name docs-share
+fly launch --dockerfile Dockerfile --name patra
 fly volumes create docs_share_data --size 10 --region <region>
 fly secrets set \
   NODE_ENV=production \
@@ -272,7 +272,7 @@ Avoid purely serverless platforms for the full app until storage is redesigned:
 - Cloudflare Workers
 - AWS Lambda without persistent filesystem strategy
 
-docs-share currently expects persistent local filesystem storage for SQLite,
+Patra currently expects persistent local filesystem storage for SQLite,
 bare Git repositories, extracted worktrees, drafts, and generated Git hooks.
 
 ## Backups And Restore

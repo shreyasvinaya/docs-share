@@ -19,7 +19,7 @@ multi-file static sites with real access control. It is built for two audiences:
   shareable URL — non-interactively, with token auth and deterministic output.
 
 It is a Bun/Turbo monorepo: a Hono API server, a React/Vite web app, a
-`docs-share` CLI, and a shared types package.
+`patra` CLI, and a shared types package.
 
 ## Features
 
@@ -104,18 +104,18 @@ If you terminate TLS at a reverse proxy, forward traffic to the container on por
 
 ## CLI
 
-The command-line client is published as the `docs-share` binary. Authenticate
+The command-line client is published as the `patra` binary. Authenticate
 with an API token created in **Settings → API Tokens** (tokens are prefixed
-`ds_` and shown once):
+`pat_` and shown once):
 
 ```bash
-docs-share login --token ds_...
-docs-share draft ./plan.html          # publish one HTML file, print its URL
-docs-share push ./site --to personal --message "Publish site"
-docs-share teams
+patra login --token pat_...
+patra draft ./plan.html          # publish one HTML file, print its URL
+patra push ./site --to personal --message "Publish site"
+patra teams
 ```
 
-Drafts published with `docs-share draft` appear in the authenticated web app under
+Drafts published with `patra draft` appear in the authenticated web app under
 **Drafts**, where owners can open, copy, search, and delete their private draft
 URLs.
 
@@ -126,7 +126,7 @@ Bun workspaces + Turborepo monorepo:
 - `packages/server` — Hono API, SQLite/Drizzle storage, Git smart-HTTP, file
   extraction, share/draft/webhook routes, OpenAPI + llms.txt.
 - `packages/web` — React/Vite/Tailwind web app.
-- `packages/cli` — the `docs-share` command-line client.
+- `packages/cli` — the `patra` command-line client.
 - `packages/shared` — shared TypeScript types and Zod validation schemas.
 
 ## Documentation
@@ -171,7 +171,7 @@ running app and the published site.
 
 ## Security
 
-Patra ships with authentication (Google OAuth sessions + scoped `ds_` API
+Patra ships with authentication (Google OAuth sessions + scoped `pat_` API
 tokens), sandboxed content serving (untrusted draft HTML runs from a separate
 `CONTENT_ORIGIN` behind short-lived signed URLs and a `sandbox` CSP),
 SSRF-guarded outbound webhooks, and rate limiting. Operators should set strong,
