@@ -155,6 +155,114 @@ describe("DELETE /api/teams/:teamId/members/:userId", () => {
     );
     expect(res.status).toBe(400);
   });
+
+  test("an admin cannot remove an owner", async () => {
+    const { ownerId, memberId, teamId } = await seedTeamWithMember();
+
+    // Promote the plain member to admin.
+    await db
+      .update(schema.teamMembers)
+      .set({ role: "admin" })
+      .where(
+        and(
+          eq(schema.teamMembers.teamId, teamId),
+          eq(schema.teamMembers.userId, memberId)
+        )
+      )
+      .run();
+
+    const res = await appAs(memberId).request(
+      `/api/teams/${teamId}/members/${ownerId}`,
+      { method: "DELETE" }
+    );
+    expect(res.status).toBe(403);
+
+    // The owner is still a member of the team.
+    const ownerStill = await db
+      .select()
+      .from(schema.teamMembers)
+      .where(
+        and(
+          eq(schema.teamMembers.teamId, teamId),
+          eq(schema.teamMembers.userId, ownerId)
+        )
+      )
+      .get();
+    expect(ownerStill?.role).toBe("owner");
+  });
+
+  test("an owner can remove another owner when more than one remains", async () => {
+    const { ownerId, memberId, teamId } = await seedTeamWithMember();
+
+    // Promote the member to a second owner.
+    await db
+      .update(schema.teamMembers)
+      .set({ role: "owner" })
+      .where(
+        and(
+          eq(schema.teamMembers.teamId, teamId),
+          eq(schema.teamMembers.userId, memberId)
+        )
+      )
+      .run();
+
+    const res = await appAs(ownerId).request(
+      `/api/teams/${teamId}/members/${memberId}`,
+      { method: "DELETE" }
+    );
+    expect(res.status).toBe(200);
+
+    const removed = await db
+      .select()
+      .from(schema.teamMembers)
+      .where(
+        and(
+          eq(schema.teamMembers.teamId, teamId),
+          eq(schema.teamMembers.userId, memberId)
+        )
+      )
+      .get();
+    expect(removed).toBeUndefined();
+  });
+
+  test("an admin can remove a plain member", async () => {
+    const { ownerId, memberId, teamId } = await seedTeamWithMember();
+
+    // Add an admin and a separate plain target so the member-target stays a member.
+    const adminId = testId("admin");
+    await db.insert(schema.users).values({
+      id: adminId,
+      email: `${adminId}@example.com`,
+      displayName: "Admin",
+      googleId: `g_${adminId}`,
+    });
+    cleanup.userIds.push(adminId);
+    await db.insert(schema.teamMembers).values({
+      id: testId("tm"),
+      teamId,
+      userId: adminId,
+      role: "admin",
+    });
+
+    void ownerId;
+    const res = await appAs(adminId).request(
+      `/api/teams/${teamId}/members/${memberId}`,
+      { method: "DELETE" }
+    );
+    expect(res.status).toBe(200);
+
+    const removed = await db
+      .select()
+      .from(schema.teamMembers)
+      .where(
+        and(
+          eq(schema.teamMembers.teamId, teamId),
+          eq(schema.teamMembers.userId, memberId)
+        )
+      )
+      .get();
+    expect(removed).toBeUndefined();
+  });
 });
 
 describe("PATCH /api/teams/:teamId/members/:userId", () => {
@@ -282,6 +390,35 @@ describe("POST /api/teams/:teamId/members (invitations)", () => {
       body: JSON.stringify({ email }),
     });
     expect(second.status).toBe(409);
+  });
+
+  test("re-inviting an already-accepted email returns a clean 409, not a 500", async () => {
+    const { ownerId, teamId } = await seedTeamWithMember();
+    const email = `${testId("accepted")}@example.com`;
+
+    const first = await appAs(ownerId).request(`/api/teams/${teamId}/members`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email }),
+    });
+    const firstBody = (await first.json()) as { data: { id: string } };
+    cleanup.inviteIds.push(firstBody.data.id);
+
+    // Simulate the invitee having accepted the invite already.
+    await db
+      .update(schema.invitations)
+      .set({ acceptedAt: new Date().toISOString() })
+      .where(eq(schema.invitations.id, firstBody.data.id))
+      .run();
+
+    const second = await appAs(ownerId).request(`/api/teams/${teamId}/members`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email }),
+    });
+    // Clean 4xx (not an uncaught UNIQUE-constraint 500).
+    expect(second.status).toBe(409);
+    expect(second.status).not.toBe(500);
   });
 });
 
