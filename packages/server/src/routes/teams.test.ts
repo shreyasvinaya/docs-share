@@ -157,6 +157,75 @@ describe("DELETE /api/teams/:teamId/members/:userId", () => {
   });
 });
 
+describe("PATCH /api/teams/:teamId/members/:userId", () => {
+  test("cannot demote the last owner to a non-owner role", async () => {
+    const { ownerId, teamId } = await seedTeamWithMember();
+
+    const res = await appAs(ownerId).request(
+      `/api/teams/${teamId}/members/${ownerId}`,
+      {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ role: "admin" }),
+      }
+    );
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { error: string };
+    expect(body.error).toBe("Cannot remove the last owner");
+
+    // The role was NOT changed.
+    const membership = await db
+      .select()
+      .from(schema.teamMembers)
+      .where(
+        and(
+          eq(schema.teamMembers.teamId, teamId),
+          eq(schema.teamMembers.userId, ownerId)
+        )
+      )
+      .get();
+    expect(membership?.role).toBe("owner");
+  });
+
+  test("demotes an owner when another owner remains", async () => {
+    const { ownerId, memberId, teamId } = await seedTeamWithMember();
+
+    // Promote the member to owner so there are two owners.
+    await db
+      .update(schema.teamMembers)
+      .set({ role: "owner" })
+      .where(
+        and(
+          eq(schema.teamMembers.teamId, teamId),
+          eq(schema.teamMembers.userId, memberId)
+        )
+      )
+      .run();
+
+    const res = await appAs(ownerId).request(
+      `/api/teams/${teamId}/members/${ownerId}`,
+      {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ role: "admin" }),
+      }
+    );
+    expect(res.status).toBe(200);
+
+    const membership = await db
+      .select()
+      .from(schema.teamMembers)
+      .where(
+        and(
+          eq(schema.teamMembers.teamId, teamId),
+          eq(schema.teamMembers.userId, ownerId)
+        )
+      )
+      .get();
+    expect(membership?.role).toBe("admin");
+  });
+});
+
 describe("POST /api/teams/:teamId/members (invitations)", () => {
   test("creates an invitation row when the invitee has no account yet", async () => {
     const { ownerId, teamId } = await seedTeamWithMember();

@@ -2,6 +2,7 @@ import { Hono, type Context } from "hono";
 import { eq, and } from "drizzle-orm";
 import { db, schema } from "../db/index.js";
 import { requireAuth } from "../middleware/requireAuth.js";
+import { canReadRepoPath } from "../middleware/shareAccess.js";
 import { publicRateLimiter } from "../lib/rateLimiters.js";
 import { config } from "../lib/config.js";
 import { hashToken } from "../lib/crypto.js";
@@ -78,91 +79,22 @@ function resolveContentType(filePath: string): string {
     : "application/octet-stream";
 }
 
-async function userHasAccess(
+/**
+ * Whether `userId` may READ `repoId` at the resolved `targetPath` of the
+ * request (null/"" = the repo root / whole repo).
+ *
+ * This is path-aware: the owner and owning-team MEMBERSHIP branches grant
+ * whole-repo read, but a team-SHARE or email-SHARE only grants access when its
+ * path-scope covers `targetPath` (via {@link shareScopeCovers}). A path-scoped
+ * recipient therefore cannot stream worktree files outside their shared path,
+ * and a repo-root index (empty target) requires a repo-wide grant.
+ */
+function userHasAccess(
   userId: string,
-  repoId: string
+  repoId: string,
+  targetPath: string | null | undefined
 ): Promise<boolean> {
-  const repo = await db
-    .select()
-    .from(schema.repos)
-    .where(eq(schema.repos.id, repoId))
-    .get();
-
-  if (!repo) return false;
-
-  if (repo.ownerType === "user" && repo.ownerUserId === userId) {
-    return true;
-  }
-
-  if (repo.ownerType === "team" && repo.ownerTeamId) {
-    const membership = await db
-      .select()
-      .from(schema.teamMembers)
-      .where(
-        and(
-          eq(schema.teamMembers.teamId, repo.ownerTeamId),
-          eq(schema.teamMembers.userId, userId)
-        )
-      )
-      .get();
-
-    if (membership) return true;
-  }
-
-  const user = await db
-    .select()
-    .from(schema.users)
-    .where(eq(schema.users.id, userId))
-    .get();
-
-  if (user) {
-    const emailShare = await db
-      .select()
-      .from(schema.shareRecipients)
-      .innerJoin(
-        schema.shares,
-        eq(schema.shareRecipients.shareId, schema.shares.id)
-      )
-      .where(
-        and(
-          eq(schema.shares.repoId, repoId),
-          eq(schema.shareRecipients.email, user.email)
-        )
-      )
-      .get();
-
-    if (emailShare) return true;
-
-    const teamShares = await db
-      .select({ teamId: schema.shares.teamId })
-      .from(schema.shares)
-      .where(
-        and(
-          eq(schema.shares.repoId, repoId),
-          eq(schema.shares.shareType, "team")
-        )
-      )
-      .all();
-
-    for (const ts of teamShares) {
-      if (ts.teamId) {
-        const membership = await db
-          .select()
-          .from(schema.teamMembers)
-          .where(
-            and(
-              eq(schema.teamMembers.teamId, ts.teamId),
-              eq(schema.teamMembers.userId, userId)
-            )
-          )
-          .get();
-
-        if (membership) return true;
-      }
-    }
-  }
-
-  return false;
+  return canReadRepoPath(userId, repoId, targetPath);
 }
 
 async function serveFile(
@@ -423,7 +355,9 @@ app.get("/:repoId", requireAuth, async (c) => {
   const userId = c.get("userId");
   const repoId = c.req.param("repoId");
 
-  const hasAccess = await userHasAccess(userId, repoId);
+  // Whole-repo index: requires a repo-wide read grant (a path-scoped share
+  // does not cover the empty/root target).
+  const hasAccess = await userHasAccess(userId, repoId, "");
   if (!hasAccess) {
     return c.json({ error: "Access denied" }, 403);
   }
@@ -444,7 +378,9 @@ app.get("/:repoId/*", requireAuth, async (c) => {
     ? c.req.path.slice(viewPrefix.length)
     : "";
 
-  const hasAccess = await userHasAccess(userId, repoId);
+  // Path-aware: the specific requested file path must be covered by the read
+  // grant; a path-scoped share holder is denied files outside their path.
+  const hasAccess = await userHasAccess(userId, repoId, filePath);
   if (!hasAccess) {
     return c.json({ error: "Access denied" }, 403);
   }

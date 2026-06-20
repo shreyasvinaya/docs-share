@@ -2,7 +2,8 @@ import { Hono } from "hono";
 import { eq } from "drizzle-orm";
 import { db, schema } from "../db/index.js";
 import { requireAuth } from "../middleware/requireAuth.js";
-import { checkAccess } from "../middleware/shareAccess.js";
+import { canWriteRepoPath } from "../middleware/shareAccess.js";
+import { createMiddleware } from "hono/factory";
 import { generateId } from "../lib/crypto.js";
 import {
   listGitHubAccessibleRepos,
@@ -22,7 +23,39 @@ const app = new Hono<AppEnv>();
 
 app.use("*", requireAuth);
 
-app.get("/:repoId/github-sync", checkAccess("read"), async (c) => {
+/**
+ * GitHub-sync endpoints configure and run a WHOLE-repo import. They are not
+ * path-scoped operations, so a path-scoped share must never authorize them.
+ * Require a repo-wide WRITE grant: owner, a non-viewer member of the owning
+ * team, or a write share with NO path scope. `canWriteRepoPath(_, _, "")`
+ * encodes exactly this (a path-scoped write share does not cover the empty
+ * whole-repo target).
+ */
+const requireRepoWideWrite = createMiddleware<AppEnv>(async (c, next) => {
+  const userId = c.get("userId");
+  const repoId = c.req.param("repoId");
+
+  if (!repoId) {
+    return c.json({ error: "Missing repoId" }, 400);
+  }
+
+  const repo = await db
+    .select({ id: schema.repos.id })
+    .from(schema.repos)
+    .where(eq(schema.repos.id, repoId))
+    .get();
+  if (!repo) {
+    return c.json({ error: "Repository not found" }, 404);
+  }
+
+  if (!(await canWriteRepoPath(userId, repoId, ""))) {
+    return c.json({ error: "Access denied" }, 403);
+  }
+
+  return next();
+});
+
+app.get("/:repoId/github-sync", requireRepoWideWrite, async (c) => {
   const repoId = c.req.param("repoId");
   const sync = await db
     .select()
@@ -33,7 +66,7 @@ app.get("/:repoId/github-sync", checkAccess("read"), async (c) => {
   return c.json({ data: sync ?? null });
 });
 
-app.get("/:repoId/github-sync/repositories", checkAccess("read"), async (c) => {
+app.get("/:repoId/github-sync/repositories", requireRepoWideWrite, async (c) => {
   const userId = c.get("userId");
   const ownerLogin = c.req.query("ownerLogin") ?? "";
 
@@ -49,7 +82,7 @@ app.get("/:repoId/github-sync/repositories", checkAccess("read"), async (c) => {
   }
 });
 
-app.get("/:repoId/github-sync/organizations", checkAccess("read"), async (c) => {
+app.get("/:repoId/github-sync/organizations", requireRepoWideWrite, async (c) => {
   const userId = c.get("userId");
 
   try {
@@ -63,7 +96,7 @@ app.get("/:repoId/github-sync/organizations", checkAccess("read"), async (c) => 
   }
 });
 
-app.get("/:repoId/github-sync/branches", checkAccess("read"), async (c) => {
+app.get("/:repoId/github-sync/branches", requireRepoWideWrite, async (c) => {
   const userId = c.get("userId");
   const repoUrl = c.req.query("repoUrl");
 
@@ -83,7 +116,7 @@ app.get("/:repoId/github-sync/branches", checkAccess("read"), async (c) => {
   }
 });
 
-app.get("/:repoId/github-sync/tree", checkAccess("read"), async (c) => {
+app.get("/:repoId/github-sync/tree", requireRepoWideWrite, async (c) => {
   const userId = c.get("userId");
   const repoUrl = c.req.query("repoUrl");
   const branch = c.req.query("branch") ?? "main";
@@ -107,7 +140,7 @@ app.get("/:repoId/github-sync/tree", checkAccess("read"), async (c) => {
   }
 });
 
-app.post("/:repoId/github-sync", checkAccess("write"), async (c) => {
+app.post("/:repoId/github-sync", requireRepoWideWrite, async (c) => {
   const userId = c.get("userId");
   const repoId = c.req.param("repoId");
   const body = await c.req.json<{

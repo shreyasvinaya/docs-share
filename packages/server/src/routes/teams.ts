@@ -524,6 +524,25 @@ app.patch("/:teamId/members/:userId", async (c) => {
     return c.json({ error: "Member not found" }, 404);
   }
 
+  // Prevent demoting the last owner: if the target is currently an owner and
+  // the new role is NOT owner, ensure at least one other owner remains.
+  if (targetMember.role === "owner" && role !== "owner") {
+    const owners = await db
+      .select()
+      .from(schema.teamMembers)
+      .where(
+        and(
+          eq(schema.teamMembers.teamId, teamId),
+          eq(schema.teamMembers.role, "owner")
+        )
+      )
+      .all();
+
+    if (owners.length <= 1) {
+      return c.json({ error: "Cannot remove the last owner" }, 400);
+    }
+  }
+
   await db
     .update(schema.teamMembers)
     .set({ role })
