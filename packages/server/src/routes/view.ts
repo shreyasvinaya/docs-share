@@ -5,6 +5,7 @@ import { requireAuth } from "../middleware/requireAuth.js";
 import { config } from "../lib/config.js";
 import { hashToken } from "../lib/crypto.js";
 import { normalizeRelativePath, resolveInside } from "../lib/security.js";
+import { recordViewFromRequest } from "../services/analytics.js";
 import { stat } from "fs/promises";
 import type { AppEnv } from "../lib/types.js";
 
@@ -335,6 +336,8 @@ app.get("/public/:token/*", async (c) => {
     return c.json({ error: "Invalid path" }, 400);
   }
 
+  recordViewFromRequest("public", share.id, c.req.raw);
+
   return serveFile(worktreeBase, resolvedRelativePath, c.req.path);
 });
 
@@ -379,6 +382,8 @@ app.get("/public/:token", async (c) => {
   if (normalizedSharePath === null) {
     return c.json({ error: "Invalid path" }, 400);
   }
+
+  recordViewFromRequest("public", share.id, c.req.raw);
 
   return serveFile(worktreeBase, normalizedSharePath, c.req.path);
 });

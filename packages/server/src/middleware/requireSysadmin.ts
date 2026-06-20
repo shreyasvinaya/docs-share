@@ -1,0 +1,27 @@
+import { createMiddleware } from "hono/factory";
+import { eq } from "drizzle-orm";
+import { db, schema } from "../db/index.js";
+import type { AppEnv } from "../lib/types.js";
+
+/**
+ * Requires the authenticated user to be a system administrator. Must run after
+ * requireAuth (which populates userId).
+ */
+export const requireSysadmin = createMiddleware<AppEnv>(async (c, next) => {
+  const userId = c.get("userId");
+  if (!userId) {
+    return c.json({ error: "Authentication required" }, 401);
+  }
+
+  const user = await db
+    .select({ isSysadmin: schema.users.isSysadmin })
+    .from(schema.users)
+    .where(eq(schema.users.id, userId))
+    .get();
+
+  if (!user?.isSysadmin) {
+    return c.json({ error: "Sysadmin access required" }, 403);
+  }
+
+  return next();
+});
