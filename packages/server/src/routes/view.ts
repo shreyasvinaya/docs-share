@@ -2,6 +2,7 @@ import { Hono, type Context } from "hono";
 import { eq, and } from "drizzle-orm";
 import { db, schema } from "../db/index.js";
 import { requireAuth } from "../middleware/requireAuth.js";
+import { requireScope } from "../middleware/requireScope.js";
 import { canReadRepoPath } from "../middleware/shareAccess.js";
 import { publicRateLimiter } from "../lib/rateLimiters.js";
 import { config } from "../lib/config.js";
@@ -440,7 +441,7 @@ app.get("/public/:token", publicRateLimiter, async (c) => {
   return response;
 });
 
-app.get("/:repoId", requireAuth, async (c) => {
+app.get("/:repoId", requireAuth, requireScope("repo:read"), async (c) => {
   const userId = c.get("userId");
   const repoId = c.req.param("repoId");
 
@@ -459,7 +460,7 @@ app.get("/:repoId", requireAuth, async (c) => {
  * GET /:repoId/* — Serve actual files from the extracted worktree.
  * Requires auth + access check.
  */
-app.get("/:repoId/*", requireAuth, async (c) => {
+app.get("/:repoId/*", requireAuth, requireScope("repo:read"), async (c) => {
   const userId = c.get("userId");
   const repoId = c.req.param("repoId");
   const viewPrefix = `/view/${repoId}/`;

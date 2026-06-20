@@ -9,8 +9,9 @@
  * Endpoints fall into a few authentication categories:
  *  - Cookie session (`ds_session`) — used by the web app.
  *  - Bearer API token (`Authorization: Bearer ds_...`) — used by the CLI and
- *    automation. Tokens carry scopes such as `draft:read`, `draft:write`, and
- *    `git:*`.
+ *    automation. Tokens carry scopes enforced on every authenticated endpoint:
+ *    `repo:*`, `share:*`, `team:*`, `user:*`, `audit:read`, `draft:*`, `git:*`,
+ *    `site-data:*`, `webhook:*` (each `:read`/`:write`), or `*` for all.
  *  - HTTP Basic over the git smart-HTTP transport (token as the password).
  *  - Public (no auth) — share links, the spec itself, and `llms.txt`.
  */
@@ -266,7 +267,8 @@ export const openApiSpec: OpenApiSpec = {
                   name: { type: "string" },
                   scopes: {
                     type: "string",
-                    description: "Space- or comma-separated scopes (e.g. `draft:write git:*`). Defaults to `*`.",
+                    description:
+                      "Space- or comma-separated scopes, enforced on every authenticated endpoint: `repo:read|write`, `share:read|write`, `team:read|write`, `user:read|write`, `audit:read`, `draft:read|write`, `git:read|write`, `site-data:read|write`, `webhook:read|write`, or wildcards (`*`, `repo:*`). Defaults to `*`.",
                   },
                   expiresIn: { type: "integer", description: "Lifetime in seconds." },
                 },

@@ -10,3 +10,4 @@ export * from "./types/auth.js";
 export * from "./types/webhook.js";
 export * from "./types/api.js";
 export * from "./constants/permissions.js";
+export * from "./constants/scopes.js";

@@ -29,9 +29,25 @@ Three mechanisms exist:
 - **HTTP Basic over git** — for the smart-HTTP transport, use any username and
   your `ds_` token as the password.
 
-API tokens carry **scopes** (space- or comma-separated): `*` (all), `draft:read`,
-`draft:write`, `git:read`, `git:write`, `site-data:read`, `site-data:write`,
-`webhook:read`, `webhook:write`, or wildcards like `draft:*` / `git:*`.
+API tokens carry **scopes** (space- or comma-separated) that are enforced on
+**every** authenticated endpoint (not just drafts). A token granted a narrow
+scope cannot drive endpoints of another resource. Scopes:
+
+- `repo:read` / `repo:write` — repos + file content: list, commits, view, and
+  the github-sync read helpers (`read`); upload, delete, restore, copy, and
+  github-sync configure (`write`).
+- `share:read` / `share:write` — list/get shares (`read`); create, update,
+  delete, accept (`write`).
+- `team:read` / `team:write` — list/get teams and members (`read`); create,
+  update, delete, member add/remove/role, invite/accept (`write`).
+- `user:read` / `user:write` — read profile + github-token status (`read`);
+  update profile, github-token put/delete, github-app connect (`write`).
+- `audit:read` — read the audit log.
+- `draft:read` / `draft:write`, `git:read` / `git:write`,
+  `site-data:read` / `site-data:write`, `webhook:read` / `webhook:write`.
+
+`*` grants everything; a `<resource>:*` wildcard (e.g. `repo:*`, `draft:*`)
+grants both actions for that resource. Omitting `scopes` defaults to `*`.
 
 ```bash
 curl -s -X POST "$API/api/auth/tokens" \
@@ -104,6 +120,9 @@ curl -s -X DELETE "$API/api/auth/tokens/$TOKEN_ID" \
 
 ## Users
 
+Token scopes: `user:read` (GET profile / github-token status) and `user:write`
+(PATCH profile, github-token put/delete, github-app connect).
+
 ### GET /api/users/me
 
 Current profile plus your personal repo summary. Codes: `200`, `401`, `404`.
@@ -170,6 +189,9 @@ Remove the stored GitHub token. Codes: `200`, `401`.
 ---
 
 ## Teams
+
+Token scopes: `team:read` (list/get teams and members) and `team:write`
+(create, update, delete, member add/remove/role, invite/accept).
 
 ### GET /api/teams
 
@@ -275,6 +297,9 @@ Delete project metadata (owner only). Codes: `200`, `403`, `404`.
 
 ## Files
 
+Token scopes: `repo:read` (GET list/commits) and `repo:write` (upload, delete,
+restore, copy). The `repo` resource is shared with the Repos github-sync routes.
+
 ### GET /api/files/{repoId}
 
 List files at the repo root or `?path=<dir>`. Returns `FileNode[]`. Codes:
@@ -348,6 +373,9 @@ curl -s -X POST "$API/api/files/$REPO_ID/copy" \
 ---
 
 ## Repos — GitHub sync
+
+Token scopes: `repo:read` (GET config/repositories/organizations/branches/tree)
+and `repo:write` (POST configure-and-sync).
 
 ### GET /api/repos/{repoId}/github-sync
 
@@ -451,6 +479,10 @@ the server). Codes: `200`, `403`, `404`.
 
 ## Shares
 
+Token scopes: `share:read` (list / for-resource / incoming / analytics) and
+`share:write` (create, delete, accept). The public `GET /api/shares/public/{token}`
+needs no token.
+
 ### GET /api/shares
 
 List shares you created. Codes: `200`, `401`.
@@ -538,7 +570,7 @@ curl -s "$API/view/public/$SHARE_TOKEN/index.html" \
 ### GET /view/{repoId} and /view/{repoId}/{path}
 
 Serve files from an authorized repo worktree. Requires a session or bearer
-token with access. Codes: `200`, `403`, `404`.
+token with access. Token scope: `repo:read`. Codes: `200`, `403`, `404`.
 
 ---
 
@@ -589,6 +621,7 @@ curl -s "$API/api/shares/$SHARE_ID/analytics" -H "Authorization: Bearer $TOKEN"
 A log of actor activity. Each `AuditEntry` has: `id`, `actorUserId`, `actorName`,
 `actorEmail`, `action`, `targetType`, `targetId`, `metadata` (object | null), and
 `createdAt`. Both endpoints accept an optional `?limit=` (1-500, default 100).
+Token scope: `audit:read` (both endpoints; `/all` additionally requires sysadmin).
 
 ### GET /api/audit
 

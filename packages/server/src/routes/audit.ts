@@ -1,5 +1,6 @@
 import { Hono } from "hono";
 import { requireAuth } from "../middleware/requireAuth.js";
+import { requireScope } from "../middleware/requireScope.js";
 import { requireSysadmin } from "../middleware/requireSysadmin.js";
 import { listAuditEntries } from "../services/analytics.js";
 import type { AppEnv } from "../lib/types.js";
@@ -15,7 +16,7 @@ function parseLimit(raw: string | undefined): number | undefined {
 /**
  * GET / — List audit entries performed by the current user (owner scope).
  */
-app.get("/", requireAuth, async (c) => {
+app.get("/", requireAuth, requireScope("audit:read"), async (c) => {
   const userId = c.get("userId");
   const entries = await listAuditEntries({
     actorUserId: userId,
@@ -27,7 +28,7 @@ app.get("/", requireAuth, async (c) => {
 /**
  * GET /all — List every audit entry across the install. Sysadmin only.
  */
-app.get("/all", requireAuth, requireSysadmin, async (c) => {
+app.get("/all", requireAuth, requireScope("audit:read"), requireSysadmin, async (c) => {
   const entries = await listAuditEntries({
     limit: parseLimit(c.req.query("limit")),
   });

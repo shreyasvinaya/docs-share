@@ -3,6 +3,7 @@ import { deleteCookie, getCookie, setCookie } from "hono/cookie";
 import { eq } from "drizzle-orm";
 import { db, schema } from "../db/index.js";
 import { requireAuth } from "../middleware/requireAuth.js";
+import { requireScope, requireScopeByMethod } from "../middleware/requireScope.js";
 import { config } from "../lib/config.js";
 import { decryptSecret, encryptSecret, generatePublicToken } from "../lib/crypto.js";
 import {
@@ -21,6 +22,12 @@ const app = new Hono<AppEnv>();
 const GITHUB_APP_STATE_COOKIE = "github_app_state";
 
 app.use("*", requireAuth);
+// API-token least-privilege: GET/HEAD profile + github-token status require
+// `user:read`; mutations (PATCH profile, github-token put/delete) require
+// `user:write`. The GitHub App install/callback GETs effect an account-level
+// connection change, so they are individually upgraded to `user:write` below.
+// Session auth is unaffected (requireScope only enforces for api_token).
+app.use("*", requireScopeByMethod("user"));
 
 /**
  * GET /me — Return current user profile + their personal repo info.
@@ -155,7 +162,10 @@ app.get("/me/github-token", async (c) => {
   });
 });
 
-app.get("/me/github-app/install", async (c) => {
+// These two are GET (OAuth redirect flow) but mutate the account's GitHub
+// connection, so they require `user:write` rather than the method-default
+// `user:read`.
+app.get("/me/github-app/install", requireScope("user:write"), async (c) => {
   if (!isGitHubAppConfigured()) {
     return c.json({ error: "GitHub App integration is not configured" }, 503);
   }
@@ -172,7 +182,7 @@ app.get("/me/github-app/install", async (c) => {
   return c.redirect(createGitHubAppInstallUrl(state));
 });
 
-app.get("/me/github-app/callback", async (c) => {
+app.get("/me/github-app/callback", requireScope("user:write"), async (c) => {
   const userId = c.get("userId");
   const { installation_id: installationId, state, code } = c.req.query();
   const storedState = getCookie(c, GITHUB_APP_STATE_COOKIE);

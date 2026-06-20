@@ -38,8 +38,10 @@ export function buildLlmsTxt({ appUrl, apiUrl }: LlmsTxtOptions): string {
   Team repos are addressed by team slug over git.
 - Projects: lightweight metadata describing a subfolder of a repo.
 - API tokens: \`ds_\`-prefixed bearer tokens with space/comma-separated scopes
-  (\`*\`, \`draft:*\`, \`git:*\`, \`draft:read\`, \`git:write\`, \`site-data:read\`,
-  \`site-data:write\`, \`webhook:read\`, \`webhook:write\`, ...). Revoking a token
+  enforced on every authenticated endpoint: \`repo:read|write\`,
+  \`share:read|write\`, \`team:read|write\`, \`user:read|write\`, \`audit:read\`,
+  \`draft:read|write\`, \`git:read|write\`, \`site-data:read|write\`,
+  \`webhook:read|write\`, plus wildcards (\`*\`, \`repo:*\`, ...). Revoking a token
   is a soft delete (it sets \`revokedAt\`; the row is kept for audit).
 - GitHub sync: import files into a repo from a GitHub repository/branch/path
   using a stored, encrypted GitHub token.

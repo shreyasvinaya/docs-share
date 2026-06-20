@@ -2,6 +2,7 @@ import { Hono } from "hono";
 import { eq, and, isNull, inArray, or } from "drizzle-orm";
 import { db, schema } from "../db/index.js";
 import { requireAuth } from "../middleware/requireAuth.js";
+import { requireScope } from "../middleware/requireScope.js";
 import { publicRateLimiter } from "../lib/rateLimiters.js";
 import { generateId, generatePublicToken, hashToken } from "../lib/crypto.js";
 import { config } from "../lib/config.js";
@@ -141,7 +142,7 @@ async function notifyShareCreated(params: {
 /**
  * GET /for-resource — Get existing shares for a specific repoId+path.
  */
-app.get("/for-resource", requireAuth, async (c) => {
+app.get("/for-resource", requireAuth, requireScope("share:read"), async (c) => {
   const userId = c.get("userId");
   const repoId = c.req.query("repoId");
   const path = c.req.query("path") || null;
@@ -181,7 +182,7 @@ app.get("/for-resource", requireAuth, async (c) => {
  * POST / — Create a share.
  * Body varies by type: email, public_link, or team.
  */
-app.post("/", requireAuth, async (c) => {
+app.post("/", requireAuth, requireScope("share:write"), async (c) => {
   const userId = c.get("userId");
   const body = await c.req.json();
   const { repoId, path, shareType } = body;
@@ -570,7 +571,7 @@ app.post("/", requireAuth, async (c) => {
 /**
  * GET / — List shares created by current user.
  */
-app.get("/", requireAuth, async (c) => {
+app.get("/", requireAuth, requireScope("share:read"), async (c) => {
   const userId = c.get("userId");
 
   const userShares = await db
@@ -585,7 +586,7 @@ app.get("/", requireAuth, async (c) => {
 /**
  * GET /incoming — List shares where current user is a recipient.
  */
-app.get("/incoming", requireAuth, async (c) => {
+app.get("/incoming", requireAuth, requireScope("share:read"), async (c) => {
   const userId = c.get("userId");
 
   const user = await db
@@ -645,7 +646,7 @@ app.get("/incoming", requireAuth, async (c) => {
  * Stamps `acceptedAt` on the matching recipient row and links the recipient to
  * the user account. Idempotent: re-accepting keeps the original timestamp.
  */
-app.post("/:shareId/accept", requireAuth, async (c) => {
+app.post("/:shareId/accept", requireAuth, requireScope("share:write"), async (c) => {
   const userId = c.get("userId");
   const shareId = c.req.param("shareId");
 
@@ -710,7 +711,7 @@ app.post("/:shareId/accept", requireAuth, async (c) => {
 /**
  * DELETE /:shareId — Revoke share. Requires auth + must be creator.
  */
-app.delete("/:shareId", requireAuth, async (c) => {
+app.delete("/:shareId", requireAuth, requireScope("share:write"), async (c) => {
   const userId = c.get("userId");
   const shareId = c.req.param("shareId");
 
@@ -761,7 +762,7 @@ app.delete("/:shareId", requireAuth, async (c) => {
  * and are deliberately NOT widened to sysadmins. Sysadmins use the audit log
  * (cross-actor, no per-visitor data) for oversight, not per-share view metrics.
  */
-app.get("/:shareId/analytics", requireAuth, async (c) => {
+app.get("/:shareId/analytics", requireAuth, requireScope("share:read"), async (c) => {
   const userId = c.get("userId");
   const shareId = c.req.param("shareId");
 
