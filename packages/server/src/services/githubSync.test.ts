@@ -21,6 +21,7 @@ import {
   orderGitHubBranches,
   prepareSelectedImport,
   redactSensitiveGitOutput,
+  sanitizeGitError,
 } from "./githubSync.js";
 
 const originalFetch = globalThis.fetch;
@@ -54,6 +55,41 @@ describe("normalizeGitHubRepoUrl", () => {
     expect(redacted).not.toContain("ghp_secret");
     expect(redacted).not.toContain("github_pat_abc123");
     expect(redacted).toContain("[redacted]");
+  });
+});
+
+describe("sanitizeGitError (FIX 1: no internal paths reach the client/DB)", () => {
+  test("strips the temp clone path AND repo.diskPath from a forced git error", () => {
+    // A realistic fallback git error: it embeds the real OS temp clone path and
+    // the server-internal bare-repo diskPath under DATA_DIR. Neither may survive
+    // into the message that is persisted to the github_syncs row / returned.
+    const clonePath = join(tmpdir(), "ds-github-sync-abc123", "source");
+    const diskPath = "/srv/docs-share/data/repos/repo_42.git";
+    const raw =
+      `git -C ${clonePath} push ${diskPath} HEAD:refs/heads/main --force failed: ` +
+      `fatal: could not create work tree dir '${clonePath}'`;
+
+    const sanitized = sanitizeGitError(raw);
+
+    // The OS temp dir is a default base dir, so the clone path is gone.
+    expect(sanitized).not.toContain(tmpdir());
+    expect(sanitized).not.toContain("ds-github-sync-abc123");
+    // The diskPath under the (default ./data) DATA_DIR... but with a custom
+    // absolute DATA_DIR like /srv/... the catch-all still removes it.
+    expect(sanitized).not.toContain(diskPath);
+    expect(sanitized).not.toContain("repo_42.git");
+    expect(sanitized).toContain("[path]");
+  });
+
+  test("still redacts embedded credentials while removing paths", () => {
+    const raw =
+      `fatal: clone of https://x-access-token:ghp_topsecret@github.com/acme/x.git ` +
+      `into ${join(tmpdir(), "ds-github-sync-xyz", "source")} failed`;
+    const sanitized = sanitizeGitError(raw);
+    expect(sanitized).not.toContain("ghp_topsecret");
+    expect(sanitized).not.toContain("ds-github-sync-xyz");
+    expect(sanitized).toContain("[redacted]");
+    expect(sanitized).toContain("[path]");
   });
 });
 
@@ -463,5 +499,65 @@ describe("prepareSelectedImport (symlink containment)", () => {
     await expect(
       prepareSelectedImport(clonePath, importPath, "docs")
     ).rejects.toThrow();
+  });
+
+  test("rejects a selected symlink that points at another IN-CLONE file", async () => {
+    // FIX 4: a symlink whose target is inside the clone must STILL be rejected
+    // (previously it was realpath'd first and copied as its target's content).
+    const root = await scratch("ds-sym-root3-");
+    const clonePath = join(root, "source");
+    const importPath = join(root, "import");
+
+    await mkdir(clonePath, { recursive: true });
+    await writeFile(join(clonePath, "secret.md"), "IN-CLONE SECRET");
+    // `link.md` -> `secret.md`, both inside the clone.
+    await symlink(join(clonePath, "secret.md"), join(clonePath, "link.md"));
+
+    await expect(
+      prepareSelectedImport(clonePath, importPath, "link.md")
+    ).rejects.toThrow();
+  });
+
+  test("rejects when an INTERMEDIATE path component is a symlink (even in-clone)", async () => {
+    // FIX 4: a symlinked directory component must be rejected before any
+    // realpath, regardless of whether it points inside the clone.
+    const root = await scratch("ds-sym-root4-");
+    const clonePath = join(root, "source");
+    const importPath = join(root, "import");
+
+    await mkdir(join(clonePath, "real"), { recursive: true });
+    await writeFile(join(clonePath, "real", "ok.html"), "<p>ok</p>");
+    // `linkdir` -> `real` (in-clone). Selecting `linkdir/ok.html` traverses it.
+    await symlink(join(clonePath, "real"), join(clonePath, "linkdir"));
+
+    await expect(
+      prepareSelectedImport(clonePath, importPath, "linkdir/ok.html")
+    ).rejects.toThrow();
+  });
+
+  test("does not copy an IN-CLONE symlink nested in a selected directory", async () => {
+    // FIX 4: recursive copy must skip symlinks pointing inside the clone too.
+    const root = await scratch("ds-sym-root5-");
+    const clonePath = join(root, "source");
+    const importPath = join(root, "import");
+
+    await mkdir(join(clonePath, "docs"), { recursive: true });
+    await writeFile(join(clonePath, "docs", "ok.html"), "<p>ok</p>");
+    await writeFile(join(clonePath, "secret.md"), "IN-CLONE SECRET");
+    // In-clone symlink inside the selected dir, pointing at an in-clone file.
+    await symlink(
+      join(clonePath, "secret.md"),
+      join(clonePath, "docs", "alias.md")
+    );
+
+    await prepareSelectedImport(clonePath, importPath, "docs");
+
+    const files = await importedFiles(importPath);
+    expect(files).toContain("ok.html");
+    expect(files).not.toContain("alias.md");
+    for (const f of files) {
+      const info = await lstat(join(importPath, f));
+      expect(info.isSymbolicLink()).toBe(false);
+    }
   });
 });

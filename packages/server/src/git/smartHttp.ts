@@ -1,8 +1,8 @@
 import { Hono } from "hono";
 import { and, eq, isNull } from "drizzle-orm";
 import { db, schema } from "../db/index.js";
-import { config } from "../lib/config.js";
 import { hashToken } from "../lib/crypto.js";
+import { spawnStreaming } from "./gitOps.js";
 import type { AppEnv } from "../lib/types.js";
 
 const app = new Hono<AppEnv>();
@@ -163,18 +163,15 @@ app.get("/:ownerType/:ownerId/info/refs", async (c) => {
     return c.text("Repository not found", 404);
   }
 
-  const proc = Bun.spawn([service, "--stateless-rpc", "--advertise-refs", repoPath], {
-    stdout: "pipe",
-    stderr: "pipe",
-    timeout: config.GIT_PROCESS_TIMEOUT_MS,
-    killSignal: "SIGKILL",
-  });
+  // Process-group spawn: a runaway advertise-refs (and any helper it forks) is
+  // killed as a unit on timeout, never orphaned.
+  const proc = spawnStreaming([service, "--stateless-rpc", "--advertise-refs", repoPath]);
 
   const output = await new Response(proc.stdout).arrayBuffer();
   const exitCode = await proc.exited;
 
   if (exitCode !== 0) {
-    const stderr = await new Response(proc.stderr).text();
+    const stderr = await proc.stderr();
     console.error(`${service} advertise-refs failed:`, stderr);
     return c.text("Repository not found", 404);
   }
@@ -217,12 +214,9 @@ app.post("/:ownerType/:ownerId/git-upload-pack", async (c) => {
 
   const body = await c.req.arrayBuffer();
 
-  const proc = Bun.spawn(["git-upload-pack", "--stateless-rpc", repoPath], {
+  // Process-group spawn so the pack stream's whole tree is killed on timeout.
+  const proc = spawnStreaming(["git-upload-pack", "--stateless-rpc", repoPath], {
     stdin: new Uint8Array(body),
-    stdout: "pipe",
-    stderr: "pipe",
-    timeout: config.GIT_PROCESS_TIMEOUT_MS,
-    killSignal: "SIGKILL",
   });
 
   return new Response(proc.stdout, {
@@ -253,12 +247,9 @@ app.post("/:ownerType/:ownerId/git-receive-pack", async (c) => {
 
   const body = await c.req.arrayBuffer();
 
-  const proc = Bun.spawn(["git-receive-pack", "--stateless-rpc", repoPath], {
+  // Process-group spawn so the pack stream's whole tree is killed on timeout.
+  const proc = spawnStreaming(["git-receive-pack", "--stateless-rpc", repoPath], {
     stdin: new Uint8Array(body),
-    stdout: "pipe",
-    stderr: "pipe",
-    timeout: config.GIT_PROCESS_TIMEOUT_MS,
-    killSignal: "SIGKILL",
   });
 
   return new Response(proc.stdout, {

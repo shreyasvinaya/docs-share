@@ -123,21 +123,20 @@ describe("normalizeRelativePath", () => {
     expect(normalizeRelativePath(".env.example")).toBe(".env.example");
   });
 
-  test("rejects git pathspec magic (segments starting with ':')", () => {
-    // These would otherwise widen a `git ls-files`/`git rm`/`git log` scope to
-    // the whole repo when GIT_LITERAL_PATHSPECS isn't set.
-    expect(normalizeRelativePath(":(glob)**")).toBeNull();
-    expect(normalizeRelativePath(":(top)")).toBeNull();
-    expect(normalizeRelativePath(":(exclude)docs")).toBeNull();
-    expect(normalizeRelativePath(":!docs")).toBeNull();
-    expect(normalizeRelativePath(":/")).toBeNull();
-    expect(normalizeRelativePath(":/etc/passwd")).toBeNull();
-    // A colon nested in a deeper segment is just as dangerous.
-    expect(normalizeRelativePath("docs/:(glob)**")).toBeNull();
-    // A bare colon as the leading char of a segment.
-    expect(normalizeRelativePath(":colon")).toBeNull();
-    // A colon NOT at the start of a segment is a normal (if unusual) filename.
+  test("accepts colon-leading filenames (pathspec magic is neutralized at git call sites)", () => {
+    // A leading `:` is a legitimate filename character. Pathspec "magic" is
+    // disarmed by forcing GIT_LITERAL_PATHSPECS=1 at every git call site, so the
+    // generic normalizer no longer needs to reject these (which broke valid
+    // filenames like `:notes.md` / `docs/:draft.md`).
+    expect(normalizeRelativePath(":notes.md")).toBe(":notes.md");
+    expect(normalizeRelativePath("docs/:draft.md")).toBe("docs/:draft.md");
+    expect(normalizeRelativePath(":(glob)**")).toBe(":(glob)**");
+    expect(normalizeRelativePath("docs/:(glob)**")).toBe("docs/:(glob)**");
+    // A colon NOT at the start of a segment is also a normal filename.
     expect(normalizeRelativePath("docs/a:b.txt")).toBe("docs/a:b.txt");
+    // Traversal and .git are still rejected regardless of colons.
+    expect(normalizeRelativePath("../:notes.md")).toBeNull();
+    expect(normalizeRelativePath(":a/../../etc")).toBeNull();
   });
 });
 
@@ -236,6 +235,24 @@ describe("redactInternalPaths", () => {
     expect(redactInternalPaths("nothing to commit", [])).toBe(
       "nothing to commit"
     );
+  });
+
+  test("preserves a github URL while redacting an absolute server path", () => {
+    const msg =
+      "fatal: could not read from https://github.com/acme/widgets.git " +
+      "into /srv/docs-share/data/worktrees/repo123/source";
+    const redacted = redactInternalPaths(msg, ["/srv/docs-share/data"]);
+    // The URL (and its path component) survives intact...
+    expect(redacted).toContain("https://github.com/acme/widgets.git");
+    // ...while the server path is gone.
+    expect(redacted).not.toContain("/srv/docs-share/data");
+    expect(redacted).not.toContain("/worktrees/repo123");
+    expect(redacted).toContain("[path]");
+  });
+
+  test("does not mangle a bare github URL even without any base dir match", () => {
+    const msg = "remote: see https://github.com/a/b for details";
+    expect(redactInternalPaths(msg, ["/srv/docs-share/data"])).toBe(msg);
   });
 });
 

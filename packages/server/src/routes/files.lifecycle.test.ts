@@ -746,24 +746,27 @@ describe("path-scoped share authorization on file routes", () => {
   });
 });
 
-describe("git pathspec-magic is rejected on file routes", () => {
-  test("DELETE with `:(glob)**` is rejected and deletes nothing outside the path", async () => {
+describe("git pathspec-magic is neutralized (treated literally) on file routes", () => {
+  test("DELETE with `:(glob)**` matches nothing and deletes nothing outside the path", async () => {
     const ownerId = await seedUser("Owner");
     const token = await seedToken(ownerId);
-    // Two top-level areas; a pathspec-magic glob would match BOTH if it leaked
-    // through to `git ls-files`/`git rm`.
+    // Two top-level areas; a pathspec-magic glob would match BOTH if git
+    // interpreted it. GIT_LITERAL_PATHSPECS=1 forces it to be a literal
+    // (non-existent) filename, so it matches NOTHING.
     const { repoId, diskPath } = await seedRepoWithFiles(ownerId, {
       "docs/page.html": "<p>docs</p>",
       "root.html": "<p>root</p>",
     });
 
+    // FIX 5: `:`-leading paths are now accepted by the normalizer (they are
+    // legitimate filenames). The pathspec is disarmed at the git layer instead,
+    // so the literal name doesn't exist -> 404, and NOTHING is deleted.
     for (const magic of [":(glob)**", ":(top)", ":(exclude)docs", ":/"]) {
       const res = await routeApp.request(
         `/api/files/${repoId}?path=${encodeURIComponent(magic)}`,
         { method: "DELETE", headers: authHeaders(token) }
       );
-      // normalizeRelativePath returns null -> handler 400s before any git runs.
-      expect(res.status).toBe(400);
+      expect(res.status).toBe(404);
     }
 
     // Nothing was deleted: BOTH files are still present at HEAD.
@@ -782,7 +785,7 @@ describe("git pathspec-magic is rejected on file routes", () => {
     ]);
   });
 
-  test("commits with a pathspec-magic ?path is rejected (400)", async () => {
+  test("commits with a pathspec-magic ?path matches nothing (literal), returning no commits", async () => {
     const ownerId = await seedUser("Owner");
     const token = await seedToken(ownerId);
     const { repoId } = await seedRepoWithFiles(ownerId, {
@@ -794,7 +797,12 @@ describe("git pathspec-magic is rejected on file routes", () => {
       `/api/files/${repoId}/commits?path=${encodeURIComponent(":(glob)**")}`,
       { headers: authHeaders(token) }
     );
-    expect(res.status).toBe(400);
+    // The path is now accepted by the normalizer but, treated literally by git
+    // (GIT_LITERAL_PATHSPECS=1), matches no tracked file, so the log is empty —
+    // it never widens to the whole repo.
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { data: unknown[] };
+    expect(body.data).toEqual([]);
   });
 
   test("a scoped DELETE still works for a legitimate path", async () => {

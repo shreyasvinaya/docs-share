@@ -52,18 +52,18 @@ export function normalizeRelativePath(input: string | null | undefined): string 
         segment === ".." ||
         // Block any `.git` segment (case-insensitive) to keep callers away from
         // git internals regardless of where it appears in the path.
-        segment.toLowerCase() === ".git" ||
-        // Reject git pathspec "magic": any segment beginning with a colon (e.g.
-        // `:(glob)**`, `:(top)`, `:(exclude)`, `:/`, `:!`). Even when a caller
-        // forgets `GIT_LITERAL_PATHSPECS=1`, such a value can never be expressed
-        // through a normalized path, so it can't widen a `git ls-files`/`git rm`
-        // scope to the whole repo. Legitimate repo paths never start with `:`.
-        segment.startsWith(":")
+        segment.toLowerCase() === ".git"
     )
   ) {
     return null;
   }
 
+  // NB: A leading `:` segment (which git would otherwise read as pathspec
+  // "magic" like `:(glob)**` / `:(top)` / `:!`) is intentionally NOT rejected
+  // here — `:notes.md` and `docs/:draft.md` are legitimate filenames. Pathspec
+  // interpretation is neutralized at the git call sites instead, where every
+  // user-path invocation forces `GIT_LITERAL_PATHSPECS=1` so a colon is always
+  // treated as a literal character, never magic.
   return segments.join("/");
 }
 
@@ -403,18 +403,31 @@ export function redactInternalPaths(
   let result = output;
 
   // Replace known internal base dirs (longest first so nested matches win).
+  // Each match also greedily consumes any trailing path component, so a full
+  // path like `${DATA_DIR}/worktrees/repo123/x` collapses to a single `[path]`
+  // (not `[path]/worktrees/repo123/x`).
   const dirs = [...new Set(baseDirs.filter(Boolean).map((d) => resolve(d)))].sort(
     (a, b) => b.length - a.length
   );
   for (const dir of dirs) {
-    result = result.replace(new RegExp(escapeRegExp(dir), "g"), "[path]");
+    result = result.replace(
+      new RegExp(`${escapeRegExp(dir)}(?:/[\\w.@%+-]+)*`, "g"),
+      "[path]"
+    );
   }
 
   // Catch any remaining absolute-looking POSIX paths (e.g. a stray /var/... or
-  // /private/tmp/... not covered above). Matches a leading slash followed by at
-  // least one path segment containing a slash, so ordinary text like "/" or
-  // sentences are left alone.
-  result = result.replace(/\/(?:[\w.@%+-]+\/)+[\w.@%+-]*/g, "[path]");
+  // /private/tmp/... not covered above). The leading slash MUST sit at a
+  // boundary — start-of-string, whitespace, a quote, `=`, `(`, or the `]` that
+  // closes a `[path]` placeholder — so the path component of a URL (e.g.
+  // `https://github.com/a/b`) is NOT eaten: there the slash is preceded by `:`
+  // (from `://`) or another path char, never a boundary. Matches at least one
+  // path segment containing a slash, so ordinary text like "/" or sentences are
+  // left alone.
+  result = result.replace(
+    /(^|[\s'"=`(\]])(\/(?:[\w.@%+-]+\/)+[\w.@%+-]*)/g,
+    (_match, boundary: string) => `${boundary}[path]`
+  );
 
   return result;
 }

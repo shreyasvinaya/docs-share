@@ -1,15 +1,25 @@
-import { $ } from "bun";
 import { rm, mkdir } from "fs/promises";
 import { join } from "path";
 import { eq } from "drizzle-orm";
 import { config } from "../lib/config.js";
 import { db, schema } from "../db/index.js";
 import { generateId } from "../lib/crypto.js";
+import { spawnShellWithTimeout, spawnWithTimeout } from "../git/gitOps.js";
+
+/** Quote a string for safe interpolation into a single-quoted `/bin/sh` word. */
+function shellQuote(value: string): string {
+  return `'${value.replaceAll("'", "'\\''")}'`;
+}
 
 /**
  * Extract files from a bare repo using `git archive` piped to `tar`.
  * The result is written to `${DATA_DIR}/worktrees/${repoId}/`.
  * Any existing directory is removed first.
+ *
+ * The `archive | tar` pipeline runs via {@link spawnShellWithTimeout}: a single
+ * shell is the process-group leader, so BOTH `git archive` and `tar` share its
+ * group and are killed together if the pipeline runs away (neither side can
+ * orphan).
  */
 export async function extractRepoFiles(
   repoId: string,
@@ -21,32 +31,42 @@ export async function extractRepoFiles(
   await rm(worktreePath, { recursive: true, force: true });
   await mkdir(worktreePath, { recursive: true });
 
-  await $`git -C ${repoPath} archive ${ref} | tar -x -C ${worktreePath}`;
+  const script = `git -C ${shellQuote(repoPath)} archive ${shellQuote(
+    ref
+  )} | tar -x -C ${shellQuote(worktreePath)}`;
+  const result = await spawnShellWithTimeout(script, {
+    env: { ...process.env, GIT_LITERAL_PATHSPECS: "1" },
+  });
+  if (result.exitCode !== 0) {
+    throw new Error(
+      `git archive | tar failed: ${result.stderr.trim() || `exit ${result.exitCode}`}`
+    );
+  }
 }
 
 /**
  * Index a bare repo's file tree into the database.
  * Uses `git ls-tree -r --long <ref>` to enumerate every blob,
  * then replaces the existing file records in a single transaction.
+ *
+ * Runs via the shared process-group timeout helper so a runaway `git ls-tree`
+ * (and any helper it spawns) is killed as a unit.
  */
 export async function indexRepoFiles(
   repoId: string,
   repoPath: string,
   ref: string
 ): Promise<void> {
-  const proc = Bun.spawn(
+  const result = await spawnWithTimeout(
     ["git", "-C", repoPath, "ls-tree", "-r", "--long", ref],
-    { stdout: "pipe", stderr: "pipe" }
+    { env: { ...process.env, GIT_LITERAL_PATHSPECS: "1" } }
   );
 
-  const output = await new Response(proc.stdout).text();
-  const exitCode = await proc.exited;
-
-  if (exitCode !== 0) {
-    const stderr = await new Response(proc.stderr).text();
-    throw new Error(`git ls-tree failed: ${stderr}`);
+  if (result.exitCode !== 0) {
+    throw new Error(`git ls-tree failed: ${result.stderr}`);
   }
 
+  const output = result.stdout;
   const lines = output.trim().split("\n").filter(Boolean);
 
   const fileRecords = lines.map((line) => {

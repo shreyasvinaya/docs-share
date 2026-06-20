@@ -6,7 +6,6 @@ import {
   canReadRepoPath,
   canWriteRepoPath,
 } from "../middleware/shareAccess.js";
-import { config } from "../lib/config.js";
 import {
   normalizeRelativePath,
   redactInternalPaths,
@@ -19,6 +18,7 @@ import {
 import {
   commitAndPush,
   runGit,
+  spawnStreaming,
   spawnWithTimeout,
   withClonedRepo,
 } from "../git/gitOps.js";
@@ -872,23 +872,18 @@ async function readTrackedFiles(
 
   const files: Array<{ path: string; data: Uint8Array }> = [];
   for (const matched of listed) {
-    const showProc = Bun.spawn(
+    // Process-group spawn with a hard timeout so a runaway `git show` (and any
+    // child) is killed as a unit. GIT_LITERAL_PATHSPECS keeps the path literal.
+    const showProc = spawnStreaming(
       ["git", "-C", diskPath, "show", `HEAD:${matched}`],
-      {
-        stdout: "pipe",
-        stderr: "pipe",
-        env: { ...process.env, GIT_LITERAL_PATHSPECS: "1" },
-        // Hard timeout so a runaway `git show` can't hang the request.
-        timeout: config.GIT_PROCESS_TIMEOUT_MS,
-        killSignal: "SIGKILL",
-      }
+      { env: { ...process.env, GIT_LITERAL_PATHSPECS: "1" } }
     );
     const data = new Uint8Array(
       await new Response(showProc.stdout).arrayBuffer()
     );
-    const showStderr = await new Response(showProc.stderr).text();
-    await showProc.exited;
-    if ((showProc.exitCode ?? 0) !== 0) {
+    const exitCode = await showProc.exited;
+    if (exitCode !== 0) {
+      const showStderr = await showProc.stderr();
       throw new Error(`git show failed for ${matched}: ${showStderr.trim()}`);
     }
     files.push({ path: matched, data });

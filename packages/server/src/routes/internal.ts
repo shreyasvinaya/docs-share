@@ -3,6 +3,7 @@ import { eq, and } from "drizzle-orm";
 import { db, schema } from "../db/index.js";
 import { config } from "../lib/config.js";
 import { requireAuth } from "../middleware/requireAuth.js";
+import { spawnWithTimeout } from "../git/gitOps.js";
 import {
   extractRepoFiles,
   indexRepoFiles,
@@ -136,19 +137,18 @@ async function validateGitUpdate(
   if (!/^[0-9a-f]{40}$/i.test(newRev)) return false;
   if (/^0{40}$/.test(newRev)) return false;
 
-  const refProc = Bun.spawn(["git", "check-ref-format", ref], {
-    stdout: "pipe",
-    stderr: "pipe",
+  // Route through the shared process-group timeout helper so a hung git can't
+  // pin the request and any child it spawns is killed with it.
+  const refCheck = await spawnWithTimeout(["git", "check-ref-format", ref], {
+    env: { ...process.env, GIT_LITERAL_PATHSPECS: "1" },
   });
-  await refProc.exited;
-  if (refProc.exitCode !== 0) return false;
+  if (refCheck.exitCode !== 0) return false;
 
-  const commitProc = Bun.spawn(["git", "-C", repoPath, "cat-file", "-e", `${newRev}^{commit}`], {
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  await commitProc.exited;
-  return commitProc.exitCode === 0;
+  const commitCheck = await spawnWithTimeout(
+    ["git", "-C", repoPath, "cat-file", "-e", `${newRev}^{commit}`],
+    { env: { ...process.env, GIT_LITERAL_PATHSPECS: "1" } }
+  );
+  return commitCheck.exitCode === 0;
 }
 
 export default app;
