@@ -565,6 +565,56 @@ app.get("/incoming", requireAuth, async (c) => {
 });
 
 /**
+ * POST /:shareId/accept — Accept an email share addressed to the current user.
+ * Stamps `acceptedAt` on the matching recipient row and links the recipient to
+ * the user account. Idempotent: re-accepting keeps the original timestamp.
+ */
+app.post("/:shareId/accept", requireAuth, async (c) => {
+  const userId = c.get("userId");
+  const shareId = c.req.param("shareId");
+
+  const user = await db
+    .select()
+    .from(schema.users)
+    .where(eq(schema.users.id, userId))
+    .get();
+  if (!user) {
+    return c.json({ error: "User not found" }, 404);
+  }
+
+  const recipient = await db
+    .select()
+    .from(schema.shareRecipients)
+    .where(
+      and(
+        eq(schema.shareRecipients.shareId, shareId),
+        eq(schema.shareRecipients.email, user.email)
+      )
+    )
+    .get();
+
+  if (!recipient) {
+    return c.json({ error: "Share recipient not found" }, 404);
+  }
+
+  if (!recipient.acceptedAt) {
+    await db
+      .update(schema.shareRecipients)
+      .set({ acceptedAt: new Date().toISOString(), userId })
+      .where(eq(schema.shareRecipients.id, recipient.id))
+      .run();
+  }
+
+  const updated = await db
+    .select()
+    .from(schema.shareRecipients)
+    .where(eq(schema.shareRecipients.id, recipient.id))
+    .get();
+
+  return c.json({ data: updated });
+});
+
+/**
  * DELETE /:shareId — Revoke share. Requires auth + must be creator.
  */
 app.delete("/:shareId", requireAuth, async (c) => {

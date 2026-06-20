@@ -8,6 +8,7 @@ import { generateId, generateApiToken } from "../lib/crypto.js";
 import { isProduction, safeNextPath } from "../lib/security.js";
 import { requireAuth } from "../middleware/requireAuth.js";
 import { createBareRepo } from "../git/repoManager.js";
+import { acceptPendingInvitationsForUser } from "../services/invitations.js";
 import type { AppEnv } from "../lib/types.js";
 
 const google = new Google(
@@ -180,6 +181,9 @@ app.get("/google/callback", async (c) => {
     });
   }
 
+  // Materialise any invitations addressed to this email into memberships.
+  await acceptPendingInvitationsForUser({ userId: user.id, email: user.email });
+
   // Create session (30-day expiry)
   const sessionId = generateId();
   const expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
@@ -272,6 +276,9 @@ app.post("/dev-login", async (c) => {
   if (!user) {
     return c.json({ error: "Failed to create user" }, 500);
   }
+
+  // Materialise any invitations addressed to this email into memberships.
+  await acceptPendingInvitationsForUser({ userId: user.id, email: user.email });
 
   const sessionId = generateId();
   const expiresAt = new Date(

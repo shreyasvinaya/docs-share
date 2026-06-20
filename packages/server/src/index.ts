@@ -16,6 +16,7 @@ import internalRoutes from "./routes/internal.js";
 import viewRoutes from "./routes/view.js";
 import gitRoutes from "./git/smartHttp.js";
 import { ensureRepoDir } from "./git/repoManager.js";
+import { startScheduler } from "./services/scheduler.js";
 import { config } from "./lib/config.js";
 import { resolveInside } from "./lib/security.js";
 import type { AppEnv } from "./lib/types.js";
@@ -113,6 +114,13 @@ if (config.WEB_DIST_DIR) {
 }
 
 await ensureRepoDir();
+
+// Start background jobs only when running as the entrypoint, not when this
+// module is imported (e.g. by tests or tooling). `startScheduler` additionally
+// no-ops when SCHEDULER_ENABLED is false.
+if (import.meta.main) {
+  startScheduler();
+}
 
 export default {
   port: config.PORT,

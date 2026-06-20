@@ -2,9 +2,10 @@ import { Hono } from "hono";
 import { eq, and } from "drizzle-orm";
 import { db, schema } from "../db/index.js";
 import { requireAuth } from "../middleware/requireAuth.js";
-import { generateId } from "../lib/crypto.js";
+import { generateId, generatePublicToken } from "../lib/crypto.js";
 import { config } from "../lib/config.js";
 import { createBareRepo } from "../git/repoManager.js";
+import { acceptInvitationByToken } from "../services/invitations.js";
 import type { AppEnv } from "../lib/types.js";
 
 const app = new Hono<AppEnv>();
@@ -388,47 +389,66 @@ app.post("/:teamId/members", async (c) => {
     }, 201);
   }
 
-  // User does not exist yet — create a placeholder team member record.
-  // We store a sentinel userId derived from the email so the record can be
-  // linked later when the user signs up. The unique index on (teamId, userId)
-  // prevents duplicate invites for the same email.
-  const placeholderId = generateId();
-  const placeholderUserId = `pending:${email}`;
-
-  // Check for existing pending invite
-  const existingPending = await db
+  // User does not exist yet — record a pending invitation. When the invited
+  // person signs in (or accepts the token) the invitation is converted into a
+  // real teamMembers row. The unique (teamId, email) index prevents duplicate
+  // invites for the same address.
+  const existingInvite = await db
     .select()
-    .from(schema.teamMembers)
+    .from(schema.invitations)
     .where(
       and(
-        eq(schema.teamMembers.teamId, teamId),
-        eq(schema.teamMembers.userId, placeholderUserId)
+        eq(schema.invitations.teamId, teamId),
+        eq(schema.invitations.email, email)
       )
     )
     .get();
 
-  if (existingPending) {
+  if (existingInvite && !existingInvite.acceptedAt) {
     return c.json({ error: "Invite already sent to this email" }, 409);
   }
 
-  await db.insert(schema.teamMembers).values({
-    id: placeholderId,
+  const inviteId = generateId();
+  const token = generatePublicToken();
+  await db.insert(schema.invitations).values({
+    id: inviteId,
+    email,
     teamId,
-    userId: placeholderUserId,
     role: memberRole,
-    joinedAt: new Date().toISOString(),
+    token,
+    invitedBy: userId,
+    createdAt: new Date().toISOString(),
   }).run();
 
   return c.json({
     data: {
-      id: placeholderId,
+      id: inviteId,
       teamId,
       userId: null,
       email,
       role: memberRole,
+      token,
       pending: true,
     },
   }, 201);
+});
+
+/**
+ * POST /invitations/:token/accept — Accept a pending invitation by token.
+ * Converts the invitation into a real teamMembers row for the current user.
+ * Idempotent: accepting an already-accepted invitation returns the existing
+ * membership.
+ */
+app.post("/invitations/:token/accept", async (c) => {
+  const userId = c.get("userId");
+  const token = c.req.param("token");
+
+  const result = await acceptInvitationByToken(token, userId);
+  if (!result) {
+    return c.json({ error: "Invitation not found" }, 404);
+  }
+
+  return c.json({ data: result });
 });
 
 /**

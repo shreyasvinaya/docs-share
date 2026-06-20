@@ -47,6 +47,20 @@ export const config = {
   EMAIL_FROM: env("EMAIL_FROM", ""),
   RESEND_API_KEY: env("RESEND_API_KEY", ""),
   SLACK_WEBHOOK_URL: env("SLACK_WEBHOOK_URL", ""),
+
+  // Background scheduler. Set SCHEDULER_ENABLED=false to disable all jobs, or
+  // set an individual interval to 0 to disable just that job.
+  SCHEDULER_ENABLED: env("SCHEDULER_ENABLED", "true") !== "false",
+  // Expired-share cleanup sweep interval (ms). Default: every 15 minutes.
+  EXPIRED_SHARE_SWEEP_INTERVAL_MS: parseInt(
+    env("EXPIRED_SHARE_SWEEP_INTERVAL_MS", "900000")
+  ),
+  // GitHub sync retry interval (ms). Default: every 10 minutes.
+  GITHUB_SYNC_RETRY_INTERVAL_MS: parseInt(
+    env("GITHUB_SYNC_RETRY_INTERVAL_MS", "600000")
+  ),
+  // Maximum number of failed syncs to retry per sweep.
+  GITHUB_SYNC_RETRY_BATCH: parseInt(env("GITHUB_SYNC_RETRY_BATCH", "5")),
 };
 
 assertProductionSecret("SESSION_SECRET", config.SESSION_SECRET);

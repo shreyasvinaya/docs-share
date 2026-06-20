@@ -1,0 +1,198 @@
+import { afterEach, describe, expect, test } from "bun:test";
+import { and, eq, inArray } from "drizzle-orm";
+import { db, schema } from "../db/index.js";
+import { generateId } from "../lib/crypto.js";
+import {
+  acceptInvitationByToken,
+  acceptPendingInvitationsForUser,
+} from "./invitations.js";
+
+const cleanup = {
+  inviteIds: [] as string[],
+  memberIds: [] as string[],
+  teamIds: [] as string[],
+  userIds: [] as string[],
+};
+
+afterEach(async () => {
+  if (cleanup.inviteIds.length)
+    await db.delete(schema.invitations).where(inArray(schema.invitations.id, cleanup.inviteIds)).run();
+  if (cleanup.memberIds.length)
+    await db.delete(schema.teamMembers).where(inArray(schema.teamMembers.id, cleanup.memberIds)).run();
+  if (cleanup.teamIds.length)
+    await db.delete(schema.teams).where(inArray(schema.teams.id, cleanup.teamIds)).run();
+  if (cleanup.userIds.length)
+    await db.delete(schema.users).where(inArray(schema.users.id, cleanup.userIds)).run();
+  cleanup.inviteIds = [];
+  cleanup.memberIds = [];
+  cleanup.teamIds = [];
+  cleanup.userIds = [];
+});
+
+function testId(prefix: string): string {
+  return `${prefix}_${Date.now()}_${Math.random().toString(36).slice(2)}`;
+}
+
+async function seedTeamAndInvite(role: "admin" | "member" = "member") {
+  const ownerId = testId("owner");
+  const teamId = testId("team");
+  const inviteId = testId("invite");
+  const email = `${testId("invitee")}@example.com`;
+  const token = testId("tok");
+  const now = new Date().toISOString();
+
+  await db.insert(schema.users).values({
+    id: ownerId,
+    email: `${ownerId}@example.com`,
+    displayName: "Owner",
+    googleId: `g_${ownerId}`,
+  });
+  await db.insert(schema.teams).values({
+    id: teamId,
+    name: "Team",
+    slug: testId("slug"),
+    ownerId,
+    createdAt: now,
+    updatedAt: now,
+  });
+  await db.insert(schema.teamMembers).values({
+    id: testId("tm"),
+    teamId,
+    userId: ownerId,
+    role: "owner",
+    joinedAt: now,
+  });
+  await db.insert(schema.invitations).values({
+    id: inviteId,
+    email,
+    teamId,
+    role,
+    token,
+    invitedBy: ownerId,
+    createdAt: now,
+  });
+
+  cleanup.userIds.push(ownerId);
+  cleanup.teamIds.push(teamId);
+  cleanup.inviteIds.push(inviteId);
+  return { ownerId, teamId, inviteId, email, token, role };
+}
+
+async function seedUser(email: string): Promise<string> {
+  const userId = testId("user");
+  await db.insert(schema.users).values({
+    id: userId,
+    email,
+    displayName: "Invitee",
+    googleId: `g_${userId}`,
+  });
+  cleanup.userIds.push(userId);
+  return userId;
+}
+
+describe("acceptInvitationByToken", () => {
+  test("creates a membership with the invited role and stamps acceptedAt", async () => {
+    const { token, teamId, inviteId } = await seedTeamAndInvite("admin");
+    const userId = await seedUser(`${testId("u")}@example.com`);
+
+    const result = await acceptInvitationByToken(token, userId);
+    expect(result).not.toBeNull();
+    expect(result?.alreadyMember).toBe(false);
+    expect(result?.role).toBe("admin");
+    if (result) cleanup.memberIds.push(result.membershipId);
+
+    const membership = await db
+      .select()
+      .from(schema.teamMembers)
+      .where(
+        and(
+          eq(schema.teamMembers.teamId, teamId),
+          eq(schema.teamMembers.userId, userId)
+        )
+      )
+      .get();
+    expect(membership?.role).toBe("admin");
+
+    const invite = await db
+      .select()
+      .from(schema.invitations)
+      .where(eq(schema.invitations.id, inviteId))
+      .get();
+    expect(invite?.acceptedAt).toBeTruthy();
+  });
+
+  test("is idempotent — accepting twice does not create a duplicate membership", async () => {
+    const { token, teamId } = await seedTeamAndInvite();
+    const userId = await seedUser(`${testId("u")}@example.com`);
+
+    const first = await acceptInvitationByToken(token, userId);
+    const second = await acceptInvitationByToken(token, userId);
+    if (first) cleanup.memberIds.push(first.membershipId);
+
+    expect(first?.alreadyMember).toBe(false);
+    expect(second?.alreadyMember).toBe(true);
+    expect(second?.membershipId).toBe(first?.membershipId);
+
+    const memberships = await db
+      .select()
+      .from(schema.teamMembers)
+      .where(
+        and(
+          eq(schema.teamMembers.teamId, teamId),
+          eq(schema.teamMembers.userId, userId)
+        )
+      )
+      .all();
+    expect(memberships.length).toBe(1);
+  });
+
+  test("returns null for an unknown token", async () => {
+    const userId = await seedUser(`${testId("u")}@example.com`);
+    const result = await acceptInvitationByToken(generateId(), userId);
+    expect(result).toBeNull();
+  });
+});
+
+describe("acceptPendingInvitationsForUser", () => {
+  test("materialises invitations addressed to the user's email on sign-in", async () => {
+    const { email, teamId } = await seedTeamAndInvite("member");
+    const userId = await seedUser(email);
+
+    const results = await acceptPendingInvitationsForUser({ userId, email });
+    expect(results.length).toBe(1);
+    cleanup.memberIds.push(results[0].membershipId);
+
+    const membership = await db
+      .select()
+      .from(schema.teamMembers)
+      .where(
+        and(
+          eq(schema.teamMembers.teamId, teamId),
+          eq(schema.teamMembers.userId, userId)
+        )
+      )
+      .get();
+    expect(membership).toBeTruthy();
+  });
+
+  test("is a no-op when there are no pending invitations", async () => {
+    const userId = await seedUser(`${testId("u")}@example.com`);
+    const results = await acceptPendingInvitationsForUser({
+      userId,
+      email: `${testId("nobody")}@example.com`,
+    });
+    expect(results).toEqual([]);
+  });
+
+  test("does not re-process invitations that were already accepted", async () => {
+    const { email } = await seedTeamAndInvite("member");
+    const userId = await seedUser(email);
+
+    const first = await acceptPendingInvitationsForUser({ userId, email });
+    cleanup.memberIds.push(first[0].membershipId);
+    const second = await acceptPendingInvitationsForUser({ userId, email });
+
+    expect(first.length).toBe(1);
+    expect(second.length).toBe(0);
+  });
+});
