@@ -785,7 +785,7 @@ Public endpoint — no auth required. Returns the deployment name.
 
 ```bash
 curl -s "$API/api/setup/branding"
-# { "data": { "deploymentName": "Docs Share" } }
+# { "data": { "deploymentName": "Patra" } }
 ```
 
 ### GET /api/setup/status

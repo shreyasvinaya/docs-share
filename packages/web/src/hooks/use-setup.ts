@@ -45,5 +45,5 @@ export function useDeploymentName() {
     queryFn: () => api.get<{ deploymentName: string }>("/api/setup/branding"),
     staleTime: 5 * 60 * 1000,
   });
-  return data?.deploymentName ?? "Docs Share";
+  return data?.deploymentName ?? "Patra";
 }

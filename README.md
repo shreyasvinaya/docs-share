@@ -1,29 +1,63 @@
-# docs-share
+# Patra
 
-Self-hostable document sharing for teams that want Git-backed uploads, file previews, public links, team access, and an agent-friendly CLI.
+Self-hostable, Git-backed publishing and sharing of documents, static sites, and
+HTML drafts as shareable links — with an agent-friendly CLI for non-interactive
+publishing.
 
-The project is a Bun/Turbo monorepo:
+> **Patra** (ಪತ್ರ / पत्र) is Sanskrit/Kannada for "page," "leaf," or "letter" —
+> a fitting name for a place to keep and share your documents.
 
-- `packages/server` - Hono API, SQLite/Drizzle storage, Git smart HTTP, file extraction, share routes.
-- `packages/web` - React/Vite web app.
-- `packages/cli` - `docs-share` command-line client.
-- `packages/shared` - shared TypeScript types and validation schemas.
+## What It Is
 
-New here? Read [`HANDOFF.md`](HANDOFF.md) for the full picture — what the project is, how it's
-built, current feature status, gotchas, and the roadmap.
+Patra hosts, versions, previews, and shares self-contained HTML artifacts and
+multi-file static sites with real access control. It is built for two audiences:
 
-Product docs:
+- **Teams** that want a simpler, HTML-specialized "Drive" with a Git backbone,
+  link sharing, team access, and an audit trail.
+- **AI coding agents** (Claude Code, Codex, etc.) that generate reports,
+  dashboards, mockups, and plans and need to push a file and get back a clean,
+  shareable URL — non-interactively, with token auth and deterministic output.
 
-- [`docs/product-guide.md`](docs/product-guide.md) - practical guide for drafts, uploads, teams, sharing, previews, auth, examples, and operations.
-- [`docs/agent-guide.md`](docs/agent-guide.md) - CLI/API workflows and source anchors for coding agents.
-- [`SKILLS.md`](SKILLS.md) - quick project guide for future coding agents.
-- [`docs/self-hosting.md`](docs/self-hosting.md) and [`docs/deployment.md`](docs/deployment.md) - deployment and operations.
+It is a Bun/Turbo monorepo: a Hono API server, a React/Vite web app, a
+`docs-share` CLI, and a shared types package.
 
-## Status
+## Features
 
-This repository is early-stage open-source software. It is suitable for local development and self-hosting evaluation. For production, review `SECURITY.md`, set strong secrets, use HTTPS, and keep the persistent data volume backed up.
+- **Draft HTML hosting** — publish a single standalone `.html` file to a private,
+  authenticated viewer URL, served through short-lived **signed** content URLs on
+  a separate content origin.
+- **Git-backed repos + multi-file sites** — every user and team owns one bare Git
+  repo; upload folders or push over Git smart-HTTP. Linked pages, CSS, and assets
+  resolve by relative path without rewriting.
+- **Flexible sharing** — public links, email shares, and team shares, with
+  optional **password protection**, **expiry**, and **organization/email-domain
+  gating** (`public` vs `org` link access).
+- **Analytics + audit log** — per-share and per-draft view metrics (total views,
+  unique visitors, last viewed, referrers) plus an actor activity audit log.
+- **Versioning** — repos are Git-backed; restore any file (or the whole tree) from
+  history as a new commit, and **duplicate** files or drafts.
+- **Scoped API tokens** — least-privilege tokens (`repo:*`, `share:*`, `team:*`,
+  `draft:*`, `git:*`, `site-data:*`, `webhook:*`, `audit:read`, `user:*`, or `*`)
+  enforced on every authenticated endpoint.
+- **GitHub sync** — one-way import via a **GitHub App** (selected-repository
+  access) or a **personal access token** fallback; pick a whole repo, folder, or
+  single file before syncing.
+- **Teams** — full team CRUD with `owner` / `admin` / `member` / `viewer` roles
+  and email invitations.
+- **Form / site-data collection** — opt-in, per-collection form ingestion from
+  hosted pages, public and rate-limited, storing only hashed visitor identifiers.
+- **Outbound webhooks** — user-configurable, **HMAC-signed** event deliveries
+  (`share.created`, `share.revoked`, `github_sync.completed`) with **SSRF guards**
+  (private/loopback hosts rejected).
+- **First-run setup + admin** — a setup wizard and a sysadmin-only setup checklist;
+  sysadmins are derived from `SYSADMIN_EMAILS`.
+- **Docs** — a hosted product/agent/API reference, an **OpenAPI 3.1** spec at
+  `GET /openapi.json`, and a machine-readable `GET /llms.txt`.
+- **Rate limiting** — in-memory fixed-window limiter on public and auth endpoints,
+  tunable via env.
+- **Docker self-hosting** — single app container, SQLite + Git repos on a volume.
 
-## Quick Start
+## Quick Start (Local Dev)
 
 ```bash
 bun install
@@ -31,99 +65,124 @@ cp .env.example .env
 bun run dev
 ```
 
-The web app runs on `http://localhost:5173` and proxies API traffic to the server on `http://localhost:3000`.
+The web app runs on `http://localhost:5173` and proxies API traffic to the server
+on `http://localhost:3000`.
 
-For local dev login, set `ENABLE_DEV_LOGIN=true` in `.env` and sign in with any email plus password `dev`.
+For local dev login, set `ENABLE_DEV_LOGIN=true` in `.env`, then sign in with any
+email and password `dev`.
 
-## Self-Hosting With Docker
+## Self-Hosting (Docker)
 
 ```bash
 cp .env.production.example .env.production
-# Edit .env.production with your public URL, OAuth credentials, and 32+ char secrets.
+# Edit .env.production: public URLs, OAuth credentials, and 32+ char secrets.
 docker compose up --build
 ```
 
-The compose setup runs one app container on port `3000` and stores SQLite, bare Git repositories, and extracted worktrees in the `docs-share-data` volume.
+The compose setup runs one app container on port `3000` and stores SQLite, bare
+Git repositories, and extracted worktrees in the persistent data volume.
 
 Minimum production settings:
 
 - `NODE_ENV=production`
 - `APP_URL=https://your-domain`
 - `API_URL=https://your-domain`
-- `CONTENT_ORIGIN=https://your-domain`
+- `CONTENT_ORIGIN=https://content.your-domain` (a separate host for sandboxed
+  draft HTML)
 - `DEPLOYMENT_NAME="Your Company Docs"` for visible deployment branding
-- `SYSADMIN_EMAILS=admin@your-domain` for setup access in Settings
+  (defaults to `Patra`)
+- `SYSADMIN_EMAILS=admin@your-domain` for setup/admin access
 - `GOOGLE_REDIRECT_URI=https://your-domain/api/auth/google/callback`
-- `GITHUB_APP_ID`, `GITHUB_APP_SLUG`, and `GITHUB_APP_PRIVATE_KEY` for GitHub imports
-- `SESSION_SECRET` and `HOOK_SECRET` with at least 32 random characters
+- `SESSION_SECRET`, `DRAFT_CONTENT_SECRET`, `HOOK_SECRET`, and
+  `GITHUB_TOKEN_SECRET` — each a unique 32+ character random value
+- `ENABLE_DEV_LOGIN=false`
 
-If you terminate TLS at a reverse proxy, forward traffic to the container on port `3000`.
-
-For Render, Fly.io, Railway, VPS, Docker, and Kubernetes notes, see
+If you terminate TLS at a reverse proxy, forward traffic to the container on port
+`3000`. For full details and platform-specific notes, see
+[`docs/self-hosting.md`](docs/self-hosting.md) and
 [`docs/deployment.md`](docs/deployment.md).
 
 ## CLI
 
-Build the CLI:
-
-```bash
-bun run --filter docs-share build
-```
-
-Authenticate with an API token from the web app:
+The command-line client is published as the `docs-share` binary. Authenticate
+with an API token created in **Settings → API Tokens** (tokens are prefixed
+`ds_` and shown once):
 
 ```bash
 docs-share login --token ds_...
-docs-share draft ./plan.html
+docs-share draft ./plan.html          # publish one HTML file, print its URL
 docs-share push ./site --to personal --message "Publish site"
 docs-share teams
 ```
 
-Drafts published with `docs-share draft` are visible in the authenticated web
-app under **Drafts**, where owners can open, copy, search, and delete their
-private draft URLs.
+Drafts published with `docs-share draft` appear in the authenticated web app under
+**Drafts**, where owners can open, copy, search, and delete their private draft
+URLs.
 
-## Linked HTML Bundles
+## Project Layout
 
-docs-share serves files by their repo-relative path. If `index.html` links to `about.html` or `assets/app.css`, those links resolve when the linked files exist at the matching paths in the same repo tree.
+Bun workspaces + Turborepo monorepo:
 
-Upload options:
+- `packages/server` — Hono API, SQLite/Drizzle storage, Git smart-HTTP, file
+  extraction, share/draft/webhook routes, OpenAPI + llms.txt.
+- `packages/web` — React/Vite/Tailwind web app.
+- `packages/cli` — the `docs-share` command-line client.
+- `packages/shared` — shared TypeScript types and Zod validation schemas.
 
-- Website: upload individual files for flat bundles, or choose/drop a folder to preserve nested paths.
-- CLI: `docs-share push ./site --to personal` preserves paths under `./site`.
-- GitHub sync: connect the GitHub App from **Settings -> Integrations**, choose which repositories the app can access in GitHub, or use the personal access token fallback when the app is not configured. Users can narrow by organization or enter another `https://github.com/owner/repo` URL. Repository choices are ordered by last updated, branches load after a repository URL is selected, and users can browse/select one file or folder before syncing.
+## Documentation
 
-For public links, share the containing directory when an HTML page depends on sibling pages or assets. File-only shares expose only that file.
+- In-app docs are served at `/docs`.
+- Markdown sources live in [`docs/`](docs/):
+  [Product Guide](docs/product-guide.md),
+  [Agent Guide](docs/agent-guide.md),
+  [API Reference](docs/api-reference.md),
+  [Self-Hosting](docs/self-hosting.md),
+  [Deployment](docs/deployment.md).
+- New here? [`HANDOFF.md`](HANDOFF.md) explains the architecture, feature status,
+  and gotchas.
 
-## Development Commands
+## Documentation on GitHub Pages
 
-```bash
-bun run lint
-bun run typecheck
-bun run test
-bun run build
-bun run check
-```
+The [`docs/`](docs/) folder is ready to publish as a GitHub Pages site (built with
+Jekyll and the `jekyll-theme-cayman` theme configured in
+[`docs/_config.yml`](docs/_config.yml); [`docs/index.md`](docs/index.md) is the
+landing page). Choose **one** of the two methods below.
 
-## Backups
+### Method 1 — Deploy from a branch (simplest)
 
-Back up the full `DATA_DIR`. It contains:
+1. In the repo, go to **Settings → Pages**.
+2. Under **Build and deployment**, set **Source** to **"Deploy from a branch"**.
+3. Set **Branch** to `main` and **Folder** to `/docs`, then click **Save**.
 
-- `docs-share.db`
-- `drafts/`
-- `repos/`
-- `worktrees/`
+The site publishes at `https://<user>.github.io/<repo>/`. Because this repository
+is named `docs-share`, the URL path reflects the repo name
+(`https://<user>.github.io/docs-share/`) until/unless the repo is renamed. Adding
+new `docs/*.md` files auto-publishes them on the next push to `main`. The
+`title`/`theme` come from `docs/_config.yml`.
 
-Stop writes before taking filesystem-level backups, or use a volume snapshot that is consistent for SQLite WAL files.
+### Method 2 — GitHub Actions (more control)
 
-## Contributing
+A ready-to-use workflow lives at
+[`.github/workflows/docs-pages.yml`](.github/workflows/docs-pages.yml). It builds
+`docs/` with the official Jekyll Pages action and deploys on every push to `main`
+that touches `docs/**`. To use it, set **Settings → Pages → Source** to **"GitHub
+Actions"** instead of the branch method.
 
-See `CONTRIBUTING.md`.
+Pick exactly one method — they are alternatives, not complementary.
 
 ## Security
 
-See `SECURITY.md`.
+Patra ships with authentication (Google OAuth sessions + scoped `ds_` API
+tokens), sandboxed content serving (untrusted draft HTML runs from a separate
+`CONTENT_ORIGIN` behind short-lived signed URLs and a `sandbox` CSP),
+SSRF-guarded outbound webhooks, and rate limiting. Operators should set strong,
+unique 32+ character secrets and terminate TLS (HTTPS) in front of the app. See
+[`SECURITY.md`](SECURITY.md).
+
+## Contributing
+
+See [`CONTRIBUTING.md`](CONTRIBUTING.md).
 
 ## License
 
-Apache-2.0. See `LICENSE`.
+Apache-2.0. See [`LICENSE`](LICENSE).

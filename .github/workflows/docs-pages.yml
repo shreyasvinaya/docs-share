@@ -1,0 +1,58 @@
+name: Deploy docs to GitHub Pages
+
+# Builds the /docs folder with Jekyll and deploys it to GitHub Pages.
+#
+# To use this workflow, set the Pages source to "GitHub Actions":
+#   Settings -> Pages -> Build and deployment -> Source: "GitHub Actions"
+# (This is an alternative to the "Deploy from a branch" method. Pick ONE.)
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "docs/**"
+      - ".github/workflows/docs-pages.yml"
+  # Allow manual runs from the Actions tab.
+  workflow_dispatch:
+
+# Minimum permissions required to publish to GitHub Pages via OIDC.
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# Allow one concurrent deployment; let an in-progress production deploy finish.
+concurrency:
+  group: "pages"
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure Pages
+        uses: actions/configure-pages@v5
+
+      - name: Build with Jekyll
+        uses: actions/jekyll-build-pages@v1
+        with:
+          source: ./docs
+          destination: ./_site
+
+      - name: Upload artifact
+        uses: actions/upload-pages-artifact@v3
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

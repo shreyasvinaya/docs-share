@@ -9,8 +9,8 @@ import {
 describe("deployment configuration", () => {
   test("normalizes deployment names with a stable default", () => {
     expect(normalizeDeploymentName("  Acme Docs  ")).toBe("Acme Docs");
-    expect(normalizeDeploymentName("")).toBe("Docs Share");
-    expect(normalizeDeploymentName("   ")).toBe("Docs Share");
+    expect(normalizeDeploymentName("")).toBe("Patra");
+    expect(normalizeDeploymentName("   ")).toBe("Patra");
   });
 
   test("matches sysadmin emails case-insensitively", () => {

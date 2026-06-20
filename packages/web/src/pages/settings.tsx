@@ -157,7 +157,7 @@ function IntegrationsTab() {
       <div className="rounded-lg border border-border p-4">
         <h3 className="mb-1 text-sm font-semibold">GitHub imports</h3>
         <p className="mb-4 text-sm text-muted-foreground">
-          Connect the GitHub App and choose the repositories that Docs Share can import.
+          Connect the GitHub App and choose the repositories that Patra can import.
         </p>
 
         {isLoading ? (
