@@ -36,6 +36,14 @@ export type SiteDataValidation = SiteDataValidationOk | SiteDataValidationError;
 
 const COLLECTION_NAME_RE = /^[a-z0-9][a-z0-9_-]*$/i;
 
+// Conservative field-key charset: must start alphanumeric, then alphanumerics
+// plus `_ . -`, up to MAX_FIELD_KEY_LENGTH. This rejects control/bidi chars,
+// whitespace, and other surprises in a public, attacker-controlled payload.
+const FIELD_KEY_RE = /^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,127}$/;
+
+// Keys that could pollute Object.prototype if assigned onto a plain object.
+const FORBIDDEN_FIELD_KEYS = new Set(["__proto__", "prototype", "constructor"]);
+
 /**
  * Validate a collection name. Collections are an unprivileged, free-form label
  * chosen by the page author (e.g. "contact", "rsvp"). Restrict to a safe slug
@@ -95,10 +103,23 @@ export function validateSubmissionFields(input: unknown): SiteDataValidation {
     };
   }
 
+  // Assign only own, fully-validated keys. Prototype-pollution keys are
+  // rejected outright below, and the key regex forbids any character outside
+  // `[a-zA-Z0-9_.-]`, so no special key (e.g. "__proto__") can ever be written
+  // onto the result and reach Object.prototype.
   const fields: SiteDataFields = {};
   for (const [key, value] of entries) {
     if (!key || key.length > MAX_FIELD_KEY_LENGTH) {
       return { ok: false, error: "Field names must be 1-128 characters" };
+    }
+    if (FORBIDDEN_FIELD_KEYS.has(key)) {
+      return { ok: false, error: `Field name "${key}" is not allowed` };
+    }
+    if (!FIELD_KEY_RE.test(key)) {
+      return {
+        ok: false,
+        error: `Field name "${key}" contains invalid characters`,
+      };
     }
     if (!isPlainScalar(value)) {
       return {

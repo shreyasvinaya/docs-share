@@ -1,8 +1,8 @@
 import { createMiddleware } from "hono/factory";
-import { getConnInfo } from "hono/bun";
 import type { Context } from "hono";
 import type { AppEnv } from "../lib/types.js";
 import { config } from "../lib/config.js";
+import { resolveClientIp } from "../lib/clientIp.js";
 
 export interface RateLimitOptions {
   /** Maximum number of requests permitted per window. */
@@ -80,52 +80,15 @@ export function __rateLimitStoreSize(): number {
 }
 
 /**
- * Resolve the IP used to key untrusted (non-token) callers.
- *
- * Trusted-proxy model:
- *  - `trustProxy === true`: the IP is taken ONLY from `X-Real-IP`, which the
- *    proxy is required to OVERWRITE with the real socket address. We never
- *    trust the client-appended first hop of `X-Forwarded-For`, because a
- *    client can forge that header to mint a fresh bucket and bypass the limit.
- *  - `trustProxy === false`: ALL forwarded headers are ignored. We key on the
- *    actual socket peer address obtained from the Bun server via
- *    `getConnInfo(c)` (which calls `server.requestIP(c.req.raw)`).
- *
- * If the socket address is genuinely unavailable (e.g. no Bun server in the
- * fetch env, as in unit tests), we fall back to a single fixed bucket so
- * untrusted requests share one conservative limit rather than each getting a
- * spoofable, independent budget.
- */
-function clientIp(c: Context<AppEnv>, trustProxy: boolean): string {
-  if (trustProxy) {
-    // X-Real-IP is a single authoritative value set by the proxy. We do NOT
-    // read X-Forwarded-For: its first hop is client-controlled and spoofable.
-    const realIp = c.req.header("X-Real-IP")?.trim();
-    if (realIp) return realIp;
-    // Proxy promised a value but didn't send one — share a single bucket
-    // rather than trusting a forgeable header.
-    return "unknown";
-  }
-
-  // Untrusted: ignore every forwarded header and use the real socket address.
-  try {
-    const address = getConnInfo(c).remote.address?.trim();
-    if (address) return address;
-  } catch {
-    // No Bun server in the fetch env (e.g. tests). Fall through.
-  }
-  return "unknown";
-}
-
-/**
  * Derive a stable client identifier. Authenticated API-token callers are keyed
  * by their token id so a single noisy token cannot exhaust a shared NAT IP's
- * budget (and vice versa). Everyone else is keyed by a non-spoofable client IP.
+ * budget (and vice versa). Everyone else is keyed by a non-spoofable client IP
+ * resolved via the shared {@link resolveClientIp} helper.
  */
 function clientKey(c: Context<AppEnv>, trustProxy: boolean): string {
   const tokenId = c.get("tokenId");
   if (tokenId) return `token:${tokenId}`;
-  return `ip:${clientIp(c, trustProxy)}`;
+  return `ip:${resolveClientIp(c, trustProxy)}`;
 }
 
 export function createRateLimiter(options: RateLimitOptions) {

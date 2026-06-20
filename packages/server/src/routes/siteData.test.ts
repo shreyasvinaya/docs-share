@@ -4,7 +4,11 @@ import { and, eq, inArray } from "drizzle-orm";
 import { db, schema } from "../db/index.js";
 import { hashToken } from "../lib/crypto.js";
 import type { AppEnv } from "../lib/types.js";
-import siteDataRoutes, { parseTargetParam } from "./siteData.js";
+import { deleteSiteDataForTarget } from "../services/siteDataCleanup.js";
+import siteDataRoutes, {
+  parseTargetParam,
+  __resetSiteDataLimiters,
+} from "./siteData.js";
 
 const routeApp = new Hono<AppEnv>();
 routeApp.route("/api/sites", siteDataRoutes);
@@ -18,6 +22,7 @@ const cleanup = {
 };
 
 afterEach(async () => {
+  __resetSiteDataLimiters();
   if (cleanup.recordIds.length) {
     await db
       .delete(schema.siteDataRecords)
@@ -285,6 +290,117 @@ describe("public ingestion", () => {
         "contact",
         { i },
         ipHeader
+      );
+      if (res.status === 429) {
+        limited = true;
+        break;
+      }
+    }
+    expect(limited).toBe(true);
+
+    const created = await db
+      .select()
+      .from(schema.siteDataRecords)
+      .where(eq(schema.siteDataRecords.targetId, draftId))
+      .all();
+    created.forEach((r) => cleanup.recordIds.push(r.id));
+  });
+
+  test("rejects submissions to a deleted target and inserts nothing", async () => {
+    const ownerId = await seedUser("Owner");
+    const draftId = await seedDraft(ownerId);
+    const collectionId = await seedCollection({
+      ownerUserId: ownerId,
+      targetType: "draft",
+      targetId: draftId,
+      collection: "contact",
+    });
+
+    // The draft is gone but a stale, enabled opt-in row persists (the orphan
+    // scenario). Ingestion must re-resolve the target and fail closed.
+    await db
+      .delete(schema.drafts)
+      .where(eq(schema.drafts.id, draftId))
+      .run();
+    cleanup.draftIds = cleanup.draftIds.filter((id) => id !== draftId);
+
+    const res = await postSubmission(`draft:${draftId}`, "contact", {
+      name: "Ada",
+    });
+    expect(res.status).toBe(404);
+
+    const records = await db
+      .select()
+      .from(schema.siteDataRecords)
+      .where(eq(schema.siteDataRecords.targetId, draftId))
+      .all();
+    expect(records.length).toBe(0);
+
+    // The lingering opt-in row is cleaned up here so the test leaves no trace.
+    await deleteSiteDataForTarget("draft", draftId);
+    cleanup.collectionIds = cleanup.collectionIds.filter(
+      (id) => id !== collectionId
+    );
+  });
+
+  test("deleteSiteDataForTarget removes the target's collections and records", async () => {
+    const ownerId = await seedUser("Owner");
+    const draftId = await seedDraft(ownerId);
+    const collectionId = await seedCollection({
+      ownerUserId: ownerId,
+      targetType: "draft",
+      targetId: draftId,
+      collection: "contact",
+    });
+
+    const res = await postSubmission(`draft:${draftId}`, "contact", {
+      name: "Ada",
+    });
+    expect(res.status).toBe(201);
+
+    await deleteSiteDataForTarget("draft", draftId);
+
+    const remainingCollections = await db
+      .select()
+      .from(schema.siteDataCollections)
+      .where(eq(schema.siteDataCollections.targetId, draftId))
+      .all();
+    const remainingRecords = await db
+      .select()
+      .from(schema.siteDataRecords)
+      .where(eq(schema.siteDataRecords.targetId, draftId))
+      .all();
+
+    expect(remainingCollections.length).toBe(0);
+    expect(remainingRecords.length).toBe(0);
+
+    // Already cleaned up — drop the tracked id so afterEach doesn't re-delete.
+    cleanup.collectionIds = cleanup.collectionIds.filter(
+      (id) => id !== collectionId
+    );
+  });
+
+  test("rotated X-Forwarded-For from one socket cannot mint fresh per-visitor buckets", async () => {
+    const ownerId = await seedUser("Owner");
+    const draftId = await seedDraft(ownerId);
+    await seedCollection({
+      ownerUserId: ownerId,
+      targetType: "draft",
+      targetId: draftId,
+      collection: "contact",
+    });
+
+    // TRUST_PROXY is false in tests and there is no Bun socket in the fetch
+    // env, so every request resolves to the same "unknown" client IP regardless
+    // of the (spoofable) X-Forwarded-For value. Rotating XFF must therefore NOT
+    // bypass the per-visitor limit.
+    let limited = false;
+    for (let i = 0; i < 25; i++) {
+      const res = await postSubmission(
+        `draft:${draftId}`,
+        "contact",
+        { i },
+        { "x-forwarded-for": `203.0.113.${i}` }
       );
       if (res.status === 429) {
         limited = true;

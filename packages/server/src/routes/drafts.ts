@@ -21,6 +21,7 @@ import {
   aggregateViewStats,
   recordViewFromRequest,
 } from "../services/analytics.js";
+import { deleteSiteDataForTarget } from "../services/siteDataCleanup.js";
 import type { AppEnv } from "../lib/types.js";
 
 const app = new Hono<AppEnv>();
@@ -302,6 +303,10 @@ app.delete("/:draftId", requireAuth, requireScope("draft:write"), async (c) => {
   }
 
   await db.delete(schema.drafts).where(eq(schema.drafts.id, draftId)).run();
+
+  // Cascade: remove orphaned site-data opt-ins/records so the public ingestion
+  // endpoint can't keep accepting writes against this now-deleted draft.
+  await deleteSiteDataForTarget("draft", draftId);
 
   return c.json({ data: { deleted: true } });
 });

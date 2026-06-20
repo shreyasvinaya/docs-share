@@ -5,9 +5,9 @@ import { requireAuth } from "../middleware/requireAuth.js";
 import { requireScope } from "../middleware/requireScope.js";
 import { config } from "../lib/config.js";
 import { generateId } from "../lib/crypto.js";
+import { resolveClientIp } from "../lib/clientIp.js";
 import {
   RateLimiter,
-  clientIpFromHeaders,
   hashVisitor,
   isSiteDataTargetType,
   normalizeCollectionName,
@@ -27,6 +27,17 @@ const GLOBAL_WINDOW_MS = 60 * 1000;
 
 const visitorLimiter = new RateLimiter(PER_VISITOR_LIMIT, PER_VISITOR_WINDOW_MS);
 const globalLimiter = new RateLimiter(GLOBAL_LIMIT, GLOBAL_WINDOW_MS);
+
+/**
+ * Test-only helper to clear the in-memory ingestion limiters between cases.
+ * Untrusted callers now collapse onto a single shared client-IP bucket (no
+ * spoofable X-Forwarded-For), so without a reset one test's successful POSTs
+ * could exhaust the per-visitor budget for the next.
+ */
+export function __resetSiteDataLimiters(): void {
+  visitorLimiter.reset();
+  globalLimiter.reset();
+}
 
 interface ResolvedTarget {
   targetType: SiteDataTargetType;
@@ -132,7 +143,9 @@ app.post("/:target/data/:collection", async (c) => {
     return c.json({ error: "Too many requests" }, 429);
   }
 
-  const ip = clientIpFromHeaders(c.req.raw.headers);
+  // Trusted client IP (honors TRUST_PROXY; never trusts client X-Forwarded-For)
+  // so a single source cannot mint fresh per-visitor buckets via header spoofing.
+  const ip = resolveClientIp(c);
   const userAgent = c.req.header("User-Agent") ?? null;
   const visitorHash = hashVisitor({ ip, userAgent }, config.SESSION_SECRET);
 
@@ -169,6 +182,14 @@ app.post("/:target/data/:collection", async (c) => {
     .get();
 
   if (!optIn || !optIn.enabled) {
+    return c.json({ error: "This form is not accepting submissions" }, 404);
+  }
+
+  // Re-resolve the target to confirm it still exists. The opt-in row has no FK
+  // to the draft/repo, so a deleted target can leave an orphaned collection
+  // behind; without this check an attacker could keep POSTing dead-target rows.
+  const target = await resolveTarget(parsed.targetType, parsed.targetId);
+  if (!target || target.ownerUserId !== optIn.ownerUserId) {
     return c.json({ error: "This form is not accepting submissions" }, 404);
   }
 
