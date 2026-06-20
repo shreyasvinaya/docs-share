@@ -223,6 +223,25 @@ app.post("/:repoId/github-sync", requireRepoWideWrite, async (c) => {
     return c.json({ error: "Invalid GitHub import path" }, 400);
   }
 
+  const credential = await getUserGitHubCredential(userId);
+
+  // GitHub App installation tokens can clone every repo in the installation, so
+  // we must re-check that the caller actually has access to the selected repo
+  // rather than trusting the installation's blanket reach. PAT credentials are
+  // already scoped to the user's own access.
+  if (credential.type === "github_app") {
+    const accessibleRepos = await listGitHubAccessibleRepos(credential);
+    const isAccessible = accessibleRepos.some(
+      (repo) => repo.repoUrl === normalizedUrl
+    );
+    if (!isAccessible) {
+      return c.json(
+        { error: "You do not have access to this repository" },
+        403
+      );
+    }
+  }
+
   const now = new Date().toISOString();
   if (existing) {
     await db
@@ -263,7 +282,7 @@ app.post("/:repoId/github-sync", requireRepoWideWrite, async (c) => {
       normalizedUrl,
       normalizedBranch,
       normalizedSourcePath,
-      await getUserGitHubToken(userId)
+      credential.token
     );
     await db
       .update(schema.githubSyncs)

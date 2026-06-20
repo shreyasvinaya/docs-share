@@ -8,6 +8,7 @@ import { generateId, generateApiToken } from "../lib/crypto.js";
 import { isProduction, safeNextPath } from "../lib/security.js";
 import { deploymentRoleForEmail, parseSysadminEmails } from "../lib/deployment.js";
 import { requireAuth } from "../middleware/requireAuth.js";
+import { requireScope } from "../middleware/requireScope.js";
 import { requireSession } from "../middleware/requireSession.js";
 import { authRateLimiter } from "../lib/rateLimiters.js";
 import { createBareRepo } from "../git/repoManager.js";
@@ -349,8 +350,10 @@ app.post("/logout", async (c) => {
 
 // ---------------------------------------------------------------------------
 // GET /session — Return current user (requires auth)
+// An api_token must hold user:read to read the caller's identity/role; session
+// cookie auth is unaffected (requireScope only gates api_token requests).
 // ---------------------------------------------------------------------------
-app.get("/session", requireAuth, async (c) => {
+app.get("/session", requireAuth, requireScope("user:read"), async (c) => {
   const userId = c.get("userId");
 
   let user = await db

@@ -6,7 +6,7 @@ import { requireScope } from "../middleware/requireScope.js";
 import { canReadRepoPath } from "../middleware/shareAccess.js";
 import { publicRateLimiter } from "../lib/rateLimiters.js";
 import { config } from "../lib/config.js";
-import { hashToken } from "../lib/crypto.js";
+import { verifySharePassword } from "../lib/crypto.js";
 import {
   normalizeRelativePath,
   resolveInside,
@@ -258,7 +258,7 @@ function validateSharePassword(req: Request, passwordHash: string | null): Respo
 
   const providedPassword = req.headers.get("X-Share-Password");
 
-  if (!providedPassword || hashToken(providedPassword) !== passwordHash) {
+  if (!providedPassword || !verifySharePassword(providedPassword, passwordHash)) {
     return new Response(JSON.stringify({ error: "Share password required" }), {
       status: 401,
       headers: { "Content-Type": "application/json" },

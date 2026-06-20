@@ -349,10 +349,13 @@ export async function serveDraftContent(
     .where(eq(schema.drafts.id, draftId))
     .get();
 
+  // Return a UNIFORM 404 for both a missing draft and an invalid/expired
+  // signature so this endpoint is not an existence oracle: a caller without a
+  // valid signed URL cannot distinguish a real draft id from a fake one.
   if (!draft) return new Response("Draft not found", { status: 404 });
 
   if (!validContentSignature(draft.id, draft.contentSha256, expiresAt, sig)) {
-    return new Response("Invalid or expired draft content URL", { status: 403 });
+    return new Response("Draft not found", { status: 404 });
   }
 
   const absolutePath = draftStorageAbsolutePath(draft.storagePath);
