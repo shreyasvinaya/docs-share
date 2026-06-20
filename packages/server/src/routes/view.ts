@@ -2,6 +2,7 @@ import { Hono, type Context } from "hono";
 import { eq, and } from "drizzle-orm";
 import { db, schema } from "../db/index.js";
 import { requireAuth } from "../middleware/requireAuth.js";
+import { publicRateLimiter } from "../lib/rateLimiters.js";
 import { config } from "../lib/config.js";
 import { hashToken } from "../lib/crypto.js";
 import { normalizeRelativePath, resolveInside } from "../lib/security.js";
@@ -316,7 +317,7 @@ async function gateOrgAccess(
  * No auth required for "public" links.
  * "org" links require auth + matching email domain.
  */
-app.get("/public/:token/*", async (c) => {
+app.get("/public/:token/*", publicRateLimiter, async (c) => {
   const token = c.req.param("token");
   const publicPrefix = `/view/public/${token}/`;
   const filePath = c.req.path.startsWith(publicPrefix)
@@ -370,7 +371,7 @@ app.get("/public/:token/*", async (c) => {
 /**
  * Also handle /public/:token with no trailing path (for file-level shares).
  */
-app.get("/public/:token", async (c) => {
+app.get("/public/:token", publicRateLimiter, async (c) => {
   const token = c.req.param("token");
 
   const share = await db

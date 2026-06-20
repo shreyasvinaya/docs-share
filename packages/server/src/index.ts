@@ -16,12 +16,14 @@ import auditRoutes from "./routes/audit.js";
 import internalRoutes from "./routes/internal.js";
 import viewRoutes from "./routes/view.js";
 import setupRoutes from "./routes/setup.js";
+import adminRoutes from "./routes/admin.js";
 import gitRoutes from "./git/smartHttp.js";
 import { ensureRepoDir } from "./git/repoManager.js";
 import { startScheduler } from "./services/scheduler.js";
 import { openApiSpec } from "./docs/openapi.js";
 import { buildLlmsTxt } from "./docs/llms.js";
 import { config } from "./lib/config.js";
+import { publicRateLimiter } from "./lib/rateLimiters.js";
 import { resolveInside } from "./lib/security.js";
 import type { AppEnv } from "./lib/types.js";
 
@@ -45,18 +47,19 @@ app.route("/api/drafts", draftRoutes);
 app.route("/api/shares", shareRoutes);
 app.route("/api/audit", auditRoutes);
 app.route("/api/setup", setupRoutes);
+app.route("/api/admin", adminRoutes);
 
 app.route("/git", gitRoutes);
 app.route("/internal", internalRoutes);
 app.route("/view", viewRoutes);
 
-app.get("/d/:draftId", async (c) => {
+app.get("/d/:draftId", publicRateLimiter, async (c) => {
   const userId = c.get("userId");
   if (!userId) return c.redirect(`/login?next=${encodeURIComponent(c.req.path)}`);
   return renderDraftPage(c.req.param("draftId"), userId, c.req.raw);
 });
 
-app.get("/draft-content/:draftId", (c) =>
+app.get("/draft-content/:draftId", publicRateLimiter, (c) =>
   serveDraftContent(
     c.req.param("draftId"),
     c.req.query("exp"),

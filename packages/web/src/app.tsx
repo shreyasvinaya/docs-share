@@ -15,6 +15,7 @@ import { TeamsIndexPage } from "@/pages/teams-index";
 import { TeamOverviewPage } from "@/pages/team-overview";
 import { TeamSettingsPage } from "@/pages/team-settings";
 import { SettingsPage } from "@/pages/settings";
+import { AdminPage } from "@/pages/admin";
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const { data, isLoading, isError } = useSession();
@@ -60,6 +61,7 @@ export function App() {
             element={<TeamSettingsPage />}
           />
           <Route path="settings" element={<SettingsPage />} />
+          <Route path="admin" element={<AdminPage />} />
         </Route>
       </Routes>
     </BrowserRouter>
