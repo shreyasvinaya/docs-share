@@ -10,7 +10,10 @@ packages/web/tsconfig.tsbuildinfo
 *.db
 *.db-shm
 *.db-wal
-.env
-.env.local
+# Exclude ALL env files from the build context so real secrets (e.g.
+# .env.production) can never be baked into an image layer; keep only examples.
+.env*
+!.env.example
+!.env.production.example
 Dockerfile
 docker-compose.yml

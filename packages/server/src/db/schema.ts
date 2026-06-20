@@ -440,6 +440,10 @@ export const githubSyncs = sqliteTable(
       .default("idle"),
     error: text("error"),
     retryCount: integer("retry_count").notNull().default(0),
+    // The user who configured this sync. Background retries use THIS user's
+    // GitHub credential (never the repo owner's), so a non-owner cannot cause
+    // the owner's token to clone a repo the configurer can't access.
+    configuredByUserId: text("configured_by_user_id"),
     createdAt: text("created_at")
       .notNull()
       .default(sql`(CURRENT_TIMESTAMP)`),
