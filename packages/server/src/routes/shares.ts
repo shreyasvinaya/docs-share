@@ -10,6 +10,7 @@ import {
   sendShareEmailNotifications,
   sendSlackNotification,
 } from "../services/notifications.js";
+import { dispatchWebhookEvent } from "../services/webhooks.js";
 import type { AppEnv } from "../lib/types.js";
 
 const app = new Hono<AppEnv>();
@@ -70,6 +71,8 @@ async function checkRepoAccess(
 
 async function notifyShareCreated(params: {
   createdById: string;
+  shareId: string;
+  repoId: string;
   shareType: "email" | "team" | "public_link";
   permission: "read" | "write";
   path: string | null;
@@ -82,6 +85,18 @@ async function notifyShareCreated(params: {
     .get();
   const sharerName = creator?.displayName ?? creator?.email ?? "Someone";
   const resourceLabel = params.path || "All files";
+
+  await dispatchWebhookEvent({
+    ownerUserId: params.createdById,
+    event: "share.created",
+    data: {
+      shareId: params.shareId,
+      repoId: params.repoId,
+      path: params.path,
+      shareType: params.shareType,
+      permission: params.permission,
+    },
+  });
 
   try {
     if (params.shareType === "email" && params.recipientEmails?.length) {
@@ -234,6 +249,8 @@ app.post("/", requireAuth, async (c) => {
 
     await notifyShareCreated({
       createdById: userId,
+      shareId,
+      repoId,
       shareType: "email",
       permission: sharePermission,
       path: path || null,
@@ -319,6 +336,8 @@ app.post("/", requireAuth, async (c) => {
 
       await notifyShareCreated({
         createdById: userId,
+        shareId: existingShare.id,
+        repoId,
         shareType: "public_link",
         permission: "read",
         path: path || null,
@@ -370,6 +389,8 @@ app.post("/", requireAuth, async (c) => {
 
     await notifyShareCreated({
       createdById: userId,
+      shareId,
+      repoId,
       shareType: "public_link",
       permission: "read",
       path: path || null,
@@ -449,6 +470,8 @@ app.post("/", requireAuth, async (c) => {
 
       await notifyShareCreated({
         createdById: userId,
+        shareId: existingShare.id,
+        repoId,
         shareType: "team",
         permission: sharePermission,
         path: path || null,
@@ -480,6 +503,8 @@ app.post("/", requireAuth, async (c) => {
 
     await notifyShareCreated({
       createdById: userId,
+      shareId,
+      repoId,
       shareType: "team",
       permission: sharePermission,
       path: path || null,
@@ -586,6 +611,17 @@ app.delete("/:shareId", requireAuth, async (c) => {
   }
 
   await db.delete(schema.shares).where(eq(schema.shares.id, shareId)).run();
+
+  await dispatchWebhookEvent({
+    ownerUserId: share.createdById,
+    event: "share.revoked",
+    data: {
+      shareId: share.id,
+      repoId: share.repoId,
+      path: share.path,
+      shareType: share.shareType,
+    },
+  });
 
   return c.json({ data: { deleted: true } });
 });

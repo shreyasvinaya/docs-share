@@ -12,6 +12,7 @@ import repoRoutes from "./routes/repos.js";
 import fileRoutes from "./routes/files.js";
 import draftRoutes, { renderDraftPage, serveDraftContent } from "./routes/drafts.js";
 import shareRoutes from "./routes/shares.js";
+import webhookRoutes from "./routes/webhooks.js";
 import internalRoutes from "./routes/internal.js";
 import viewRoutes from "./routes/view.js";
 import setupRoutes from "./routes/setup.js";
@@ -39,6 +40,7 @@ app.route("/api/repos", repoRoutes);
 app.route("/api/files", fileRoutes);
 app.route("/api/drafts", draftRoutes);
 app.route("/api/shares", shareRoutes);
+app.route("/api/webhooks", webhookRoutes);
 app.route("/api/setup", setupRoutes);
 
 app.route("/git", gitRoutes);

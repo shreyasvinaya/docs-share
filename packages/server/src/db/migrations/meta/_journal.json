@@ -71,6 +71,13 @@
       "when": 1781367000000,
       "tag": "0009_user_sysadmin_role",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "6",
+      "when": 1781380000000,
+      "tag": "0015_webhooks",
+      "breakpoints": true
     }
   ]
 }

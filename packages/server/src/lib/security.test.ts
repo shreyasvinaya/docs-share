@@ -1,10 +1,12 @@
 import { describe, expect, test } from "bun:test";
 import {
   assertProductionSecret,
+  isPrivateOrLoopbackHost,
   isProduction,
   normalizeRelativePath,
   resolveInside,
   safeNextPath,
+  validateWebhookUrl,
 } from "./security.js";
 
 describe("isProduction", () => {
@@ -116,5 +118,61 @@ describe("safeNextPath", () => {
     expect(safeNextPath("/" + String.fromCharCode(92) + "evil.com")).toBeNull(); // backslash trick
     expect(safeNextPath("/foo" + String.fromCharCode(10) + "bar")).toBeNull(); // control char
     expect(safeNextPath("/foo" + String.fromCharCode(127) + "bar")).toBeNull(); // DEL
+  });
+});
+
+describe("isPrivateOrLoopbackHost", () => {
+  test("flags loopback, private, link-local, and internal hosts", () => {
+    expect(isPrivateOrLoopbackHost("localhost")).toBe(true);
+    expect(isPrivateOrLoopbackHost("api.localhost")).toBe(true);
+    expect(isPrivateOrLoopbackHost("db.internal")).toBe(true);
+    expect(isPrivateOrLoopbackHost("printer.local")).toBe(true);
+    expect(isPrivateOrLoopbackHost("127.0.0.1")).toBe(true);
+    expect(isPrivateOrLoopbackHost("0.0.0.0")).toBe(true);
+    expect(isPrivateOrLoopbackHost("10.0.0.5")).toBe(true);
+    expect(isPrivateOrLoopbackHost("172.16.4.1")).toBe(true);
+    expect(isPrivateOrLoopbackHost("172.31.255.255")).toBe(true);
+    expect(isPrivateOrLoopbackHost("192.168.1.1")).toBe(true);
+    expect(isPrivateOrLoopbackHost("169.254.1.1")).toBe(true);
+    expect(isPrivateOrLoopbackHost("100.64.0.1")).toBe(true);
+    expect(isPrivateOrLoopbackHost("::1")).toBe(true);
+    expect(isPrivateOrLoopbackHost("[::1]")).toBe(true);
+    expect(isPrivateOrLoopbackHost("fe80::1")).toBe(true);
+    expect(isPrivateOrLoopbackHost("fd00::1")).toBe(true);
+    expect(isPrivateOrLoopbackHost("::ffff:127.0.0.1")).toBe(true);
+    expect(isPrivateOrLoopbackHost("")).toBe(true);
+  });
+
+  test("allows routable public hosts", () => {
+    expect(isPrivateOrLoopbackHost("example.com")).toBe(false);
+    expect(isPrivateOrLoopbackHost("hooks.example.com")).toBe(false);
+    expect(isPrivateOrLoopbackHost("8.8.8.8")).toBe(false);
+    expect(isPrivateOrLoopbackHost("172.32.0.1")).toBe(false);
+    expect(isPrivateOrLoopbackHost("2606:4700:4700::1111")).toBe(false);
+  });
+});
+
+describe("validateWebhookUrl", () => {
+  test("accepts public http(s) URLs", () => {
+    expect(validateWebhookUrl("https://hooks.example.com/in")).toBe(
+      "https://hooks.example.com/in"
+    );
+    expect(validateWebhookUrl("http://example.com/webhook")).toBe(
+      "http://example.com/webhook"
+    );
+  });
+
+  test("rejects non-http schemes, credentials, and private targets", () => {
+    expect(validateWebhookUrl(null)).toBeNull();
+    expect(validateWebhookUrl("")).toBeNull();
+    expect(validateWebhookUrl("not a url")).toBeNull();
+    expect(validateWebhookUrl("ftp://example.com")).toBeNull();
+    expect(validateWebhookUrl("file:///etc/passwd")).toBeNull();
+    expect(validateWebhookUrl("https://user:pass@example.com")).toBeNull();
+    expect(validateWebhookUrl("http://localhost:3000/hook")).toBeNull();
+    expect(validateWebhookUrl("http://127.0.0.1/hook")).toBeNull();
+    expect(validateWebhookUrl("http://169.254.169.254/latest/meta-data")).toBeNull();
+    expect(validateWebhookUrl("http://[::1]:8080/hook")).toBeNull();
+    expect(validateWebhookUrl("http://192.168.0.10/hook")).toBeNull();
   });
 });
