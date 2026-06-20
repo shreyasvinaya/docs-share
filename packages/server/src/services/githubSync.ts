@@ -3,6 +3,7 @@ import { tmpdir } from "os";
 import { basename, join, relative, resolve, sep } from "path";
 import { eq } from "drizzle-orm";
 import { db, schema } from "../db/index.js";
+import { config } from "../lib/config.js";
 import { redactInternalPaths } from "../lib/security.js";
 import { spawnWithTimeout } from "../git/gitOps.js";
 import {
@@ -366,6 +367,55 @@ export async function listGitHubRemoteTree(params: {
   );
 }
 
+/**
+ * Reject an import whose GitHub-reported repository size exceeds
+ * `maxImportKb` BEFORE any clone runs, so a malicious huge repo cannot fill
+ * DATA_DIR. The GitHub `size` field is in KiB. A lookup failure (network error,
+ * missing/permission-denied repo) is non-fatal here: the clone itself will then
+ * fail-closed with its own error, so we never block a legitimate import just
+ * because the lightweight metadata call hiccupped.
+ *
+ * @param maxImportKb - Reject when reported size strictly exceeds this. Pass
+ *   <= 0 to disable the precheck.
+ */
+export async function assertRepoSizeWithinLimit(params: {
+  repoUrl: string;
+  token?: string;
+  maxImportKb?: number;
+}): Promise<void> {
+  const maxImportKb = params.maxImportKb ?? config.GITHUB_MAX_IMPORT_KB;
+  if (maxImportKb <= 0) return;
+
+  const normalizedUrl = normalizeGitHubRepoUrl(params.repoUrl);
+  if (!normalizedUrl) {
+    throw new Error("Only https://github.com/<owner>/<repo> URLs are supported");
+  }
+  const { owner, repo } = parseGitHubRepo(normalizedUrl);
+
+  let sizeKb: number | null = null;
+  try {
+    const res = await fetch(
+      `https://api.github.com/repos/${owner}/${repo}`,
+      { headers: githubApiHeaders(params.token) }
+    );
+    if (res.ok) {
+      const body = (await res.json()) as { size?: number };
+      if (typeof body.size === "number" && Number.isFinite(body.size)) {
+        sizeKb = body.size;
+      }
+    }
+  } catch {
+    // Metadata lookup failed; defer to the clone's own fail-closed behaviour.
+    return;
+  }
+
+  if (sizeKb !== null && sizeKb > maxImportKb) {
+    throw new Error(
+      `GitHub repository is too large to import (${sizeKb} KiB exceeds the ${maxImportKb} KiB limit)`
+    );
+  }
+}
+
 export async function syncGitHubRepo(
   repo: typeof schema.repos.$inferSelect,
   repoUrl: string,
@@ -387,6 +437,10 @@ export async function syncGitHubRepo(
     throw new Error("Invalid GitHub import path");
   }
 
+  // Bound disk usage BEFORE cloning: reject an oversized repo by its
+  // GitHub-reported size so a malicious huge repo cannot fill DATA_DIR.
+  await assertRepoSizeWithinLimit({ repoUrl: normalizedUrl, token });
+
   const tmpDir = await mkdtemp(join(tmpdir(), "ds-github-sync-"));
   const clonePath = join(tmpDir, "source");
   const importPath = join(tmpDir, "import");
@@ -398,6 +452,9 @@ export async function syncGitHubRepo(
       "--depth",
       "1",
       "--single-branch",
+      // Partial clone: skip blobs over the configured byte limit so a few huge
+      // files cannot blow past the disk budget even within a size-allowed repo.
+      `--filter=blob:limit=${config.GITHUB_MAX_BLOB_BYTES}`,
       "--branch",
       normalizedBranch,
       normalizedUrl,

@@ -11,6 +11,7 @@ import {
 import { join } from "path";
 import { tmpdir } from "os";
 import {
+  assertRepoSizeWithinLimit,
   filterGitHubTree,
   listGitHubAccessibleRepos,
   listGitHubBranches,
@@ -113,6 +114,67 @@ describe("orderGitHubBranches", () => {
     expect(
       orderGitHubBranches(["feature-x", "gh-pages", "master", "main", "staging"])
     ).toEqual(["main", "master", "staging", "gh-pages", "feature-x"]);
+  });
+});
+
+describe("assertRepoSizeWithinLimit (FIX 4: clone disk-exhaustion guard)", () => {
+  test("rejects a repo whose GitHub-reported size exceeds the limit", async () => {
+    // GitHub `size` is in KiB. Report 2 GiB against a 1 GiB cap.
+    globalThis.fetch = (async (_input: unknown, _init?: unknown) =>
+      new Response(JSON.stringify({ size: 2 * 1024 * 1024 }), {
+        status: 200,
+      })) as typeof fetch;
+
+    await expect(
+      assertRepoSizeWithinLimit({
+        repoUrl: "https://github.com/acme/huge",
+        maxImportKb: 1024 * 1024,
+      })
+    ).rejects.toThrow(/too large to import/i);
+  });
+
+  test("allows a repo within the limit", async () => {
+    globalThis.fetch = (async (_input: unknown, _init?: unknown) =>
+      new Response(JSON.stringify({ size: 5000 }), {
+        status: 200,
+      })) as typeof fetch;
+
+    await expect(
+      assertRepoSizeWithinLimit({
+        repoUrl: "https://github.com/acme/small",
+        maxImportKb: 1024 * 1024,
+      })
+    ).resolves.toBeUndefined();
+  });
+
+  test("is non-fatal when the metadata lookup fails (defers to the clone)", async () => {
+    globalThis.fetch = (async (
+      _input: unknown,
+      _init?: unknown
+    ): Promise<Response> => {
+      throw new Error("network down");
+    }) as typeof fetch;
+
+    await expect(
+      assertRepoSizeWithinLimit({
+        repoUrl: "https://github.com/acme/x",
+        maxImportKb: 1024 * 1024,
+      })
+    ).resolves.toBeUndefined();
+  });
+
+  test("is a no-op when the limit is disabled (<= 0)", async () => {
+    let called = false;
+    globalThis.fetch = (async (_input: unknown, _init?: unknown) => {
+      called = true;
+      return new Response("{}", { status: 200 });
+    }) as typeof fetch;
+
+    await assertRepoSizeWithinLimit({
+      repoUrl: "https://github.com/acme/x",
+      maxImportKb: 0,
+    });
+    expect(called).toBe(false);
   });
 });
 

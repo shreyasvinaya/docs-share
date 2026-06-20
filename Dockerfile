@@ -25,7 +25,18 @@ ENV PORT=3000
 ENV DATA_DIR=/data
 ENV WEB_DIST_DIR=/app/packages/web/dist
 
+# Run as a dedicated non-root user. Create the data dir up front and hand both
+# the app tree and DATA_DIR to that user so the server can read its build and
+# read/write the SQLite DB + repo storage without root. The volume inherits the
+# /data ownership set here.
+RUN addgroup --system --gid 1001 docsshare \
+  && adduser --system --uid 1001 --ingroup docsshare docsshare \
+  && mkdir -p /data \
+  && chown -R docsshare:docsshare /app /data
+
 VOLUME ["/data"]
 EXPOSE 3000
+
+USER docsshare
 
 CMD ["bun", "run", "packages/server/src/index.ts"]

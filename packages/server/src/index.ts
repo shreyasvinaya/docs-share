@@ -1,6 +1,7 @@
-import { Hono } from "hono";
+import { Hono, type Context } from "hono";
 import { cors } from "hono/cors";
 import { logger } from "hono/logger";
+import { bodyLimit } from "hono/body-limit";
 import { existsSync, statSync } from "fs";
 import { sessionMiddleware } from "./middleware/session.js";
 import { viewAwareSecureHeaders } from "./middleware/securityHeaders.js";
@@ -57,6 +58,48 @@ app.use("/api/*", (c, next) => {
   return apiCors(c, next);
 });
 app.use("*", sessionMiddleware);
+
+// ---------------------------------------------------------------------------
+// Request body-size limits (memory-DoS guards). Without these, `c.req.json()` /
+// `formData()` buffer up to Bun's 128MB default before any per-route size check
+// runs. `bodyLimit` rejects oversized requests with 413 BEFORE the handler ever
+// reads the body. Limits are config-driven; the backstop on the Bun.serve
+// export (`maxRequestBodySize`) catches anything that slips past route matching.
+//
+// Order matters: more specific overrides are registered before the broad
+// `/api/*` default so Hono's middleware chain applies the tighter cap first.
+const bodyTooLarge = (c: Context<AppEnv>) =>
+  c.json({ error: "Request body too large" }, 413);
+
+const siteDataIngestionLimit = bodyLimit({
+  maxSize: config.MAX_SITE_DATA_BODY_BYTES,
+  onError: bodyTooLarge,
+});
+const draftUploadLimit = bodyLimit({
+  maxSize: config.MAX_UPLOAD_BYTES,
+  onError: bodyTooLarge,
+});
+const generalApiLimit = bodyLimit({
+  maxSize: config.MAX_JSON_BODY_BYTES,
+  onError: bodyTooLarge,
+});
+
+// A single `/api/*` guard dispatches to exactly ONE cap per request so the
+// broad default never double-applies a TIGHTER limit on top of a route that has
+// a deliberately LARGER one (a 5MB draft must not be rejected by the 1MB
+// default). Most specific path wins.
+const draftPathRe = /^\/api\/drafts(\/|$)/;
+app.use("/api/*", (c, next) => {
+  if (ingestionPathRe.test(c.req.path)) return siteDataIngestionLimit(c, next);
+  if (draftPathRe.test(c.req.path)) return draftUploadLimit(c, next);
+  return generalApiLimit(c, next);
+});
+// Git smart-HTTP push/fetch bodies are buffered into git's stdin (see
+// git/smartHttp.ts), so cap them well before that buffering happens.
+app.use(
+  "/git/*",
+  bodyLimit({ maxSize: config.GIT_MAX_BODY_BYTES, onError: bodyTooLarge })
+);
 
 app.route("/api/auth", authRoutes);
 app.route("/api/users", userRoutes);
@@ -174,6 +217,17 @@ export default {
   port: config.PORT,
   hostname: config.HOST,
   fetch: app.fetch,
+  // Backstop body cap at the Bun.serve layer: even routes that escape the
+  // `bodyLimit` middleware (or any unmatched path) cannot buffer more than the
+  // largest per-route limit. Without this, Bun defaults to 128MB. We size it to
+  // the largest configured limit (git push) so legitimate large requests still
+  // pass while a pathological body is refused at the socket layer.
+  maxRequestBodySize: Math.max(
+    config.GIT_MAX_BODY_BYTES,
+    config.MAX_UPLOAD_BYTES,
+    config.MAX_JSON_BODY_BYTES,
+    config.MAX_SITE_DATA_BODY_BYTES
+  ),
 };
 
 console.log(`docs-share server running on ${config.HOST}:${config.PORT}`);

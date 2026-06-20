@@ -2,6 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { Hono } from "hono";
 import { and, eq, inArray } from "drizzle-orm";
 import { db, schema } from "../db/index.js";
+import { config } from "../lib/config.js";
 import { hashToken } from "../lib/crypto.js";
 import type { AppEnv } from "../lib/types.js";
 import { deleteSiteDataForTarget } from "../services/siteDataCleanup.js";
@@ -408,6 +409,58 @@ describe("public ingestion", () => {
       }
     }
     expect(limited).toBe(true);
+
+    const created = await db
+      .select()
+      .from(schema.siteDataRecords)
+      .where(eq(schema.siteDataRecords.targetId, draftId))
+      .all();
+    created.forEach((r) => cleanup.recordIds.push(r.id));
+  });
+
+  test("one IP hitting its limit does not block a different IP (FIX 9: per-IP buckets)", async () => {
+    const ownerId = await seedUser("Owner");
+    const draftId = await seedDraft(ownerId);
+    await seedCollection({
+      ownerUserId: ownerId,
+      targetType: "draft",
+      targetId: draftId,
+      collection: "contact",
+    });
+
+    // Trust the proxy so X-Real-IP becomes the resolved client IP, letting us
+    // simulate two distinct sources. (afterEach is not enough here; restore in
+    // a finally so a failure can't leak the flag into other tests.)
+    const originalTrustProxy = config.TRUST_PROXY;
+    config.TRUST_PROXY = true;
+    try {
+      const ipA = { "X-Real-IP": "203.0.113.10" };
+      const ipB = { "X-Real-IP": "198.51.100.20" };
+
+      // IP A floods past its own per-visitor budget (20/min) until it is 429'd.
+      let aLimited = false;
+      for (let i = 0; i < 30; i++) {
+        const res = await postSubmission(`draft:${draftId}`, "contact", { i }, ipA);
+        if (res.status === 429) {
+          aLimited = true;
+          break;
+        }
+      }
+      expect(aLimited).toBe(true);
+
+      // IP B, a DIFFERENT source, must still be served: the limiter is keyed
+      // per-IP, so A exhausting its bucket cannot starve B (the old single
+      // global bucket would have rejected B too).
+      const bRes = await postSubmission(
+        `draft:${draftId}`,
+        "contact",
+        { from: "B" },
+        ipB
+      );
+      expect(bRes.status).toBe(201);
+    } finally {
+      config.TRUST_PROXY = originalTrustProxy;
+    }
 
     const created = await db
       .select()

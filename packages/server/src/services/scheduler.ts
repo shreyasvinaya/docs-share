@@ -2,6 +2,7 @@ import { config } from "../lib/config.js";
 import { sweepExpiredShares } from "./expiredShares.js";
 import { retryFailedGitHubSyncs } from "./githubSyncRetry.js";
 import { cleanupWebhookDeliveries } from "./webhookCleanup.js";
+import { cleanupAuditLog, cleanupViewEvents } from "./analyticsCleanup.js";
 
 export interface ScheduledJob {
   name: string;
@@ -42,6 +43,28 @@ export function buildScheduledJobs(): ScheduledJob[] {
         cleanupWebhookDeliveries({
           retentionDays: config.WEBHOOK_DELIVERY_RETENTION_DAYS,
           maxPerWebhook: config.WEBHOOK_DELIVERY_MAX_PER_HOOK,
+        }),
+    });
+  }
+
+  if (config.VIEW_EVENTS_CLEANUP_INTERVAL_MS > 0) {
+    jobs.push({
+      name: "view-events-cleanup",
+      intervalMs: config.VIEW_EVENTS_CLEANUP_INTERVAL_MS,
+      run: () =>
+        cleanupViewEvents({
+          retentionDays: config.VIEW_EVENTS_RETENTION_DAYS,
+        }),
+    });
+  }
+
+  if (config.AUDIT_LOG_CLEANUP_INTERVAL_MS > 0) {
+    jobs.push({
+      name: "audit-log-cleanup",
+      intervalMs: config.AUDIT_LOG_CLEANUP_INTERVAL_MS,
+      run: () =>
+        cleanupAuditLog({
+          retentionDays: config.AUDIT_LOG_RETENTION_DAYS,
         }),
     });
   }
