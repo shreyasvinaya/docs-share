@@ -25,9 +25,13 @@ function testId(prefix: string): string {
   return `${prefix}_${Date.now()}_${Math.random().toString(36).slice(2)}`;
 }
 
-async function seedSync(status: "idle" | "syncing" | "success" | "error"): Promise<{
+async function seedSync(
+  status: "idle" | "syncing" | "success" | "error",
+  opts: { configuredByUserId?: string | null } = {}
+): Promise<{
   syncId: string;
   repoId: string;
+  userId: string;
 }> {
   const userId = testId("user");
   const repoId = testId("repo");
@@ -53,13 +57,20 @@ async function seedSync(status: "idle" | "syncing" | "success" | "error"): Promi
     sourcePath: "",
     status,
     error: status === "error" ? "boom" : null,
+    configuredByUserId:
+      opts.configuredByUserId !== undefined ? opts.configuredByUserId : userId,
   });
 
   cleanup.userIds.push(userId);
   cleanup.repoIds.push(repoId);
   cleanup.syncIds.push(syncId);
-  return { syncId, repoId };
+  return { syncId, repoId, userId };
 }
+
+// A token resolver that always yields a credential, so the existing tests reach
+// the runner. Production resolves via getUserGitHubToken (the configurer's
+// token); the security-relevant cases are covered by the dedicated tests below.
+const tokenOk = async () => "ghp_test";
 
 describe("retryFailedGitHubSyncs", () => {
   test("retries only failed syncs and marks them success when the runner succeeds", async () => {
@@ -67,10 +78,15 @@ describe("retryFailedGitHubSyncs", () => {
     const ok = await seedSync("success");
 
     const seen: string[] = [];
-    const result = await retryFailedGitHubSyncs(10, async (repo) => {
-      seen.push(repo.id);
-      return { commitSha: "abc123", syncedAt: new Date().toISOString() };
-    });
+    const result = await retryFailedGitHubSyncs(
+      10,
+      async (repo) => {
+        seen.push(repo.id);
+        return { commitSha: "abc123", syncedAt: new Date().toISOString() };
+      },
+      undefined,
+      tokenOk
+    );
 
     expect(seen).toEqual([failed.repoId]);
     expect(result.attempted).toBe(1);
@@ -97,9 +113,14 @@ describe("retryFailedGitHubSyncs", () => {
   test("keeps the row in error state and records the message when the runner throws", async () => {
     const failed = await seedSync("error");
 
-    const result = await retryFailedGitHubSyncs(10, async () => {
-      throw new Error("still broken");
-    });
+    const result = await retryFailedGitHubSyncs(
+      10,
+      async () => {
+        throw new Error("still broken");
+      },
+      undefined,
+      tokenOk
+    );
 
     expect(result.attempted).toBe(1);
     expect(result.succeeded).toBe(0);
@@ -120,10 +141,15 @@ describe("retryFailedGitHubSyncs", () => {
     await seedSync("error");
 
     let calls = 0;
-    const result = await retryFailedGitHubSyncs(2, async () => {
-      calls += 1;
-      return { commitSha: "x", syncedAt: new Date().toISOString() };
-    });
+    const result = await retryFailedGitHubSyncs(
+      2,
+      async () => {
+        calls += 1;
+        return { commitSha: "x", syncedAt: new Date().toISOString() };
+      },
+      undefined,
+      tokenOk
+    );
 
     expect(calls).toBe(2);
     expect(result.attempted).toBe(2);
@@ -132,11 +158,16 @@ describe("retryFailedGitHubSyncs", () => {
   test("redacts credentials from the persisted error message", async () => {
     const failed = await seedSync("error");
 
-    await retryFailedGitHubSyncs(10, async () => {
-      throw new Error(
-        "fatal: Authentication failed for https://x-access-token:ghp_supersecret@github.com/acme/private.git"
-      );
-    });
+    await retryFailedGitHubSyncs(
+      10,
+      async () => {
+        throw new Error(
+          "fatal: Authentication failed for https://x-access-token:ghp_supersecret@github.com/acme/private.git"
+        );
+      },
+      undefined,
+      tokenOk
+    );
 
     const row = await db
       .select()
@@ -159,7 +190,8 @@ describe("retryFailedGitHubSyncs", () => {
         async () => {
           throw new Error("still broken");
         },
-        maxRetries
+        maxRetries,
+        tokenOk
       );
     }
 
@@ -179,9 +211,72 @@ describe("retryFailedGitHubSyncs", () => {
         calledAgain = true;
         throw new Error("should not run");
       },
-      maxRetries
+      maxRetries,
+      tokenOk
     );
     expect(calledAgain).toBe(false);
     expect(after.attempted).toBe(0);
+  });
+
+  test("retries with the CONFIGURER's token, never the repo owner's", async () => {
+    // Sync configured by a non-owner; the retry must resolve the token for the
+    // configurer, not the repo owner.
+    const configurerId = testId("configurer");
+    await db.insert(schema.users).values({
+      id: configurerId,
+      email: `${configurerId}@example.com`,
+      displayName: "Configurer",
+      googleId: `g_${configurerId}`,
+    });
+    cleanup.userIds.push(configurerId);
+    const seeded = await seedSync("error", { configuredByUserId: configurerId });
+
+    const resolvedFor: string[] = [];
+    let runnerToken = "";
+    await retryFailedGitHubSyncs(
+      10,
+      async (_repo, _url, _branch, _path, token) => {
+        runnerToken = token;
+        return { commitSha: "ok", syncedAt: new Date().toISOString() };
+      },
+      undefined,
+      async (userId) => {
+        resolvedFor.push(userId);
+        return userId === configurerId ? "configurer-token" : "owner-token";
+      }
+    );
+
+    // Token resolved for the configurer (not the repo owner = seeded.userId).
+    expect(resolvedFor).toEqual([configurerId]);
+    expect(resolvedFor).not.toContain(seeded.userId);
+    expect(runnerToken).toBe("configurer-token");
+  });
+
+  test("fails closed (does not run with the owner token) when the configurer has no credential", async () => {
+    // configuredByUserId null (legacy row) AND a resolver that would happily
+    // hand back the owner token must NOT result in a clone.
+    const seeded = await seedSync("error", { configuredByUserId: null });
+
+    let runnerCalled = false;
+    const result = await retryFailedGitHubSyncs(
+      10,
+      async () => {
+        runnerCalled = true;
+        return { commitSha: "x", syncedAt: new Date().toISOString() };
+      },
+      undefined,
+      // Even if a resolver would return a token for SOMEONE, configuredByUserId
+      // is null so it is never consulted.
+      async () => "owner-token"
+    );
+
+    expect(runnerCalled).toBe(false);
+    expect(result.succeeded).toBe(0);
+    const row = await db
+      .select()
+      .from(schema.githubSyncs)
+      .where(eq(schema.githubSyncs.id, seeded.syncId))
+      .get();
+    expect(row?.status).toBe("failed");
   });
 });

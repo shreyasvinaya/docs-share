@@ -230,6 +230,32 @@ export const config = {
   ),
   // Delete audit_log rows older than this many days. Default: 365. 0 disables.
   AUDIT_LOG_RETENTION_DAYS: nonNegativeInt("AUDIT_LOG_RETENTION_DAYS", 365),
+
+  // ---------------------------------------------------------------------------
+  // Site-data (public form ingestion) storage guards. The ingestion endpoint is
+  // unauthenticated, so a victim's enabled form could otherwise be flooded to
+  // exhaust disk. A per-(target_type,target_id,collection) live-record cap
+  // bounds how much a single form can store, and a retention sweep purges
+  // soft-deleted rows the owner has already removed.
+  // ---------------------------------------------------------------------------
+  // Maximum LIVE (not soft-deleted) records a single collection may hold. Once
+  // reached, further public submissions are rejected with 429. Default: 10000.
+  SITE_DATA_MAX_RECORDS_PER_COLLECTION: requiredPositiveInt(
+    "SITE_DATA_MAX_RECORDS_PER_COLLECTION",
+    10000
+  ),
+  // Soft-deleted site-data record retention sweep interval (ms).
+  // Default: every 24 hours. 0 disables the job.
+  SITE_DATA_CLEANUP_INTERVAL_MS: nonNegativeInt(
+    "SITE_DATA_CLEANUP_INTERVAL_MS",
+    86400000
+  ),
+  // Permanently delete soft-deleted (deleted_at set) site-data records older
+  // than this many days. Default: 30. 0 disables the purge.
+  SITE_DATA_DELETED_RETENTION_DAYS: nonNegativeInt(
+    "SITE_DATA_DELETED_RETENTION_DAYS",
+    30
+  ),
 };
 
 assertProductionSecret("SESSION_SECRET", config.SESSION_SECRET);

@@ -1,0 +1,1 @@
+ALTER TABLE `github_syncs` ADD `configured_by_user_id` text;

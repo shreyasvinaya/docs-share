@@ -5,8 +5,10 @@ dist/
 *.db
 *.db-wal
 *.db-shm
-.env
-.env.local
+# Never commit real env files (e.g. .env.production); keep only examples.
+.env*
+!.env.example
+!.env.production.example
 /data/
 packages/server/data/
 .DS_Store

@@ -178,23 +178,51 @@ export interface RateLimitResult {
   remaining: number;
 }
 
+/** Default hard cap on distinct buckets a single RateLimiter may hold. */
+export const DEFAULT_RATE_LIMITER_MAX_ENTRIES = 10000;
+
 /**
  * Tiny fixed-window in-memory rate limiter. Self-hosted single-process
  * deployments don't need a distributed limiter; this caps abusive bursts to
  * the public ingestion endpoint without external dependencies.
+ *
+ * The bucket store is bounded two ways so a flood of distinct keys (e.g. many
+ * client IPs / visitor hashes) cannot exhaust memory, mirroring
+ * {@link ../middleware/rateLimit.ts}:
+ *   1. Expired buckets are reclaimed lazily on each {@link check} (the key being
+ *      touched) and via an amortised periodic sweep across the whole store.
+ *   2. A hard `maxEntries` cap evicts expired-or-oldest buckets when exceeded.
+ *      The Map preserves insertion order, so the oldest keys are evicted first.
  */
 export class RateLimiter {
   private readonly hits = new Map<string, { count: number; resetAt: number }>();
 
+  // Amortised periodic sweep: every Nth check we walk the store once and drop
+  // every expired bucket. Cheap, allocation-free, and needs no timers.
+  private static readonly SWEEP_EVERY_CHECKS = 1000;
+  private checksSinceSweep = 0;
+
   constructor(
     private readonly limit: number,
-    private readonly windowMs: number
+    private readonly windowMs: number,
+    private readonly maxEntries: number = DEFAULT_RATE_LIMITER_MAX_ENTRIES
   ) {}
 
   check(key: string, now: number = Date.now()): RateLimitResult {
+    // Amortised store-wide sweep so abandoned buckets don't accumulate even when
+    // their own key is never checked again.
+    if (++this.checksSinceSweep >= RateLimiter.SWEEP_EVERY_CHECKS) {
+      this.checksSinceSweep = 0;
+      this.prune(now);
+    }
+
     const existing = this.hits.get(key);
     if (!existing || existing.resetAt <= now) {
+      // Delete-then-set so the (possibly expired) bucket moves to the back of
+      // the Map's insertion order, keeping eviction oldest-first (LRU-ish).
+      this.hits.delete(key);
       this.hits.set(key, { count: 1, resetAt: now + this.windowMs });
+      this.enforceMaxEntries(now);
       return { allowed: true, remaining: this.limit - 1 };
     }
     if (existing.count >= this.limit) {
@@ -211,8 +239,27 @@ export class RateLimiter {
     }
   }
 
+  /**
+   * Enforce the hard entry cap: reclaim expired buckets first, then evict the
+   * oldest live buckets until the store is back within `maxEntries`.
+   */
+  private enforceMaxEntries(now: number): void {
+    if (this.hits.size <= this.maxEntries) return;
+    this.prune(now);
+    for (const key of this.hits.keys()) {
+      if (this.hits.size <= this.maxEntries) break;
+      this.hits.delete(key);
+    }
+  }
+
+  /** Test-only: current number of live+expired buckets held in memory. */
+  size(): number {
+    return this.hits.size;
+  }
+
   reset(): void {
     this.hits.clear();
+    this.checksSinceSweep = 0;
   }
 }
 

@@ -1,7 +1,6 @@
 import { createHmac, randomBytes, timingSafeEqual } from "crypto";
-import { Agent as HttpsAgent, request as httpsRequest } from "https";
-import { Agent as HttpAgent, request as httpRequest, type IncomingMessage } from "http";
-import type { LookupFunction } from "net";
+import { request as httpsRequest } from "https";
+import { request as httpRequest, type IncomingMessage } from "http";
 import { eq } from "drizzle-orm";
 import { db, schema } from "../db/index.js";
 import { generateId } from "../lib/crypto.js";
@@ -86,68 +85,55 @@ interface PinnedResponse {
 
 /**
  * Low-level single HTTP(S) request that PINS the TCP connection to a
- * pre-validated IP. We pass a custom `lookup` to node's http(s) agent options
- * that ignores the hostname and always returns `pinnedAddress`. This guarantees
- * the socket connects to the exact IP we validated against the SSRF guard, so
- * DNS cannot be swapped between validation and connect (no TOCTOU). The original
- * Host header and TLS SNI/servername are preserved (we do NOT rewrite the URL to
- * the IP), so TLS certificate validation still happens against the real
- * hostname. Injectable for tests.
+ * pre-validated IP. We connect DIRECTLY to the validated IP literal
+ * (`pinnedAddress`) by passing it as the request `hostname`, so there is no DNS
+ * resolution at connect time and the socket can only reach the exact IP we
+ * validated against the SSRF guard — closing the validate-then-connect TOCTOU
+ * (DNS rebinding). Critically we do NOT rely on an agent `lookup`: Bun's HTTP
+ * client (the production runtime) ignores `agent.lookup` and re-resolves the
+ * hostname itself, so the only reliable pin is to target the IP directly. The
+ * original Host header and TLS SNI/`servername` are preserved so the receiving
+ * server routes correctly and the TLS certificate is validated against the real
+ * hostname, not the IP. Injectable for tests.
  */
 export type PinnedRequestSender = (
   req: PinnedRequest
 ) => Promise<PinnedResponse>;
 
-const defaultSendPinnedRequest: PinnedRequestSender = (req) => {
+export const defaultSendPinnedRequest: PinnedRequestSender = (req) => {
   return new Promise<PinnedResponse>((resolvePromise, reject) => {
     const isHttps = req.url.protocol === "https:";
-
-    // Custom lookup pins every connection attempt to the validated IP. node's
-    // http(s) agent calls this instead of dns.lookup; returning only the pinned
-    // address means the socket can never connect to a rebound/internal IP.
-    const pinnedLookup: LookupFunction = (_hostname, _options, callback) => {
-      // Signature matches dns.lookup's (err, address, family) callback.
-      (callback as (err: Error | null, address: string, family: number) => void)(
-        null,
-        req.pinnedAddress.address,
-        req.pinnedAddress.family
-      );
-    };
-
-    // A PER-REQUEST agent with keepAlive:false and the pinned lookup. We must
-    // NOT use the global/default agent: with keep-alive it can hand back a
-    // pooled socket that was opened by an earlier request, bypassing our pinned
-    // lookup entirely and defeating the anti-rebinding pin. A fresh, non-pooled
-    // agent guarantees the lookup runs and the socket connects to the pinned IP.
-    const agent = isHttps
-      ? new HttpsAgent({ keepAlive: false, lookup: pinnedLookup })
-      : new HttpAgent({ keepAlive: false, lookup: pinnedLookup });
+    const port = req.url.port ? Number(req.url.port) : isHttps ? 443 : 80;
+    // Preserve the original Host (incl. a non-default port) for routing and as
+    // the TLS cert-validation target.
+    const hostHeader = req.url.port
+      ? `${req.url.hostname}:${req.url.port}`
+      : req.url.hostname;
 
     let settled = false;
-    const cleanup = () => {
-      // Tear down the agent (and any sockets it owns) once we're done so we
-      // never leak connections; keepAlive:false means there is nothing to pool.
-      agent.destroy();
-    };
     const finish = (value: PinnedResponse) => {
       if (settled) return;
       settled = true;
-      cleanup();
       resolvePromise(value);
     };
     const fail = (error: Error) => {
       if (settled) return;
       settled = true;
-      cleanup();
       reject(error);
     };
 
     const options = {
+      // Connect to the VALIDATED IP literal — no DNS at connect time, so Bun
+      // cannot re-resolve to a rebound/internal address.
+      hostname: req.pinnedAddress.address,
+      port,
+      path: `${req.url.pathname}${req.url.search}`,
       method: "POST",
-      headers: req.headers,
-      // Preserve cert validation against the real hostname for TLS (SNI).
+      headers: { ...req.headers, Host: hostHeader },
+      // TLS SNI + cert validation against the real hostname (not the IP).
       servername: isHttps ? req.url.hostname : undefined,
-      agent,
+      // No pooled/keep-alive socket could ever bypass the IP target.
+      agent: false as const,
       timeout: REQUEST_TIMEOUT_MS,
     };
 
@@ -166,8 +152,8 @@ const defaultSendPinnedRequest: PinnedRequestSender = (req) => {
     };
 
     const clientReq = isHttps
-      ? httpsRequest(req.url, options, onResponse)
-      : httpRequest(req.url, options, onResponse);
+      ? httpsRequest(options, onResponse)
+      : httpRequest(options, onResponse);
 
     clientReq.on("timeout", () => {
       clientReq.destroy(new Error("Webhook request timed out"));
@@ -263,6 +249,14 @@ export async function deliverWebhook(
 
   for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt += 1) {
     try {
+      // Re-resolve + re-validate + re-pin on EVERY attempt: a low-TTL attacker
+      // domain can flip to an internal IP between attempts, so each send pins to
+      // a freshly validated address (a private result throws and fails closed).
+      const addresses = await resolveAndValidateHost(
+        parsedUrl.hostname,
+        deps.lookupAll
+      );
+      pinnedAddress = addresses[0];
       const res = await sendRequest({
         url: parsedUrl,
         pinnedAddress,

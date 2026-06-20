@@ -252,6 +252,9 @@ app.post("/:repoId/github-sync", requireRepoWideWrite, async (c) => {
         sourcePath: normalizedSourcePath,
         status: "syncing",
         error: null,
+        // Record who configured the sync; background retries use THIS user's
+        // GitHub credential, never the repo owner's.
+        configuredByUserId: userId,
         updatedAt: now,
       })
       .where(eq(schema.githubSyncs.id, existing.id))
@@ -266,6 +269,7 @@ app.post("/:repoId/github-sync", requireRepoWideWrite, async (c) => {
         branch: normalizedBranch,
         sourcePath: normalizedSourcePath,
         status: "syncing",
+        configuredByUserId: userId,
         createdAt: now,
         updatedAt: now,
       })

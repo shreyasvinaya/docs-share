@@ -344,6 +344,70 @@ describe("public ingestion", () => {
     );
   });
 
+  test("rejects ingestion once the per-collection live-record cap is reached", async () => {
+    const ownerId = await seedUser("Owner");
+    const draftId = await seedDraft(ownerId);
+    await seedCollection({
+      ownerUserId: ownerId,
+      targetType: "draft",
+      targetId: draftId,
+      collection: "contact",
+    });
+
+    const originalCap = config.SITE_DATA_MAX_RECORDS_PER_COLLECTION;
+    config.SITE_DATA_MAX_RECORDS_PER_COLLECTION = 2;
+    try {
+      // Two submissions fill the collection to its cap.
+      expect(
+        (await postSubmission(`draft:${draftId}`, "contact", { i: 1 })).status
+      ).toBe(201);
+      expect(
+        (await postSubmission(`draft:${draftId}`, "contact", { i: 2 })).status
+      ).toBe(201);
+
+      // The third is rejected: the collection is at its storage limit.
+      const overflow = await postSubmission(`draft:${draftId}`, "contact", {
+        i: 3,
+      });
+      expect(overflow.status).toBe(429);
+
+      const records = await db
+        .select()
+        .from(schema.siteDataRecords)
+        .where(eq(schema.siteDataRecords.targetId, draftId))
+        .all();
+      records.forEach((r) => cleanup.recordIds.push(r.id));
+      // Only the two accepted submissions were persisted.
+      expect(records.length).toBe(2);
+
+      // A soft-deleted record frees a slot: the cap counts only LIVE rows.
+      await db
+        .update(schema.siteDataRecords)
+        .set({ deletedAt: new Date().toISOString() })
+        .where(eq(schema.siteDataRecords.id, records[0]!.id))
+        .run();
+
+      const afterDelete = await postSubmission(`draft:${draftId}`, "contact", {
+        i: 4,
+      });
+      expect(afterDelete.status).toBe(201);
+
+      const live = await db
+        .select()
+        .from(schema.siteDataRecords)
+        .where(
+          and(
+            eq(schema.siteDataRecords.targetId, draftId),
+            eq(schema.siteDataRecords.collection, "contact")
+          )
+        )
+        .all();
+      live.forEach((r) => cleanup.recordIds.push(r.id));
+    } finally {
+      config.SITE_DATA_MAX_RECORDS_PER_COLLECTION = originalCap;
+    }
+  });
+
   test("deleteSiteDataForTarget removes the target's collections and records", async () => {
     const ownerId = await seedUser("Owner");
     const draftId = await seedDraft(ownerId);
