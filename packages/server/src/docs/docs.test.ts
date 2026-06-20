@@ -53,14 +53,42 @@ describe("GET /openapi.json", () => {
       "/api/repos/{repoId}/github-sync",
       "/api/files/{repoId}",
       "/api/files/{repoId}/upload",
+      "/api/files/{repoId}/restore",
+      "/api/files/{repoId}/copy",
       "/api/drafts",
+      "/api/drafts/{draftId}/duplicate",
+      "/api/drafts/{draftId}/analytics",
       "/api/shares",
       "/api/shares/public/{token}",
+      "/api/shares/{shareId}/accept",
+      "/api/shares/{shareId}/analytics",
+      "/api/teams/invitations/{token}/accept",
+      "/api/audit",
+      "/api/audit/all",
+      "/api/admin/users",
+      "/api/admin/users/{userId}",
+      "/api/admin/branding",
+      "/api/sites/{target}/data/{collection}",
+      "/api/sites/{target}/collections",
+      "/api/sites/{target}/collections/{collection}",
+      "/api/sites/{target}/records",
+      "/api/sites/{target}/records/{recordId}",
+      "/api/webhooks",
+      "/api/webhooks/{webhookId}",
       "/view/public/{token}",
       "/d/{draftId}",
       "/git/{ownerType}/{ownerId}/info/refs",
     ]) {
       expect(paths).toContain(expected);
+    }
+  });
+
+  test("excludes internal-only endpoints from the public spec", async () => {
+    const res = await docsApp().request("/openapi.json");
+    const spec = (await res.json()) as typeof openApiSpec;
+    const paths = Object.keys(spec.paths);
+    for (const path of paths) {
+      expect(path.startsWith("/internal/")).toBe(false);
     }
   });
 

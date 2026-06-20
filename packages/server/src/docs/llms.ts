@@ -38,9 +38,18 @@ export function buildLlmsTxt({ appUrl, apiUrl }: LlmsTxtOptions): string {
   Team repos are addressed by team slug over git.
 - Projects: lightweight metadata describing a subfolder of a repo.
 - API tokens: \`ds_\`-prefixed bearer tokens with space/comma-separated scopes
-  (\`*\`, \`draft:*\`, \`git:*\`, \`draft:read\`, \`git:write\`, ...).
+  (\`*\`, \`draft:*\`, \`git:*\`, \`draft:read\`, \`git:write\`, \`site-data:read\`,
+  \`site-data:write\`, \`webhook:read\`, \`webhook:write\`, ...). Revoking a token
+  is a soft delete (it sets \`revokedAt\`; the row is kept for audit).
 - GitHub sync: import files into a repo from a GitHub repository/branch/path
   using a stored, encrypted GitHub token.
+- Analytics & audit: owner-only view metrics per share/draft; an audit log of
+  actor activity (sysadmins can read the whole install).
+- Site data: targets (\`draft:<id>\` / \`repo:<id>\`) can opt into named form
+  collections that accept PUBLIC, unauthenticated, rate-limited submissions.
+- Webhooks: outbound, HMAC-signed event deliveries (\`X-DocsShare-Signature:
+  sha256=<hex>\`) for \`share.created\`, \`share.revoked\`,
+  \`github_sync.completed\`. The signing secret is shown only once at creation.
 
 ## API base and auth
 
@@ -64,10 +73,27 @@ export function buildLlmsTxt({ appUrl, apiUrl }: LlmsTxtOptions): string {
 - POST ${api}/api/files/{repoId}/upload — upload files (multipart)
 - DELETE ${api}/api/files/{repoId} — delete a path (\`?path=\`)
 - GET  ${api}/api/files/{repoId}/commits — recent commits
+- POST ${api}/api/files/{repoId}/restore — restore a path/tree to a commit
+- POST ${api}/api/files/{repoId}/copy — copy a path (optionally cross-repo)
 - POST ${api}/api/drafts — publish an HTML draft (multipart \`file\`)
 - GET  ${api}/api/drafts — list drafts
+- POST ${api}/api/drafts/{draftId}/duplicate — duplicate a draft (draft:write)
+- GET  ${api}/api/drafts/{draftId}/analytics — draft view metrics (owner, draft:read)
 - POST ${api}/api/shares — create a share (email/public_link/team)
 - GET  ${api}/api/shares/public/{token} — resolve a public share
+- POST ${api}/api/shares/{shareId}/accept — accept an email share
+- GET  ${api}/api/shares/{shareId}/analytics — share view metrics (creator only)
+- POST ${api}/api/teams/invitations/{token}/accept — accept a team invitation
+- GET  ${api}/api/audit — current user's audit entries
+- GET  ${api}/api/audit/all — all audit entries (sysadmin only)
+- GET  ${api}/api/admin/users — list users (sysadmin only)
+- GET  ${api}/api/admin/branding — deployment branding (sysadmin only)
+- POST ${api}/api/sites/{target}/data/{collection} — submit a form (PUBLIC, no auth)
+- GET/POST ${api}/api/sites/{target}/collections — list/enable form collections (owner)
+- GET  ${api}/api/sites/{target}/records — list form submissions (owner)
+- POST ${api}/api/webhooks — create a webhook (secret returned once)
+- GET  ${api}/api/webhooks — list webhooks (no secret)
+- PATCH/DELETE ${api}/api/webhooks/{id} — update/delete a webhook (owner)
 - POST ${api}/api/repos/{repoId}/github-sync — configure & run GitHub sync
 - GET  ${api}/api/setup/branding — deployment name (public, no auth)
 - GET  ${api}/api/setup/status — deployment setup checklist (sysadmin only)

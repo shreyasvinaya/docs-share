@@ -66,6 +66,11 @@ export const openApiSpec: OpenApiSpec = {
     { name: "shares", description: "Email, team, and public-link shares" },
     { name: "view", description: "Serving extracted repo and share content" },
     { name: "git", description: "Git smart-HTTP transport" },
+    { name: "analytics", description: "Per-share and per-draft view metrics" },
+    { name: "audit", description: "Audit log of actor activity" },
+    { name: "admin", description: "Sysadmin-only user and branding administration" },
+    { name: "site-data", description: "Opt-in form submission collections and records" },
+    { name: "webhooks", description: "Outbound HMAC-signed event webhooks" },
     { name: "setup", description: "Deployment branding and setup status" },
     { name: "meta", description: "Health, OpenAPI spec, and llms.txt" },
   ],
@@ -282,13 +287,18 @@ export const openApiSpec: OpenApiSpec = {
     "/api/auth/tokens/{tokenId}": {
       delete: {
         tags: ["auth"],
-        summary: "Delete an API token",
+        summary: "Revoke an API token (soft delete)",
+        description:
+          "Soft-revokes the token by stamping `revokedAt`; the row is never " +
+          "hard-deleted so it remains available for audit/history. A revoked " +
+          "token is immediately rejected by authentication. Re-revoking an " +
+          "already-revoked token returns 404.",
         security: sessionOrBearer,
         parameters: [{ $ref: "#/components/parameters/TokenId" }],
         responses: {
-          "200": { description: "Deleted", content: { "application/json": { schema: { $ref: "#/components/schemas/Ok" } } } },
+          "200": { description: "Revoked", content: { "application/json": { schema: { $ref: "#/components/schemas/Ok" } } } },
           "401": errorResponse("Not authenticated"),
-          "404": errorResponse("Token not found"),
+          "404": errorResponse("Token not found or already revoked"),
         },
       },
     },
@@ -655,6 +665,30 @@ export const openApiSpec: OpenApiSpec = {
         },
       },
     },
+    "/api/teams/invitations/{token}/accept": {
+      post: {
+        tags: ["teams"],
+        summary: "Accept a team invitation by token",
+        description:
+          "Converts a pending invitation into a real membership for the current " +
+          "user. The authenticated user's email must match the invitation's " +
+          "email. To avoid token enumeration, an unknown token and an email " +
+          "mismatch both return the same generic `404`. Idempotent: re-accepting " +
+          "by the rightful owner returns the existing membership.",
+        security: sessionOrBearer,
+        parameters: [
+          { name: "token", in: "path", required: true, schema: { type: "string" }, description: "Opaque invitation token." },
+        ],
+        responses: {
+          "200": {
+            description: "Invitation accepted",
+            content: { "application/json": { schema: { $ref: "#/components/schemas/InvitationAcceptEnvelope" } } },
+          },
+          "401": errorResponse("Not authenticated"),
+          "404": errorResponse("Invitation not found (unknown token or email mismatch)"),
+        },
+      },
+    },
 
     // ---------------------------------------------------------------------
     // projects
@@ -964,6 +998,84 @@ export const openApiSpec: OpenApiSpec = {
         },
       },
     },
+    "/api/files/{repoId}/restore": {
+      post: {
+        tags: ["files"],
+        summary: "Restore a file or the whole tree to a prior commit",
+        description:
+          "History is never rewritten: the content at `sha` is checked out over " +
+          "HEAD and committed as a NEW commit. Omit `path` to restore the whole " +
+          "tree (requires a repo-wide write grant); a path-scoped restore only " +
+          "needs write covering that path.",
+        security: sessionOrBearer,
+        parameters: [{ $ref: "#/components/parameters/RepoId" }],
+        requestBody: {
+          required: true,
+          content: {
+            "application/json": {
+              schema: {
+                type: "object",
+                required: ["sha"],
+                properties: {
+                  sha: { type: "string", pattern: "^[0-9a-fA-F]{4,64}$", description: "Commit SHA to restore from." },
+                  path: { type: "string", description: "Optional path to restore; omit to restore the entire tree." },
+                },
+              },
+            },
+          },
+        },
+        responses: {
+          "200": {
+            description: "Restored (or already at this version)",
+            content: { "application/json": { schema: { $ref: "#/components/schemas/RestoreResultEnvelope" } } },
+          },
+          "400": errorResponse("Invalid sha or restore path"),
+          "403": errorResponse("No write access for the requested scope"),
+          "404": errorResponse("Repository, user, commit, or path not found"),
+          "500": errorResponse("Restore failed"),
+        },
+      },
+    },
+    "/api/files/{repoId}/copy": {
+      post: {
+        tags: ["files"],
+        summary: "Copy a file or directory to a new path (optionally cross-repo)",
+        description:
+          "Copies `sourcePath` to `targetPath` and commits a new commit. " +
+          "Requires READ on the source path and WRITE on the destination path. " +
+          "Set `targetRepoId` to copy into a different repo (write access on the " +
+          "destination is still enforced).",
+        security: sessionOrBearer,
+        parameters: [{ $ref: "#/components/parameters/RepoId" }],
+        requestBody: {
+          required: true,
+          content: {
+            "application/json": {
+              schema: {
+                type: "object",
+                required: ["sourcePath", "targetPath"],
+                properties: {
+                  sourcePath: { type: "string", description: "Path of the file or directory to copy." },
+                  targetPath: { type: "string", description: "Destination path for the copy." },
+                  targetRepoId: { type: "string", description: "Optional destination repo id; defaults to the source repo." },
+                },
+              },
+            },
+          },
+        },
+        responses: {
+          "201": {
+            description: "Copied",
+            content: { "application/json": { schema: { $ref: "#/components/schemas/CopyResultEnvelope" } } },
+          },
+          "400": errorResponse("sourcePath or targetPath missing/invalid"),
+          "403": errorResponse("No read access to source or write access to target"),
+          "404": errorResponse("Repository, user, source, or target repo not found"),
+          "409": errorResponse("No changes — target already matches"),
+          "500": errorResponse("Copy failed"),
+        },
+      },
+    },
 
     // ---------------------------------------------------------------------
     // drafts
@@ -1053,6 +1165,46 @@ export const openApiSpec: OpenApiSpec = {
         },
       },
     },
+    "/api/drafts/{draftId}/duplicate": {
+      post: {
+        tags: ["drafts"],
+        summary: "Duplicate a draft (owner only)",
+        description:
+          "Copies the draft content into a new draft owned by the same user, " +
+          "titled `\"<original title> (copy)\"`. Requires the `draft:write` scope " +
+          "when using an API token.",
+        security: sessionOrBearer,
+        parameters: [{ $ref: "#/components/parameters/DraftId" }],
+        responses: {
+          "201": {
+            description: "Draft duplicated",
+            content: { "application/json": { schema: { type: "object", properties: { data: { $ref: "#/components/schemas/Draft" } } } } },
+          },
+          "400": errorResponse("Invalid draft path"),
+          "403": errorResponse("Access denied or scope insufficient"),
+          "404": errorResponse("Draft or draft content not found"),
+        },
+      },
+    },
+    "/api/drafts/{draftId}/analytics": {
+      get: {
+        tags: ["analytics"],
+        summary: "View metrics for a draft (owner only)",
+        description:
+          "Owner-only view metrics for the draft. Deliberately NOT widened to " +
+          "sysadmins. Requires the `draft:read` scope when using an API token.",
+        security: sessionOrBearer,
+        parameters: [{ $ref: "#/components/parameters/DraftId" }],
+        responses: {
+          "200": {
+            description: "View statistics",
+            content: { "application/json": { schema: { $ref: "#/components/schemas/ViewStatsEnvelope" } } },
+          },
+          "403": errorResponse("Only the owner can view analytics"),
+          "404": errorResponse("Draft not found"),
+        },
+      },
+    },
 
     // ---------------------------------------------------------------------
     // shares
@@ -1138,6 +1290,46 @@ export const openApiSpec: OpenApiSpec = {
         responses: {
           "200": { description: "Revoked", content: { "application/json": { schema: { $ref: "#/components/schemas/DataEnvelope" } } } },
           "403": errorResponse("Only the creator can revoke this share"),
+          "404": errorResponse("Share not found"),
+        },
+      },
+    },
+    "/api/shares/{shareId}/accept": {
+      post: {
+        tags: ["shares"],
+        summary: "Accept an email share addressed to the current user",
+        description:
+          "Stamps `acceptedAt` on the matching recipient row and links it to the " +
+          "current user account. Only matches a recipient whose email is the " +
+          "authenticated user's and that is unclaimed or already claimed by them. " +
+          "Idempotent: re-accepting keeps the original timestamp.",
+        security: sessionOrBearer,
+        parameters: [{ $ref: "#/components/parameters/ShareId" }],
+        responses: {
+          "200": {
+            description: "Recipient accepted",
+            content: { "application/json": { schema: { $ref: "#/components/schemas/DataEnvelope" } } },
+          },
+          "401": errorResponse("Not authenticated"),
+          "404": errorResponse("Share recipient or user not found"),
+        },
+      },
+    },
+    "/api/shares/{shareId}/analytics": {
+      get: {
+        tags: ["analytics"],
+        summary: "View metrics for a share (creator only)",
+        description:
+          "Owner-only view metrics for the share. Deliberately NOT widened to " +
+          "sysadmins — sysadmins use the audit log for oversight.",
+        security: sessionOrBearer,
+        parameters: [{ $ref: "#/components/parameters/ShareId" }],
+        responses: {
+          "200": {
+            description: "View statistics",
+            content: { "application/json": { schema: { $ref: "#/components/schemas/ViewStatsEnvelope" } } },
+          },
+          "403": errorResponse("Only the creator can view analytics"),
           "404": errorResponse("Share not found"),
         },
       },
@@ -1320,6 +1512,476 @@ export const openApiSpec: OpenApiSpec = {
       },
     },
 
+    // ---------------------------------------------------------------------
+    // audit
+    // ---------------------------------------------------------------------
+    "/api/audit": {
+      get: {
+        tags: ["audit"],
+        summary: "List the current user's audit entries",
+        security: sessionOrBearer,
+        parameters: [
+          { name: "limit", in: "query", schema: { type: "integer", minimum: 1, maximum: 500, default: 100 } },
+        ],
+        responses: {
+          "200": {
+            description: "Audit entries for the current actor",
+            content: {
+              "application/json": {
+                schema: {
+                  type: "object",
+                  properties: { data: { type: "array", items: { $ref: "#/components/schemas/AuditEntry" } } },
+                },
+              },
+            },
+          },
+          "401": errorResponse("Not authenticated"),
+        },
+      },
+    },
+    "/api/audit/all": {
+      get: {
+        tags: ["audit"],
+        summary: "List every audit entry across the install (sysadmin only)",
+        security: sessionOrBearer,
+        parameters: [
+          { name: "limit", in: "query", schema: { type: "integer", minimum: 1, maximum: 500, default: 100 } },
+        ],
+        responses: {
+          "200": {
+            description: "All audit entries",
+            content: {
+              "application/json": {
+                schema: {
+                  type: "object",
+                  properties: { data: { type: "array", items: { $ref: "#/components/schemas/AuditEntry" } } },
+                },
+              },
+            },
+          },
+          "401": errorResponse("Not authenticated"),
+          "403": errorResponse("Sysadmin access required"),
+        },
+      },
+    },
+
+    // ---------------------------------------------------------------------
+    // admin (sysadmin only)
+    // ---------------------------------------------------------------------
+    "/api/admin/users": {
+      get: {
+        tags: ["admin"],
+        summary: "List all users (sysadmin only)",
+        description: "Returns non-sensitive fields only: id, email, displayName, role, createdAt.",
+        security: sessionOrBearer,
+        responses: {
+          "200": {
+            description: "User list",
+            content: {
+              "application/json": {
+                schema: {
+                  type: "object",
+                  properties: {
+                    data: {
+                      type: "object",
+                      properties: { users: { type: "array", items: { $ref: "#/components/schemas/AdminUser" } } },
+                    },
+                  },
+                },
+              },
+            },
+          },
+          "401": errorResponse("Not authenticated"),
+          "403": errorResponse("Sysadmin access required"),
+        },
+      },
+    },
+    "/api/admin/users/{userId}": {
+      patch: {
+        tags: ["admin"],
+        summary: "Reserved — role changes are not performed via the API (sysadmin only)",
+        description:
+          "Always returns `400`. The `sysadmin` role is authoritative-by-env: it " +
+          "is recomputed from the `SYSADMIN_EMAILS` environment variable on every " +
+          "privileged request, so a DB write here would be silently overwritten. " +
+          "Manage sysadmins via `SYSADMIN_EMAILS` instead.",
+        security: sessionOrBearer,
+        parameters: [{ $ref: "#/components/parameters/MemberUserId" }],
+        requestBody: {
+          content: {
+            "application/json": {
+              schema: {
+                type: "object",
+                properties: { role: { type: "string", enum: ["user", "sysadmin"] } },
+              },
+            },
+          },
+        },
+        responses: {
+          "400": errorResponse("Role changes are managed via SYSADMIN_EMAILS, not the API"),
+          "401": errorResponse("Not authenticated"),
+          "403": errorResponse("Sysadmin access required"),
+        },
+      },
+    },
+    "/api/admin/branding": {
+      get: {
+        tags: ["admin"],
+        summary: "Read deployment branding (sysadmin only)",
+        security: sessionOrBearer,
+        responses: {
+          "200": {
+            description: "Deployment branding",
+            content: {
+              "application/json": {
+                schema: {
+                  type: "object",
+                  properties: {
+                    data: {
+                      type: "object",
+                      properties: { deploymentName: { type: "string" } },
+                      required: ["deploymentName"],
+                    },
+                  },
+                },
+              },
+            },
+          },
+          "401": errorResponse("Not authenticated"),
+          "403": errorResponse("Sysadmin access required"),
+        },
+      },
+    },
+
+    // ---------------------------------------------------------------------
+    // site-data (opt-in form collections)
+    // ---------------------------------------------------------------------
+    "/api/sites/{target}/data/{collection}": {
+      post: {
+        tags: ["site-data"],
+        summary: "Submit form fields to an opt-in collection (public)",
+        description:
+          "PUBLIC, unauthenticated form ingestion callable cross-origin from a " +
+          "sandboxed hosted page (permissive CORS: `Access-Control-Allow-Origin: " +
+          "*`, no credentials, `POST`/`OPTIONS` only). The request body is a flat " +
+          "JSON object of 1-50 scalar fields (string/number/boolean/null). The " +
+          "target owner must have created and enabled the collection first, " +
+          "otherwise `404`. Rate-limited per-visitor and globally.",
+        security: [],
+        parameters: [
+          { $ref: "#/components/parameters/SiteDataTarget" },
+          { $ref: "#/components/parameters/SiteDataCollectionName" },
+        ],
+        requestBody: {
+          required: true,
+          content: {
+            "application/json": {
+              schema: {
+                type: "object",
+                additionalProperties: { type: ["string", "number", "boolean", "null"] },
+                description: "Flat map of form field names to scalar values (1-50 fields).",
+              },
+            },
+          },
+        },
+        responses: {
+          "201": {
+            description: "Submission accepted",
+            content: {
+              "application/json": {
+                schema: {
+                  type: "object",
+                  properties: { data: { type: "object", properties: { received: { type: "boolean" } } } },
+                },
+              },
+            },
+          },
+          "400": errorResponse("Invalid collection name, JSON body, or field validation failed"),
+          "404": errorResponse("Unknown target or the form is not accepting submissions"),
+          "429": errorResponse("Too many requests (rate limited)"),
+        },
+      },
+    },
+    "/api/sites/{target}/collections": {
+      get: {
+        tags: ["site-data"],
+        summary: "List opt-in collections for a target (owner only)",
+        description: "Requires the `site-data:read` scope when using an API token.",
+        security: sessionOrBearer,
+        parameters: [{ $ref: "#/components/parameters/SiteDataTarget" }],
+        responses: {
+          "200": {
+            description: "Collections",
+            content: {
+              "application/json": {
+                schema: {
+                  type: "object",
+                  properties: { data: { type: "array", items: { $ref: "#/components/schemas/SiteDataCollection" } } },
+                },
+              },
+            },
+          },
+          "401": errorResponse("Not authenticated"),
+          "403": errorResponse("Access denied (not the target owner)"),
+          "404": errorResponse("Unknown target"),
+        },
+      },
+      post: {
+        tags: ["site-data"],
+        summary: "Enable (opt in) a collection for a target (owner only)",
+        description:
+          "Idempotent: creates and enables the collection (`201`) or re-enables an " +
+          "existing one (`200`). Requires the `site-data:write` scope when using " +
+          "an API token.",
+        security: sessionOrBearer,
+        parameters: [{ $ref: "#/components/parameters/SiteDataTarget" }],
+        requestBody: {
+          required: true,
+          content: {
+            "application/json": {
+              schema: {
+                type: "object",
+                required: ["collection"],
+                properties: { collection: { type: "string", description: "Collection name to enable." } },
+              },
+            },
+          },
+        },
+        responses: {
+          "200": {
+            description: "Collection re-enabled",
+            content: { "application/json": { schema: { $ref: "#/components/schemas/SiteDataCollectionToggleEnvelope" } } },
+          },
+          "201": {
+            description: "Collection created and enabled",
+            content: { "application/json": { schema: { $ref: "#/components/schemas/SiteDataCollectionToggleEnvelope" } } },
+          },
+          "400": errorResponse("Invalid JSON body or collection name"),
+          "401": errorResponse("Not authenticated"),
+          "403": errorResponse("Access denied (not the target owner)"),
+          "404": errorResponse("Unknown target"),
+        },
+      },
+    },
+    "/api/sites/{target}/collections/{collection}": {
+      delete: {
+        tags: ["site-data"],
+        summary: "Disable a collection so it stops accepting submissions (owner only)",
+        description:
+          "Existing records are retained. Idempotent. Requires the " +
+          "`site-data:write` scope when using an API token.",
+        security: sessionOrBearer,
+        parameters: [
+          { $ref: "#/components/parameters/SiteDataTarget" },
+          { $ref: "#/components/parameters/SiteDataCollectionName" },
+        ],
+        responses: {
+          "200": {
+            description: "Collection disabled",
+            content: {
+              "application/json": {
+                schema: {
+                  type: "object",
+                  properties: { data: { type: "object", properties: { disabled: { type: "boolean" } } } },
+                },
+              },
+            },
+          },
+          "400": errorResponse("Invalid collection name"),
+          "401": errorResponse("Not authenticated"),
+          "403": errorResponse("Access denied (not the target owner)"),
+          "404": errorResponse("Unknown target"),
+        },
+      },
+    },
+    "/api/sites/{target}/records": {
+      get: {
+        tags: ["site-data"],
+        summary: "List submitted records for a target (owner only)",
+        description:
+          "Soft-deleted records are excluded. Optional `?collection=` filter. " +
+          "Requires the `site-data:read` scope when using an API token.",
+        security: sessionOrBearer,
+        parameters: [
+          { $ref: "#/components/parameters/SiteDataTarget" },
+          { name: "collection", in: "query", schema: { type: "string" }, description: "Filter to a single collection." },
+        ],
+        responses: {
+          "200": {
+            description: "Records",
+            content: {
+              "application/json": {
+                schema: {
+                  type: "object",
+                  properties: { data: { type: "array", items: { $ref: "#/components/schemas/SiteDataRecord" } } },
+                },
+              },
+            },
+          },
+          "400": errorResponse("Invalid collection filter"),
+          "401": errorResponse("Not authenticated"),
+          "403": errorResponse("Access denied (not the target owner)"),
+          "404": errorResponse("Unknown target"),
+        },
+      },
+    },
+    "/api/sites/{target}/records/{recordId}": {
+      delete: {
+        tags: ["site-data"],
+        summary: "Soft-delete one submitted record (owner only)",
+        description: "Idempotent. Requires the `site-data:write` scope when using an API token.",
+        security: sessionOrBearer,
+        parameters: [
+          { $ref: "#/components/parameters/SiteDataTarget" },
+          { name: "recordId", in: "path", required: true, schema: { type: "string" } },
+        ],
+        responses: {
+          "200": {
+            description: "Record soft-deleted",
+            content: {
+              "application/json": {
+                schema: {
+                  type: "object",
+                  properties: { data: { type: "object", properties: { deleted: { type: "boolean" } } } },
+                },
+              },
+            },
+          },
+          "401": errorResponse("Not authenticated"),
+          "403": errorResponse("Access denied (not the target owner)"),
+          "404": errorResponse("Unknown target or record not found"),
+        },
+      },
+    },
+
+    // ---------------------------------------------------------------------
+    // webhooks
+    // ---------------------------------------------------------------------
+    "/api/webhooks": {
+      get: {
+        tags: ["webhooks"],
+        summary: "List the current user's webhooks",
+        description:
+          "The signing secret is never returned here. Requires the " +
+          "`webhook:read` scope when using an API token.",
+        security: sessionOrBearer,
+        responses: {
+          "200": {
+            description: "Webhooks (without secrets)",
+            content: {
+              "application/json": {
+                schema: {
+                  type: "object",
+                  properties: { data: { type: "array", items: { $ref: "#/components/schemas/Webhook" } } },
+                },
+              },
+            },
+          },
+          "401": errorResponse("Not authenticated"),
+          "403": errorResponse("Token scope does not allow this action"),
+        },
+      },
+      post: {
+        tags: ["webhooks"],
+        summary: "Create a webhook (returns the signing secret once)",
+        description:
+          "Registers an outbound webhook. The `secret` is returned EXACTLY ONCE " +
+          "in this response and never again — store it to verify the " +
+          "`X-DocsShare-Signature` (`sha256=<hex>` HMAC-SHA256 of the raw body) " +
+          "header on deliveries. `url` must be a public http(s) URL " +
+          "(private/loopback hosts are rejected). Requires the `webhook:write` " +
+          "scope when using an API token.",
+        security: sessionOrBearer,
+        requestBody: {
+          required: true,
+          content: {
+            "application/json": {
+              schema: {
+                type: "object",
+                required: ["url", "events"],
+                properties: {
+                  url: { type: "string", format: "uri", description: "Public http(s) delivery URL." },
+                  events: {
+                    type: "array",
+                    minItems: 1,
+                    items: { $ref: "#/components/schemas/WebhookEvent" },
+                  },
+                  active: { type: "boolean", default: true },
+                },
+              },
+            },
+          },
+        },
+        responses: {
+          "201": {
+            description: "Webhook created (includes the one-time secret)",
+            content: { "application/json": { schema: { type: "object", properties: { data: { $ref: "#/components/schemas/CreatedWebhook" } } } } },
+          },
+          "400": errorResponse("Invalid request body, url, or events"),
+          "401": errorResponse("Not authenticated"),
+          "403": errorResponse("Token scope does not allow this action"),
+        },
+      },
+    },
+    "/api/webhooks/{webhookId}": {
+      patch: {
+        tags: ["webhooks"],
+        summary: "Update a webhook (owner only)",
+        description:
+          "Updates any of `url`, `events`, `active`. The secret is never returned " +
+          "or rotated here. Requires the `webhook:write` scope when using an API token.",
+        security: sessionOrBearer,
+        parameters: [{ $ref: "#/components/parameters/WebhookId" }],
+        requestBody: {
+          content: {
+            "application/json": {
+              schema: {
+                type: "object",
+                properties: {
+                  url: { type: "string", format: "uri" },
+                  events: { type: "array", minItems: 1, items: { $ref: "#/components/schemas/WebhookEvent" } },
+                  active: { type: "boolean" },
+                },
+              },
+            },
+          },
+        },
+        responses: {
+          "200": {
+            description: "Updated webhook (without secret)",
+            content: { "application/json": { schema: { type: "object", properties: { data: { $ref: "#/components/schemas/Webhook" } } } } },
+          },
+          "400": errorResponse("Invalid request body, url, or events"),
+          "401": errorResponse("Not authenticated"),
+          "403": errorResponse("Token scope does not allow this action"),
+          "404": errorResponse("Webhook not found"),
+        },
+      },
+      delete: {
+        tags: ["webhooks"],
+        summary: "Delete a webhook (owner only)",
+        description: "Requires the `webhook:write` scope when using an API token.",
+        security: sessionOrBearer,
+        parameters: [{ $ref: "#/components/parameters/WebhookId" }],
+        responses: {
+          "200": {
+            description: "Webhook deleted",
+            content: {
+              "application/json": {
+                schema: {
+                  type: "object",
+                  properties: { data: { type: "object", properties: { deleted: { type: "boolean" } } } },
+                },
+              },
+            },
+          },
+          "401": errorResponse("Not authenticated"),
+          "403": errorResponse("Token scope does not allow this action"),
+          "404": errorResponse("Webhook not found"),
+        },
+      },
+    },
+
   },
   components: {
     securitySchemes: {
@@ -1343,6 +2005,21 @@ export const openApiSpec: OpenApiSpec = {
       ShareToken: { name: "token", in: "path", required: true, schema: { type: "string" }, description: "Public share token." },
       OwnerType: { name: "ownerType", in: "path", required: true, schema: { type: "string", enum: ["user", "team"] } },
       OwnerId: { name: "ownerId", in: "path", required: true, schema: { type: "string" }, description: "User id or team slug." },
+      WebhookId: { name: "webhookId", in: "path", required: true, schema: { type: "string" } },
+      SiteDataTarget: {
+        name: "target",
+        in: "path",
+        required: true,
+        schema: { type: "string", pattern: "^(draft|repo):.+$" },
+        description: "Site-data target, formatted as `draft:<id>` or `repo:<id>`.",
+      },
+      SiteDataCollectionName: {
+        name: "collection",
+        in: "path",
+        required: true,
+        schema: { type: "string" },
+        description: "Form collection name.",
+      },
       SharePassword: {
         name: "X-Share-Password",
         in: "header",
@@ -1531,6 +2208,151 @@ export const openApiSpec: OpenApiSpec = {
               sizeBytes: { type: "integer" },
               updatedAt: { type: "string", format: "date-time" },
             },
+          },
+        ],
+      },
+      RestoreResultEnvelope: {
+        type: "object",
+        properties: {
+          data: {
+            type: "object",
+            properties: {
+              commitSha: { type: "string", description: "The new HEAD commit (or the unchanged HEAD when already at this version)." },
+              path: { type: ["string", "null"], description: "Restored path, or null for a whole-tree restore." },
+              restoredFrom: { type: "string", description: "The source commit SHA (omitted when nothing changed)." },
+              message: { type: "string" },
+            },
+          },
+        },
+      },
+      CopyResultEnvelope: {
+        type: "object",
+        properties: {
+          data: {
+            type: "object",
+            properties: {
+              commitSha: { type: "string" },
+              sourcePath: { type: "string" },
+              targetPath: { type: "string" },
+              targetRepoId: { type: "string" },
+              filesCopied: { type: "integer" },
+            },
+          },
+        },
+      },
+      ViewStats: {
+        type: "object",
+        properties: {
+          totalViews: { type: "integer" },
+          uniqueVisitors: { type: "integer" },
+          lastViewedAt: { type: ["string", "null"], format: "date-time" },
+          recentReferrers: { type: "array", items: { type: "string" } },
+        },
+        required: ["totalViews", "uniqueVisitors", "lastViewedAt", "recentReferrers"],
+      },
+      ViewStatsEnvelope: {
+        type: "object",
+        properties: { data: { $ref: "#/components/schemas/ViewStats" } },
+      },
+      AuditEntry: {
+        type: "object",
+        properties: {
+          id: { type: "string" },
+          actorUserId: { type: ["string", "null"] },
+          actorName: { type: ["string", "null"] },
+          actorEmail: { type: ["string", "null"] },
+          action: { type: "string" },
+          targetType: { type: "string" },
+          targetId: { type: ["string", "null"] },
+          metadata: { type: ["object", "null"], additionalProperties: true },
+          createdAt: { type: "string", format: "date-time" },
+        },
+      },
+      AdminUser: {
+        type: "object",
+        properties: {
+          id: { type: "string" },
+          email: { type: "string", format: "email" },
+          displayName: { type: "string" },
+          role: { type: "string", enum: ["user", "sysadmin"] },
+          createdAt: { type: "string", format: "date-time" },
+        },
+      },
+      InvitationAcceptEnvelope: {
+        type: "object",
+        properties: {
+          data: {
+            type: "object",
+            properties: {
+              teamId: { type: "string" },
+              role: { type: "string", enum: ["owner", "admin", "member", "viewer"] },
+              membershipId: { type: "string" },
+              alreadyMember: { type: "boolean" },
+            },
+          },
+        },
+      },
+      SiteDataCollection: {
+        type: "object",
+        properties: {
+          id: { type: "string" },
+          collection: { type: "string" },
+          enabled: { type: "boolean" },
+          createdAt: { type: "string", format: "date-time" },
+          updatedAt: { type: "string", format: "date-time" },
+        },
+      },
+      SiteDataCollectionToggleEnvelope: {
+        type: "object",
+        properties: {
+          data: {
+            type: "object",
+            properties: {
+              id: { type: "string" },
+              collection: { type: "string" },
+              enabled: { type: "boolean" },
+            },
+          },
+        },
+      },
+      SiteDataRecord: {
+        type: "object",
+        properties: {
+          id: { type: "string" },
+          collection: { type: "string" },
+          fields: {
+            type: "object",
+            additionalProperties: { type: ["string", "number", "boolean", "null"] },
+          },
+          createdAt: { type: "string", format: "date-time" },
+        },
+      },
+      WebhookEvent: {
+        type: "string",
+        enum: ["share.created", "share.revoked", "github_sync.completed"],
+        description: "Webhook event type.",
+      },
+      Webhook: {
+        type: "object",
+        properties: {
+          id: { type: "string" },
+          url: { type: "string", format: "uri" },
+          events: { type: "array", items: { $ref: "#/components/schemas/WebhookEvent" } },
+          active: { type: "boolean" },
+          createdAt: { type: "string", format: "date-time" },
+          updatedAt: { type: "string", format: "date-time" },
+        },
+      },
+      CreatedWebhook: {
+        type: "object",
+        allOf: [
+          { $ref: "#/components/schemas/Webhook" },
+          {
+            type: "object",
+            properties: {
+              secret: { type: "string", description: "HMAC signing secret (`whsec_...`), returned only once at creation." },
+            },
+            required: ["secret"],
           },
         ],
       },
