@@ -1,7 +1,10 @@
 import { describe, expect, test } from "bun:test";
 import { createHmac } from "crypto";
+import { createServer } from "http";
+import type { AddressInfo } from "net";
 import {
   buildWebhookPayload,
+  defaultSendPinnedRequest,
   deliverWebhook,
   generateWebhookSecret,
   scheduleWebhookDispatch,
@@ -236,5 +239,50 @@ describe("scheduleWebhookDispatch (fire-and-forget)", () => {
         data: {},
       })
     ).resolves.toBeUndefined();
+  });
+});
+
+describe("defaultSendPinnedRequest connection pinning (real socket)", () => {
+  // Exercises the REAL sender (not a stub) to prove the connection is pinned to
+  // the validated IP under the actual runtime. The prior implementation relied
+  // on an agent `lookup` which Bun ignores, so the pin was dead code; this test
+  // would fail under that regression because the request would try to resolve
+  // the (non-loopback) URL hostname instead of connecting to the pinned IP.
+  test("connects to the pinned IP, not the URL hostname, and preserves Host", async () => {
+    const received: { host?: string; url?: string; body: string } = { body: "" };
+    const server = createServer((req, res) => {
+      received.host = req.headers.host;
+      received.url = req.url;
+      let body = "";
+      req.on("data", (c) => (body += c));
+      req.on("end", () => {
+        received.body = body;
+        res.writeHead(200);
+        res.end("ok");
+      });
+    });
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const port = (server.address() as AddressInfo).port;
+
+    try {
+      // The URL hostname is a domain that does NOT resolve to loopback. The only
+      // way this request reaches our 127.0.0.1 server is if the sender connects
+      // to the PINNED address — proving the pin (and catching the Bun dead-pin
+      // regression, which would instead try to resolve the hostname).
+      const res = await defaultSendPinnedRequest({
+        url: new URL(`http://pin-test.invalid:${port}/hook/path?x=1`),
+        pinnedAddress: { address: "127.0.0.1", family: 4 },
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ping: true }),
+      });
+
+      expect(res.statusCode).toBe(200);
+      expect(received.url).toBe("/hook/path?x=1");
+      // Host header preserves the original hostname:port, not the IP.
+      expect(received.host).toBe(`pin-test.invalid:${port}`);
+      expect(received.body).toBe(JSON.stringify({ ping: true }));
+    } finally {
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
   });
 });
