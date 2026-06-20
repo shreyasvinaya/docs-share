@@ -180,6 +180,14 @@ export const config = {
   ),
   // Draft (single HTML document) upload. Default: 12 MiB.
   MAX_UPLOAD_BYTES: requiredPositiveInt("MAX_UPLOAD_BYTES", 12 * 1024 * 1024),
+  // Repo file upload (multipart POST /api/files/:repoId/upload). These carry
+  // real document assets, so the cap must be larger than the 1 MiB general API
+  // default or legitimate uploads get a 413 before the handler runs.
+  // Default: 12 MiB.
+  MAX_FILE_UPLOAD_BYTES: requiredPositiveInt(
+    "MAX_FILE_UPLOAD_BYTES",
+    12 * 1024 * 1024
+  ),
   // Git smart-HTTP push/fetch bodies (upload-pack / receive-pack). The handler
   // buffers the whole body into git's stdin, so cap it. Default: 100 MiB.
   GIT_MAX_BODY_BYTES: requiredPositiveInt(

@@ -1,7 +1,6 @@
-import { Hono, type Context } from "hono";
+import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { logger } from "hono/logger";
-import { bodyLimit } from "hono/body-limit";
 import { existsSync, statSync } from "fs";
 import { sessionMiddleware } from "./middleware/session.js";
 import { viewAwareSecureHeaders } from "./middleware/securityHeaders.js";
@@ -21,11 +20,12 @@ import viewRoutes from "./routes/view.js";
 import setupRoutes from "./routes/setup.js";
 import adminRoutes from "./routes/admin.js";
 import gitRoutes from "./git/smartHttp.js";
-import { ensureRepoDir } from "./git/repoManager.js";
+import { ensureRepoDir, repairRepoHooks } from "./git/repoManager.js";
 import { startScheduler } from "./services/scheduler.js";
 import { openApiSpec } from "./docs/openapi.js";
 import { buildLlmsTxt } from "./docs/llms.js";
 import { config } from "./lib/config.js";
+import { apiBodyLimit, gitBodyLimit, ingestionPathRe } from "./lib/bodyLimits.js";
 import { publicRateLimiter } from "./lib/rateLimiters.js";
 import { resolveInside } from "./lib/security.js";
 import type { AppEnv } from "./lib/types.js";
@@ -50,7 +50,6 @@ const ingestionCors = cors({
   allowHeaders: ["Content-Type"],
   credentials: false,
 });
-const ingestionPathRe = /^\/api\/sites\/[^/]+\/data\/[^/]+$/;
 const apiCors = cors({ origin: config.APP_URL, credentials: true });
 
 app.use("/api/*", (c, next) => {
@@ -59,47 +58,14 @@ app.use("/api/*", (c, next) => {
 });
 app.use("*", sessionMiddleware);
 
-// ---------------------------------------------------------------------------
-// Request body-size limits (memory-DoS guards). Without these, `c.req.json()` /
-// `formData()` buffer up to Bun's 128MB default before any per-route size check
-// runs. `bodyLimit` rejects oversized requests with 413 BEFORE the handler ever
-// reads the body. Limits are config-driven; the backstop on the Bun.serve
-// export (`maxRequestBodySize`) catches anything that slips past route matching.
-//
-// Order matters: more specific overrides are registered before the broad
-// `/api/*` default so Hono's middleware chain applies the tighter cap first.
-const bodyTooLarge = (c: Context<AppEnv>) =>
-  c.json({ error: "Request body too large" }, 413);
-
-const siteDataIngestionLimit = bodyLimit({
-  maxSize: config.MAX_SITE_DATA_BODY_BYTES,
-  onError: bodyTooLarge,
-});
-const draftUploadLimit = bodyLimit({
-  maxSize: config.MAX_UPLOAD_BYTES,
-  onError: bodyTooLarge,
-});
-const generalApiLimit = bodyLimit({
-  maxSize: config.MAX_JSON_BODY_BYTES,
-  onError: bodyTooLarge,
-});
-
-// A single `/api/*` guard dispatches to exactly ONE cap per request so the
-// broad default never double-applies a TIGHTER limit on top of a route that has
-// a deliberately LARGER one (a 5MB draft must not be rejected by the 1MB
-// default). Most specific path wins.
-const draftPathRe = /^\/api\/drafts(\/|$)/;
-app.use("/api/*", (c, next) => {
-  if (ingestionPathRe.test(c.req.path)) return siteDataIngestionLimit(c, next);
-  if (draftPathRe.test(c.req.path)) return draftUploadLimit(c, next);
-  return generalApiLimit(c, next);
-});
+// Request body-size limits (memory-DoS guards). The `/api/*` dispatch picks one
+// cap per request so the 1MB general default never shadows the larger
+// upload/draft caps; see lib/bodyLimits.ts for the full rationale. The backstop
+// on the Bun.serve export (`maxRequestBodySize`) catches anything past routing.
+app.use("/api/*", apiBodyLimit());
 // Git smart-HTTP push/fetch bodies are buffered into git's stdin (see
 // git/smartHttp.ts), so cap them well before that buffering happens.
-app.use(
-  "/git/*",
-  bodyLimit({ maxSize: config.GIT_MAX_BODY_BYTES, onError: bodyTooLarge })
-);
+app.use("/git/*", gitBodyLimit());
 
 app.route("/api/auth", authRoutes);
 app.route("/api/users", userRoutes);
@@ -210,6 +176,10 @@ await ensureRepoDir();
 // module is imported (e.g. by tests or tooling). `startScheduler` additionally
 // no-ops when SCHEDULER_ENABLED is false.
 if (import.meta.main) {
+  // Rewrite every existing repo's post-receive hook to the env-based version so
+  // no stale baked-in plaintext HOOK_SECRET remains on disk. Idempotent and
+  // guarded so it never runs during tests/imports.
+  await repairRepoHooks();
   startScheduler();
 }
 
@@ -225,6 +195,7 @@ export default {
   maxRequestBodySize: Math.max(
     config.GIT_MAX_BODY_BYTES,
     config.MAX_UPLOAD_BYTES,
+    config.MAX_FILE_UPLOAD_BYTES,
     config.MAX_JSON_BODY_BYTES,
     config.MAX_SITE_DATA_BODY_BYTES
   ),

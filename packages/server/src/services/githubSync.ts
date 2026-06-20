@@ -416,6 +416,82 @@ export async function assertRepoSizeWithinLimit(params: {
   }
 }
 
+/**
+ * Reject the import if any blob in the SELECTED tree exceeds
+ * `GITHUB_MAX_BLOB_BYTES` (and/or the selected tree's total exceeds the import
+ * cap), BEFORE any blob is checked out.
+ *
+ * A `--filter=blob:limit` partial clone does not actually enforce a per-blob
+ * cap on imported content: omitted blobs are transparently re-fetched on demand
+ * the moment they are needed (e.g. at checkout). The cap is therefore enforced
+ * here by enumerating the tree with sizes via `git ls-tree -r -l <ref>`, which
+ * reports each blob's byte size without materializing it.
+ *
+ * @param clonePath - The `--no-checkout` clone root.
+ * @param sourcePath - The normalized selected import path. Empty string means
+ *   the whole repository (root import).
+ */
+export async function assertImportBlobsWithinLimit(
+  clonePath: string,
+  sourcePath: string
+): Promise<void> {
+  const maxBlobBytes = config.GITHUB_MAX_BLOB_BYTES;
+
+  // `git ls-tree -r -l HEAD -- <path>` lists every blob reachable under <path>
+  // (recursively) with its size, e.g.:
+  //   100644 blob <sha> <size>\t<path>
+  // The size column is "-" for non-blob entries (submodules); those carry no
+  // content to import, so they are ignored.
+  const args = ["-C", clonePath, "ls-tree", "-r", "-l", "HEAD"];
+  if (sourcePath) args.push("--", sourcePath);
+  const listing = await gitOutput(args);
+
+  if (!listing) return; // Empty tree / path with no blobs.
+
+  let total = 0;
+  for (const line of listing.split("\n")) {
+    if (!line.trim()) continue;
+    // Split the metadata (mode type sha size) from the path on the literal TAB.
+    const [meta] = line.split("\t");
+    const fields = meta.trim().split(/\s+/);
+    // fields = [mode, type, sha, size]; size is "-" for non-blob entries.
+    const sizeField = fields[3];
+    if (!sizeField || sizeField === "-") continue;
+    const size = Number(sizeField);
+    if (!Number.isFinite(size)) continue;
+    if (size > maxBlobBytes) {
+      throw new Error(
+        `GitHub import contains a file larger than the ${maxBlobBytes}-byte ` +
+          `per-file limit and cannot be imported`
+      );
+    }
+    total += size;
+  }
+
+  const maxTotalBytes = config.GITHUB_MAX_IMPORT_KB * 1024;
+  if (maxTotalBytes > 0 && total > maxTotalBytes) {
+    throw new Error(
+      `GitHub import is too large (${total} bytes exceeds the ` +
+        `${maxTotalBytes}-byte import limit)`
+    );
+  }
+}
+
+/**
+ * Check out only the validated import path from a `--no-checkout` clone into the
+ * work tree. For a root import (empty `sourcePath`) the entire tree is checked
+ * out. Must run AFTER {@link assertImportBlobsWithinLimit} so no oversized blob
+ * is ever materialized.
+ */
+async function checkoutImportPath(
+  clonePath: string,
+  sourcePath: string
+): Promise<void> {
+  const args = ["-C", clonePath, "checkout", "HEAD", "--"];
+  args.push(sourcePath ? sourcePath : ".");
+  await runGit(args);
+}
+
 export async function syncGitHubRepo(
   repo: typeof schema.repos.$inferSelect,
   repoUrl: string,
@@ -452,14 +528,28 @@ export async function syncGitHubRepo(
       "--depth",
       "1",
       "--single-branch",
-      // Partial clone: skip blobs over the configured byte limit so a few huge
-      // files cannot blow past the disk budget even within a size-allowed repo.
+      // Defer the checkout so we can size-check the SELECTED tree BEFORE any
+      // blob is materialized. A `--filter=blob:limit` partial clone alone does
+      // NOT enforce the cap: omitted blobs are silently re-fetched on demand at
+      // checkout, so the per-blob limit is only enforced by the explicit
+      // ls-tree preflight below.
+      "--no-checkout",
       `--filter=blob:limit=${config.GITHUB_MAX_BLOB_BYTES}`,
       "--branch",
       normalizedBranch,
       normalizedUrl,
       clonePath,
     ], gitEnv);
+
+    // Enforce the per-blob size cap on the selected import path (or the whole
+    // tree for a root import) BEFORE checking anything out. Rejects the import
+    // outright if any blob is over the limit, so an oversized blob is never
+    // materialized, committed, or pushed.
+    await assertImportBlobsWithinLimit(clonePath, normalizedSourcePath);
+
+    // Now that the selected tree is proven within budget, materialize only the
+    // validated path (or the whole tree for a root import) into the work tree.
+    await checkoutImportPath(clonePath, normalizedSourcePath);
 
     const pushPath = normalizedSourcePath
       ? await prepareSelectedImport(clonePath, importPath, normalizedSourcePath)
