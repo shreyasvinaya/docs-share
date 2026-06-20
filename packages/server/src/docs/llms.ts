@@ -39,10 +39,13 @@ export function buildLlmsTxt({ appUrl, apiUrl }: LlmsTxtOptions): string {
 - Projects: lightweight metadata describing a subfolder of a repo.
 - API tokens: \`ds_\`-prefixed bearer tokens with space/comma-separated scopes
   enforced on every authenticated endpoint: \`repo:read|write\`,
-  \`share:read|write\`, \`team:read|write\`, \`user:read|write\`, \`audit:read\`,
-  \`draft:read|write\`, \`git:read|write\`, \`site-data:read|write\`,
-  \`webhook:read|write\`, plus wildcards (\`*\`, \`repo:*\`, ...). Revoking a token
-  is a soft delete (it sets \`revokedAt\`; the row is kept for audit).
+  \`project:read|write\`, \`share:read|write\`, \`team:read|write\`,
+  \`user:read|write\`, \`admin:read|write\`, \`audit:read\`, \`draft:read|write\`,
+  \`git:read|write\`, \`site-data:read|write\`, \`webhook:read|write\`, plus
+  wildcards (\`*\`, \`repo:*\`, ...). Managing tokens (create/list/revoke under
+  \`/api/auth/tokens\`) is SESSION-ONLY — a bearer token cannot mint or revoke
+  tokens. Revoking a token is a soft delete (it sets \`revokedAt\`; the row is
+  kept for audit).
 - GitHub sync: import files into a repo from a GitHub repository/branch/path
   using a stored, encrypted GitHub token.
 - Analytics & audit: owner-only view metrics per share/draft; an audit log of
@@ -67,7 +70,7 @@ export function buildLlmsTxt({ appUrl, apiUrl }: LlmsTxtOptions): string {
 ## Key endpoints
 
 - GET  ${api}/api/auth/session — current user
-- POST ${api}/api/auth/tokens — create an API token (scopes, expiresIn)
+- POST ${api}/api/auth/tokens — create an API token (scopes, expiresIn; session-only)
 - GET  ${api}/api/users/me — profile + personal repo
 - GET/POST ${api}/api/teams — list/create teams
 - GET/POST ${api}/api/projects — list/create projects

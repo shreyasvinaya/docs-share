@@ -3,7 +3,7 @@ import { deleteCookie, getCookie, setCookie } from "hono/cookie";
 import { eq } from "drizzle-orm";
 import { db, schema } from "../db/index.js";
 import { requireAuth } from "../middleware/requireAuth.js";
-import { requireScope, requireScopeByMethod } from "../middleware/requireScope.js";
+import { requireScope } from "../middleware/requireScope.js";
 import { config } from "../lib/config.js";
 import { decryptSecret, encryptSecret, generatePublicToken } from "../lib/crypto.js";
 import {
@@ -22,17 +22,19 @@ const app = new Hono<AppEnv>();
 const GITHUB_APP_STATE_COOKIE = "github_app_state";
 
 app.use("*", requireAuth);
-// API-token least-privilege: GET/HEAD profile + github-token status require
-// `user:read`; mutations (PATCH profile, github-token put/delete) require
-// `user:write`. The GitHub App install/callback GETs effect an account-level
-// connection change, so they are individually upgraded to `user:write` below.
-// Session auth is unaffected (requireScope only enforces for api_token).
-app.use("*", requireScopeByMethod("user"));
+// API-token least-privilege is applied PER ROUTE here (not via a blanket
+// router-level `requireScopeByMethod("user")`) so each route needs EXACTLY ONE
+// scope. The GitHub App install/callback are GETs but mutate the account's
+// connection, so they require `user:write` ONLY — a blanket read gate would
+// have forced them to need BOTH `user:read` and `user:write`, locking out a
+// legitimate `user:write` token. Read GETs require `user:read`; write routes
+// require `user:write`. Session auth is unaffected (requireScope only enforces
+// for api_token).
 
 /**
  * GET /me — Return current user profile + their personal repo info.
  */
-app.get("/me", async (c) => {
+app.get("/me", requireScope("user:read"), async (c) => {
   const userId = c.get("userId");
 
   const user = await db
@@ -77,7 +79,7 @@ app.get("/me", async (c) => {
 /**
  * PATCH /me — Update editable profile fields.
  */
-app.patch("/me", async (c) => {
+app.patch("/me", requireScope("user:write"), async (c) => {
   const userId = c.get("userId");
   const body = await c.req.json();
   const { displayName, designation } = body;
@@ -129,7 +131,7 @@ app.patch("/me", async (c) => {
   return c.json({ data: user });
 });
 
-app.get("/me/github-token", async (c) => {
+app.get("/me/github-token", requireScope("user:read"), async (c) => {
   const userId = c.get("userId");
   const user = await db
     .select({
@@ -163,8 +165,8 @@ app.get("/me/github-token", async (c) => {
 });
 
 // These two are GET (OAuth redirect flow) but mutate the account's GitHub
-// connection, so they require `user:write` rather than the method-default
-// `user:read`.
+// connection, so they require `user:write` ONLY (not `user:read`). They carry a
+// single explicit per-route scope so a `user:write` token is sufficient.
 app.get("/me/github-app/install", requireScope("user:write"), async (c) => {
   if (!isGitHubAppConfigured()) {
     return c.json({ error: "GitHub App integration is not configured" }, 503);
@@ -264,7 +266,7 @@ app.get("/me/github-app/callback", requireScope("user:write"), async (c) => {
   return c.redirect("/settings?tab=integrations");
 });
 
-app.put("/me/github-token", async (c) => {
+app.put("/me/github-token", requireScope("user:write"), async (c) => {
   const userId = c.get("userId");
   const body = await c.req.json<{ token?: string }>();
   const token = body.token?.trim();
@@ -291,7 +293,7 @@ app.put("/me/github-token", async (c) => {
   return c.json({ data: { connected: true, updatedAt: now } });
 });
 
-app.delete("/me/github-token", async (c) => {
+app.delete("/me/github-token", requireScope("user:write"), async (c) => {
   const userId = c.get("userId");
   await db
     .update(schema.users)

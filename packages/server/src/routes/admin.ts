@@ -3,12 +3,17 @@ import { db, schema } from "../db/index.js";
 import { normalizeDeploymentName } from "../lib/deployment.js";
 import { requireAuth } from "../middleware/requireAuth.js";
 import { requireSysadmin } from "../middleware/requireSysadmin.js";
+import { requireScopeByMethod } from "../middleware/requireScope.js";
 import type { AppEnv } from "../lib/types.js";
 
 const app = new Hono<AppEnv>();
 
-// Every admin endpoint is gated behind an authenticated sysadmin.
-app.use("*", requireAuth, requireSysadmin);
+// Every admin endpoint is gated behind an authenticated sysadmin. On top of
+// that, an API token must also carry the `admin` scope (GET -> `admin:read`,
+// mutations -> `admin:write`) so a narrowly-scoped token can never drive admin
+// endpoints even when the underlying user happens to be a sysadmin. Session
+// auth is unaffected (requireScope only enforces for api_token).
+app.use("*", requireAuth, requireSysadmin, requireScopeByMethod("admin"));
 
 /**
  * GET /users — List all users with non-sensitive fields only.
