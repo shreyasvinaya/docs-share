@@ -1,0 +1,15 @@
+{
+  "projectId": "e7766180-91b9-4303-9151-cd86bbf26535",
+  "pkg": "@patra/web",
+  "globalName": "Patra",
+  "shape": "package",
+  "entry": "packages/web/design-sync.entry.tsx",
+  "tsconfig": "tsconfig.json",
+  "cssEntry": ".design-sync-styles.css",
+  "readmeHeader": ".design-sync/conventions.md",
+  "componentSrcMap": {
+    "EmptyState": "src/components/common/empty-state.tsx",
+    "UserAvatar": "src/components/common/user-avatar.tsx",
+    "PublicThemeControl": "src/components/layout/public-theme-control.tsx"
+  }
+}
