@@ -2,8 +2,8 @@ import { Link } from "react-router";
 import { PublicAuthAction } from "@/components/layout/public-auth-action";
 import { PublicThemeControl } from "@/components/layout/public-theme-control";
 import { useDeploymentName } from "@/hooks/use-setup";
-import heroImage from "../../../../docs/assets/patra-readme-hero.png?url";
-import workflowImage from "../../../../docs/assets/patra-workflow.png?url";
+import heroImage from "../../../../docs/assets/patra-readme-hero.webp?url";
+import workflowImage from "../../../../docs/assets/patra-workflow.webp?url";
 
 const workflows = [
   {
@@ -33,7 +33,7 @@ export function PublicHomePage() {
   const deploymentName = useDeploymentName();
 
   return (
-    <main className="min-h-screen bg-background text-foreground">
+    <main className="min-h-screen overflow-x-hidden bg-background text-foreground">
       <header className="border-b border-border">
         <div className="mx-auto flex max-w-6xl items-center justify-between px-5 py-4">
           <Link to="/" className="flex items-center gap-2 font-semibold">
@@ -57,14 +57,14 @@ export function PublicHomePage() {
 
       <section className="overflow-hidden border-b border-border bg-[radial-gradient(circle_at_top_left,rgba(20,184,166,0.16),transparent_34%),linear-gradient(180deg,rgba(248,246,240,0.82),transparent)] dark:bg-[radial-gradient(circle_at_top_left,rgba(20,184,166,0.18),transparent_34%),linear-gradient(180deg,rgba(20,33,31,0.52),transparent)]">
         <div className="mx-auto grid max-w-6xl gap-10 px-5 py-14 lg:grid-cols-[0.88fr_1.12fr] lg:items-center">
-          <div>
+          <div className="min-w-0">
             <p className="mb-4 text-sm font-semibold uppercase tracking-[0.18em] text-[#0f766e] dark:text-[#5eead4]">
               Git-backed document publishing
             </p>
-            <h1 className="max-w-3xl text-4xl font-semibold leading-tight sm:text-5xl">
+            <h1 className="max-w-3xl text-balance text-[2rem] font-semibold leading-tight sm:text-4xl lg:text-5xl">
               Publish generated docs and static sites into links people can actually review.
             </h1>
-            <p className="mt-5 max-w-2xl text-lg leading-8 text-muted-foreground">
+            <p className="mt-5 max-w-2xl text-base leading-8 text-muted-foreground sm:text-lg">
               {deploymentName} turns agent-generated plans, reports, dashboards, and prototypes into signed-in previews with team sharing, Git history, scoped tokens, and self-hosted control.
             </p>
             <div className="mt-8 flex flex-wrap gap-3">
@@ -76,16 +76,16 @@ export function PublicHomePage() {
                 Read docs
               </Link>
             </div>
-            <dl className="mt-9 grid max-w-xl grid-cols-3 gap-3 text-sm">
-              <div className="rounded-lg border border-border bg-background/75 p-3">
+            <dl className="mt-9 grid max-w-xl grid-cols-2 gap-3 text-sm min-[440px]:grid-cols-3">
+              <div className="min-w-0 rounded-lg border border-border bg-background/75 p-3">
                 <dt className="font-semibold text-foreground">CLI-first</dt>
                 <dd className="mt-1 text-muted-foreground">agent handoffs</dd>
               </div>
-              <div className="rounded-lg border border-border bg-background/75 p-3">
+              <div className="min-w-0 rounded-lg border border-border bg-background/75 p-3">
                 <dt className="font-semibold text-foreground">Git-backed</dt>
                 <dd className="mt-1 text-muted-foreground">versioned files</dd>
               </div>
-              <div className="rounded-lg border border-border bg-background/75 p-3">
+              <div className="min-w-0 rounded-lg border border-border bg-background/75 p-3">
                 <dt className="font-semibold text-foreground">Scoped</dt>
                 <dd className="mt-1 text-muted-foreground">share access</dd>
               </div>
@@ -96,6 +96,10 @@ export function PublicHomePage() {
             <img
               src={heroImage}
               alt="Illustration of Patra publishing, sharing, versioning, and securing documents"
+              width={1100}
+              height={619}
+              loading="eager"
+              decoding="async"
               className="aspect-[16/9] w-full rounded-lg border border-border object-cover shadow-2xl shadow-teal-950/10"
             />
           </div>
@@ -119,6 +123,10 @@ export function PublicHomePage() {
             <img
               src={workflowImage}
               alt="Illustration of an agent publishing an HTML draft through Git-backed storage into a secure preview link"
+              width={1100}
+              height={619}
+              loading="lazy"
+              decoding="async"
               className="mb-6 aspect-[16/9] w-full rounded-lg border border-border object-cover"
             />
             <h2 className="text-2xl font-semibold">Built for agent handoffs and human review.</h2>
