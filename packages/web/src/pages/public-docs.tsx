@@ -16,8 +16,8 @@ import apiReferenceDoc from "../../../../docs/api-reference.md?raw";
 import handoffDoc from "../../../../HANDOFF.md?raw";
 import securityDoc from "../../../../SECURITY.md?raw";
 import skillsDoc from "../../../../SKILLS.md?raw";
-import secureSharingImage from "../../../../docs/assets/patra-secure-sharing.png?url";
-import workflowImage from "../../../../docs/assets/patra-workflow.png?url";
+import secureSharingImage from "../../../../docs/assets/patra-secure-sharing.webp?url";
+import workflowImage from "../../../../docs/assets/patra-workflow.webp?url";
 
 type MarkdownPart =
   | { type: "heading"; depth: number; text: string }
@@ -634,6 +634,10 @@ function DocsIndexPage() {
             <img
               src={workflowImage}
               alt="Illustration of Patra's agent-to-preview publishing workflow"
+              width={1100}
+              height={619}
+              loading="lazy"
+              decoding="async"
               className="aspect-[16/9] w-full rounded-md object-cover"
             />
           </div>
@@ -692,6 +696,10 @@ function GuidePage({ slug }: { slug: string }) {
           <img
             src={secureSharingImage}
             alt="Illustration of secure document sharing and access controls"
+            width={1100}
+            height={619}
+            loading="lazy"
+            decoding="async"
             className="hidden aspect-[16/9] w-full rounded-lg border border-border object-cover lg:block"
           />
         </div>

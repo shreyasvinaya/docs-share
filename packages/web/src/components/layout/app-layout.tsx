@@ -1,8 +1,9 @@
-import { useState, useRef } from "react";
+import { useState, useRef, useEffect } from "react";
 import { Outlet, useLocation, Link } from "react-router";
 import { useSession, useLogout } from "@/hooks/use-auth";
 import { useTeams } from "@/hooks/use-teams";
 import { usePersonalRepo } from "@/hooks/use-personal-repo";
+import { useMediaQuery } from "@/hooks/use-media-query";
 import { useUiStore } from "@/stores/ui-store";
 import { UserAvatar } from "@/components/common/user-avatar";
 import { AppSidebar } from "@/components/layout/app-sidebar";
@@ -69,25 +70,42 @@ export function AppLayout() {
   const { data: session } = useSession();
   const logout = useLogout();
   const toggleSidebar = useUiStore((s) => s.toggleSidebar);
+  const toggleMobileNav = useUiStore((s) => s.toggleMobileNav);
+  const mobileNavOpen = useUiStore((s) => s.mobileNavOpen);
+  const setMobileNavOpen = useUiStore((s) => s.setMobileNavOpen);
   const theme = useUiStore((s) => s.theme);
   const setTheme = useUiStore((s) => s.setTheme);
   const location = useLocation();
+  const isDesktop = useMediaQuery("(min-width: 1024px)");
   const [dropdownOpen, setDropdownOpen] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
 
   const user = session?.user;
   const breadcrumbs = useBreadcrumbs(location.pathname);
 
+  // Close the mobile drawer whenever the route changes.
+  useEffect(() => {
+    setMobileNavOpen(false);
+  }, [location.pathname, setMobileNavOpen]);
+
   return (
     <div className="flex h-screen overflow-hidden bg-background text-foreground">
       <AppSidebar />
+      {mobileNavOpen && (
+        <button
+          type="button"
+          aria-label="Close navigation"
+          onClick={() => setMobileNavOpen(false)}
+          className="fixed inset-0 z-40 bg-black/40 backdrop-blur-sm lg:hidden"
+        />
+      )}
 
-      <div className="flex flex-1 flex-col overflow-hidden">
+      <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
         <header className="flex h-14 shrink-0 items-center justify-between border-b border-border bg-background/90 px-4 backdrop-blur">
           <div className="flex min-w-0 items-center gap-3">
             <button
               type="button"
-              onClick={toggleSidebar}
+              onClick={() => (isDesktop ? toggleSidebar() : toggleMobileNav())}
               className="rounded-lg border border-transparent p-1.5 text-muted-foreground transition-colors hover:border-border hover:bg-muted hover:text-foreground"
               aria-label="Toggle navigation"
             >

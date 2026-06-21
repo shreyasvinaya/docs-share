@@ -3,6 +3,7 @@ import { NavLink, useNavigate } from "react-router";
 import { useTeams } from "@/hooks/use-teams";
 import { useSession } from "@/hooks/use-auth";
 import { useDeploymentName } from "@/hooks/use-setup";
+import { useMediaQuery } from "@/hooks/use-media-query";
 import { useUiStore } from "@/stores/ui-store";
 import { cn } from "@/lib/utils";
 import { getAdminNavItems } from "@/lib/app-navigation";
@@ -49,7 +50,12 @@ const mainNav = [
 ];
 
 export function AppSidebar() {
-  const collapsed = useUiStore((s) => s.sidebarCollapsed);
+  const sidebarCollapsed = useUiStore((s) => s.sidebarCollapsed);
+  const mobileNavOpen = useUiStore((s) => s.mobileNavOpen);
+  const isDesktop = useMediaQuery("(min-width: 1024px)");
+  // Icon-rail collapse is a desktop-only affordance; the mobile drawer always
+  // shows full labels.
+  const collapsed = isDesktop && sidebarCollapsed;
   const navigate = useNavigate();
   const { data: teams } = useTeams();
   const { data: session } = useSession();
@@ -61,8 +67,12 @@ export function AppSidebar() {
   return (
     <aside
       className={cn(
-        "flex h-full flex-col border-r border-border bg-[#f7f4eb]/95 shadow-xl shadow-teal-950/5 transition-all duration-200 dark:bg-[#0b1c19]/95",
-        collapsed ? "w-16" : "w-64",
+        // Mobile: off-canvas drawer (fixed, slides in over content).
+        // Desktop (lg+): static rail that collapses to icons.
+        "fixed inset-y-0 left-0 z-50 flex h-full w-64 flex-col border-r border-border bg-[#f7f4eb]/95 shadow-xl shadow-teal-950/5 transition-transform duration-200 dark:bg-[#0b1c19]/95",
+        "lg:static lg:z-auto lg:translate-x-0 lg:shadow-xl lg:transition-all",
+        mobileNavOpen ? "translate-x-0" : "-translate-x-full",
+        collapsed ? "lg:w-16" : "lg:w-64",
       )}
     >
       <div className="flex h-14 items-center gap-2 border-b border-border px-4">
